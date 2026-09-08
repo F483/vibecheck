@@ -17,16 +17,16 @@ for feel, x 3 levels for how much I like it, written as strings like
 Someone else's vocabulary will look nothing like this, and the app must not
 care.
 
-Existing tags in the library are irrelevant and will be wiped; no public
-vocabulary (Discogs, Beatport, ID3 genre lists) enters anywhere. The entire
-point is learning one person's taste, so that a growing collection stays under
-control without tedious manual management.
+Clearing out old tags is the user's own job, done before ingest and outside the
+app's scope. No public vocabulary (Discogs, Beatport, ID3 genre lists) enters
+anywhere. The entire point is learning one person's taste, so that a growing
+collection stays under control without tedious manual management.
 
 Consequences that follow directly from this and drive the rest of the design:
 
 - **No free training data.** Every one of ~13.8k tracks starts unlabelled.
   Labels only exist because the user produced them, so user attention is the
-  scarcest resource in the system and the labelling loop (§6) *is* the product.
+  scarcest resource in the system, and the review loop (§6) *is* the product.
 - **Closed vocabulary.** No new labels will ever appear, unlike an open genre
   taxonomy. Discovery of unseen classes stops being a requirement.
 - Pretrained audio models are used **only as feature extractors** (audio ->
@@ -46,7 +46,10 @@ Consequences that follow directly from this and drive the rest of the design:
 
 **Non-goals (for now)**
 - Not a tag editor / library manager. It touches one field.
-- Not a recommender, player, or playlist generator.
+- Not a recommender or player — the app never plays audio; listening happens in
+  the user's own music software. **decided**
+- Playlists are work lists, not a feature: no smart/auto playlist generation,
+  and no label information is stored in them.
 - One label per track; no multi-label. **decided**
 - Audio only — no metadata signals (artist/album/year/filename). **decided**
   Artist is probably the strongest predictor of my labels; it is excluded
@@ -65,16 +68,20 @@ Consequences that follow directly from this and drive the rest of the design:
 - **Train**: fit a classifier on tracks that carry a label.
 - **Predict**: for unlabelled/new tracks, output a label + confidence, or
   abstain below a threshold.
-- **Ingest policy**, configurable, `clear` is the default: **decided**
-  - `clear` — wipe existing tags on first ingest, label from scratch
-  - `preserve` — keep existing tags as ground truth (offered for other users
-    whose collections carry labels they trust; not the primary path)
-- **Write policy**, configurable: **decided**
-  - `confirm` (default) — show suggestion, write only on accept
-  - `auto` — write immediately
-  - `never` — DB only
-- **Feedback**: a manual label change (in the app, or detected in the file on
-  rescan) is recorded and used in the next training run.
+- **Write**: predicted labels go straight into the tag; review happens
+  afterwards in the user's software. A dry-run mode writes nothing and only
+  reports what would change.
+- **Abstain**: a **configurable confidence threshold**. **decided** Below it, a
+  track is skipped rather than given a low-confidence guess; it stays unlabelled
+  and is retried later. The right value depends on how much reviewing a wrong
+  label costs versus labelling from scratch — taste, so a dial, not a constant.
+  Zero means label everything.
+- **Playlists as work lists**: a run's working set can be restricted to the
+  tracks in a `.m3u8`, and a run can report the tracks it touched as a `.m3u8`.
+  Playlists never carry label information and are disposable. **decided**
+- **Feedback**: detect labels that are new or changed since the last run by
+  comparing each file's current tag to the last-seen value in the DB, and
+  retrain on them.
 - **Evaluate**: report artist-grouped cross-validated accuracy on the user's own
   labels, overall and per label, against the majority-class baseline. This is
   the only meaningful benchmark and drives every model choice.
@@ -118,9 +125,10 @@ not compute.
 ## 4. Pipeline
 
 ```
-scan -> decode excerpts -> embed -> [cache] -> train classifier -> predict -> write tag
-                                                    ^                            |
-                                                    +------ corrections ---------+
+scan -> decode excerpts -> embed -> [cache] -> train -> categorise -> write tag
+                                                 ^                        |
+                                                 |                        v
+                          train --input=batch.m3u8 <-- user fixes <-- batch.m3u8
 ```
 
 1. **Scan** — walk roots, stat files, hash (partial hash: first+last N bytes +
@@ -188,67 +196,121 @@ Consequences for evaluation, which *are* app behaviour:
 - If Phase 0 shows the model can only reach the majority baseline, the honest
   outcome is to say so rather than ship a coin flip.
 
-## 6. Labelling loop
+## 6. Interface and workflow
 
-No fixed seed set. The user labels tracks until they choose to stop, and the
-model starts helping as early as it can. **decided**
+**The label lives in the mp3 tag. Nowhere else.** Playlists carry no label
+information whatsoever — they are temporary work lists: which tracks a run
+should operate on, and which tracks a run touched. They are disposable and get
+deleted often. **decided**
+
+The app never plays audio. Judging a track means listening to it, and the user's
+own music software is already the best place for that.
+
+### Core vs interface
+
+The architecture is a **core engine** plus thin front ends. The core owns
+everything real: index, embed, train, predict, select a batch, read/write tags,
+read/write playlists. A front end only maps user intent onto those operations
+and prints results. **decided**
+
+The CLI sketch below is illustrative — a rough shape to reason about, **not a
+settled interface**. Flag names, subcommand split and defaults are deliberately
+unresolved until the architecture is proven; getting the core right comes first,
+and a wrong interface is cheap to change while a wrong core is not.
+
+```sh
+# train from entire collection, looking for new or changed labels
+vibecheck train --limit=100
+
+# train from a limited playlist, looking for new or changed labels
+vibecheck train --limit=100 --input=<playlist>.m3u8
+
+# categorise from entire collection, assigning labels to files without one
+vibecheck categorise --limit=100 --output=<playlist>.m3u8
+
+# categorise within a playlist, assigning labels to files without one
+vibecheck categorise --limit=100 --input=<playlist>.m3u8 --output=<playlist>.m3u8
+```
+
+What matters at this stage is only the shape:
+
+- a run's **working set** is either the whole collection or the tracks in a
+  playlist;
+- a run can **bound how much work it does**;
+- a run can **report which tracks it touched** as a playlist, so they can be
+  reviewed in the user's software.
+
+### The round trip
 
 ```
-present track -> user labels -> retrain (cheap) -> suggest on next track -> ...
+categorise a batch, report it as batch.m3u8  ->  labels written into tags
+open batch.m3u8 in music software            ->  user listens, fixes wrong tags
+train over batch.m3u8                        ->  corrections picked up, retrain
 ```
 
-- Suggestions appear as soon as there are ~2+ labels per class; early ones are
-  wrong and that is fine — accepting a correct suggestion is one keypress, so a
-  mediocre model already beats typing.
-- Retraining is seconds on this data size, so retrain after every few labels.
-  No incremental algorithm needed.
-- **Which track to ask about next matters more than the model.** Random order
-  wastes the user's attention on 200 near-identical tracks from one folder.
-  Selection policy, in phases: **decided**
+Corrections are just tag edits. They are detected by comparing each file's
+current tag against the value last recorded in the DB, which is why the index
+keeps the last-seen label and a label history (§3).
 
-  **A. Cold start (0 labels), no model** — farthest-first traversal (k-center
-  greedy) over embeddings: pick one track at random, then repeatedly pick the
-  track maximally distant from everything picked so far. ~20-30 labels covers
-  every distinct region of the sound-space. No k, no convergence, deterministic.
+Nothing about a playlist is authoritative and nothing is inferred from absence:
+a track missing from a playlist simply is not part of that batch.
 
-  **B. Warm (>=2-3 labels/class)** — margin sampling: rank by
-  `p(top1) - p(top2)`, smallest first. Margin beats entropy here; entropy
-  fixates on tracks confused among many classes, margin targets the specific
-  pairwise boundaries that actually need separating.
-  Never take the top-N uncertain directly — they cluster, all uncertain for the
-  same reason. Take the ~500 most uncertain as a candidate pool, then greedily
-  select ~10 that are mutually distant. Label the batch, retrain, repeat.
-  Score a random subsample of the pool (5-10k) per round; full scoring costs
-  latency and buys nothing.
+### Which tracks go in a batch
 
-  **C. Steady mix**, per batch:
-  - **60% margin** — sharpen boundaries.
-  - **20% novelty** — tracks farthest from all labelled data. Demoted from its
-    original justification: the vocabulary is closed, so there are no unseen
-    classes to discover. It still earns its slot as coverage insurance against
-    whole regions of the library the model has never been asked about.
-  - **20% pure random** — see below.
+A bounded run says how many tracks to do, not which. That choice is worth
+getting right: the tracks a run picks are exactly the tracks the user will
+review, so their corrections are the next training signal. The selection problem
+is active learning, even though the user is never asked a question
+directly. **decided**
 
-  Plus a mild score bonus for candidates predicted into thin classes. A bonus,
+- **Cold start (no model)** — farthest-first traversal (k-center greedy) over
+  embeddings: pick one track at random, then repeatedly pick the track
+  maximally distant from everything picked so far. ~20-30 tracks covers every
+  distinct region of the sound-space before any model exists. No k, no
+  convergence, deterministic.
+- **Warm** — margin sampling: rank by `p(top1) - p(top2)`, smallest first.
+  Margin beats entropy here; entropy fixates on tracks confused among many
+  labels, margin targets the specific boundaries that need separating.
+  Never take the top-N most uncertain directly — they cluster, all uncertain for
+  the same reason. Take the ~500 most uncertain as a candidate pool, then
+  greedily select the batch from it so members are mutually distant. Score a
+  random subsample (5-10k) per run; full scoring costs latency and buys nothing.
+- **Steady mix**, per batch: 60% margin, 20% novelty (tracks farthest from all
+  labelled data — coverage insurance against whole regions never asked about),
+  20% pure random.
+- Plus a mild score bonus for candidates predicted into thin labels. A bonus,
   not a hard quota.
-
-- **The random stream is not optional.** Actively-selected labels are a biased
+- **The random slice is not optional.** Actively-selected tracks are a biased
   sample by construction (they over-represent hard cases), so accuracy measured
-  on them is meaningless. Reserve the random-stream labels as an untouched
-  holdout — that is the only honest accuracy estimate, and the only trustworthy
-  basis for deciding when to stop labelling. Without it the progress number lies
-  pessimistically and the user over-labels.
-- Classifier: logistic regression or kNN on embeddings. Logistic regression
-  gives usable probabilities for margin; kNN needs distance-weighted votes to
-  produce a confidence at all.
-- **Prerequisite**: the whole candidate pool must be embedded up front — active
-  learning can only choose among tracks it has already seen. That batch cost is
-  unavoidable, which is why Phase 0 must measure extraction wall-clock per
-  backend, not only accuracy.
-- Progress must be visible: labels so far, current accuracy estimate, which
-  labels are still weak. The user stops when the numbers say it is good enough.
-- Stopping is never final; labelling can resume, and every later correction is
-  just another label.
+  on them is meaningless. Reserve the random-slice tracks as an untouched
+  holdout — the only honest accuracy estimate, and the only trustworthy basis
+  for deciding when the model is good enough.
+
+Retraining takes seconds at this size, so it happens on every training run; no
+incremental algorithm is needed. Predictions get useful once there are a few
+labels per class, and a mediocre model still helps: fixing a wrong label is
+cheaper than assigning one from scratch.
+
+**Prerequisite**: the candidate pool must be embedded up front — selection can
+only choose among tracks it has already seen. That batch cost is unavoidable,
+which is why Phase 0 measures extraction wall-clock per backend, not only
+accuracy.
+
+Every training run reports progress: labels so far, current accuracy estimate
+against the majority baseline, and which labels are still weak.
+
+### Playlist I/O robustness
+
+Playlists come back from software the app does not control, so import must be
+forgiving: **decided**
+
+- `.m3u8` is UTF-8 by definition; write it as such, read it as such.
+- Match entries to indexed tracks by, in order: exact path, normalised path
+  (percent-decoding, `file://` prefixes, separator differences, resolved
+  relative paths, case-insensitive on macOS), then content hash, then basename.
+  Report anything still unmatched rather than silently dropping it — a silent
+  drop looks like the user removing tracks from a batch.
+- Write absolute paths on export; assume nothing about what comes back.
 
 ## 7. Tech candidates
 
@@ -293,21 +355,27 @@ BLOBs (~70 MB per backend at 1280-d float32).
 
 **Prototype runtime**: python — all the model tooling lives there.
 
-**App shell** (later, deliberately undecided): Godot UI + local sidecar process
-speaking JSON over stdio; or a python GUI; or Tauri. Deferred until the CLI
-proves the idea works.
+**Playlist I/O**: `.m3u8` read/write is a few dozen lines; no library needed.
+The work is path normalisation on import, not parsing.
+
+**App shell**: deferred, and possibly never — see Phase 2. If it happens:
+Godot UI + local sidecar over stdio, a python GUI, or Tauri.
 
 ## 8. Plan
 
-- **Phase 0 — CLI prototype** *(next)*: scan, embed, hand-label a few hundred
-  tracks through the loop, train, artist-grouped cross-validation, report
-  overall and per-label accuracy against the majority baseline, plus install
-  friction and wall-clock per backend. Read-only, no tag writes. Answers the
-  question the whole project rests on: *does this beat always-guessing-the-
-  commonest-label on my own labels, and by how much?*
-- **Phase 1 — CLI usable**: predict + write policies, corrections, incremental
-  rescan.
-- **Phase 2 — app**: GUI over the same core.
+- **Phase 0 — feasibility, read-only** *(next)*: scan, embed, read labels the
+  user has applied by hand in their own software (a few hundred tracks), train,
+  artist-grouped cross-validation. Report overall and per-label accuracy against
+  the majority baseline, plus install friction and wall-clock per backend.
+  Writes nothing. Answers the question the whole project rests on: *does this
+  beat always-guessing-the-commonest-label on my labels, and by how much?*
+  If the answer is no, stop here — that is a valid outcome, cheaply reached.
+- **Phase 1 — usable**: tag writing, confidence threshold, playlist in/out,
+  batch selection, incremental rescan.
+- **Phase 2 — app**: *possibly unnecessary.* With playlists as the interface,
+  listening and correcting both happen in the user's existing software, so the
+  CLI may be the finished product. Only build a GUI if using the CLI proves
+  annoying in practice — do not assume it.
 
 ## 9. Open questions
 
