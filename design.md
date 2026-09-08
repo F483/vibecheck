@@ -72,26 +72,42 @@ Consequences that follow directly from this and drive the rest of the design:
 - **Write**: predicted labels go straight into the tag; review happens
   afterwards in the user's software. A dry-run mode writes nothing and only
   reports what would change.
-- **Abstain**: a **configurable confidence threshold**. **decided** Below it, a
-  track is skipped rather than given a low-confidence guess; it stays unlabelled
-  and is retried later. The right value depends on how much reviewing a wrong
-  label costs versus labelling from scratch — taste, so a dial, not a constant.
-  Zero means label everything.
+- **Abstain**: a **configurable confidence threshold**, exposed to the user as a
+  slider for how much wrongness they will tolerate. **decided** Below it a track
+  is skipped rather than guessed at; it stays unlabelled and is retried later.
+  Zero means label everything. Wrong labels are expected and fine — the point is
+  that the user chooses the rate.
+  For the slider to mean anything, the number behind it must be **calibrated**:
+  logistic regression on high-dimensional embeddings is overconfident by
+  default, happily reporting 0.97 on tracks it gets wrong, which would make the
+  threshold inert. Fit a temperature scalar on the holdout, and document the
+  slider in measured terms ("0.8 => ~85% of written labels correct on your
+  holdout"), not in raw model self-report.
 - **Playlists as work lists**: a run's working set can be restricted to the
   tracks in a `.m3u8`, and a run can report the tracks it touched as a `.m3u8`.
   Playlists never carry label information and are disposable. **decided**
 - **Feedback**: detect labels that are new or changed since the last run by
   comparing each file's current tag to the last-seen value in the DB, and
   retrain on them.
-- **Evaluate**: report artist-grouped cross-validated accuracy on the user's own
-  labels, overall and per label, against the majority-class baseline. This is
-  the only meaningful benchmark and drives every model choice.
+- **Holdout**: a fixed slice of labelled tracks (~10-20%) is **never trained
+  on**, and exists only to report honest accuracy. **decided** Membership is
+  derived deterministically from the content hash (e.g. `hash % 10 == 0`), so it
+  is stable as labels accumulate, needs no bookkeeping, and cannot drift.
+- **Evaluate**: report accuracy on the holdout — overall and per label — against
+  the majority-class baseline. Near-duplicate tracks are grouped so that copies,
+  remixes and re-rips never straddle the train/holdout boundary (see §4.7).
+  This is the only meaningful benchmark and drives every model choice.
 
 ### Non-functional
 - Incremental and resumable: rescans touch only changed files; a killed run
   loses at most the current batch.
-- Embeddings computed once per file, cached, keyed by content hash so moves and
-  renames don't force recompute.
+- Embeddings computed once per file and cached, keyed by **(content hash,
+  backend, model version, preprocessing config hash)**. **decided** The content
+  hash alone is not enough: switching backends, bumping a model version or
+  changing a preprocessing parameter must invalidate the cache, or vectors from
+  two different pipelines get silently mixed — the same class of invisible
+  failure §4.2 exists to prevent. Content hashing means moves and renames never
+  force a recompute.
 - Parallel extraction across cores; must survive corrupt/unreadable mp3s.
 - **Local-first**: runs entirely on a laptop-class machine, offline, no upload of
   audio. Cloud embedding stays a one-off benchmark, never a runtime dependency.
@@ -309,6 +325,24 @@ Wanting other people to install this on their macs implies, concretely:
   assuming it is unrestricted, and avoid the Mac App Store sandbox unless
   there is a reason to accept it.
 
+### 4.7 Grouping for honest evaluation
+
+The collection contains many near-identical files — an original, a remix, an
+edit, a re-rip of the same track. If one copy is trained on and its twin sits in
+the holdout, the model scores well by effectively recognising a track it has
+already seen rather than by having learned anything. The reported accuracy is
+then too high, and every decision built on it is built on a number that is not
+real.
+
+**Group near-duplicates using the embeddings themselves** — cosine similarity
+near 1.0 — and keep a group wholly inside training or wholly inside the
+holdout. **decided** This needs no metadata at all: no artist tag, no album, no
+folder heuristics, consistent with audio-only classification (§2). It is also
+free, since the embeddings already exist.
+
+To be explicit about a distinction that is easy to blur: file paths and content
+hashes are read to *identify files on disk*. They are never inputs to the model.
+
 ## 5. Labels
 
 **One flat set of label strings. One label per track. That is the entire
@@ -419,49 +453,62 @@ keeps the last-seen label and a label history (§3).
 Nothing about a playlist is authoritative and nothing is inferred from absence:
 a track missing from a playlist simply is not part of that batch.
 
-### Which tracks go in a batch
+### The normal workflow
 
-A bounded run says how many tracks to do, not which. That choice is worth
-getting right: the tracks a run picks are exactly the tracks the user will
-review, so their corrections are the next training signal. The selection problem
-is active learning, even though the user is never asked a question
-directly. **decided**
+Simplicity is the priority. The expected use is not "sit down and train a
+model", it is: **new music arrives, the app labels it, the user corrects what is
+wrong while DJing, and the app picks that up by itself.** **decided**
 
-- **Cold start (no model)** — farthest-first traversal (k-center greedy) over
-  embeddings: pick one track at random, then repeatedly pick the track
-  maximally distant from everything picked so far. ~20-30 tracks covers every
-  distinct region of the sound-space before any model exists. No k, no
-  convergence, deterministic.
-- **Warm** — margin sampling: rank by `p(top1) - p(top2)`, smallest first.
-  Margin beats entropy here; entropy fixates on tracks confused among many
-  labels, margin targets the specific boundaries that need separating.
-  Never take the top-N most uncertain directly — they cluster, all uncertain for
-  the same reason. Take the ~500 most uncertain as a candidate pool, then
-  greedily select the batch from it so members are mutually distant. Score a
-  random subsample (5-10k) per run; full scoring costs latency and buys nothing.
-- **Steady mix**, per batch: 60% margin, 20% novelty (tracks farthest from all
-  labelled data — coverage insurance against whole regions never asked about),
-  20% pure random.
-- Plus a mild score bonus for candidates predicted into thin labels. A bonus,
-  not a hard quota.
-- **The random slice is not optional.** Actively-selected tracks are a biased
-  sample by construction (they over-represent hard cases), so accuracy measured
-  on them is meaningless. Reserve the random-slice tracks as an untouched
-  holdout — the only honest accuracy estimate, and the only trustworthy basis
-  for deciding when the model is good enough.
+- **Corrections are detected, not declared.** The app compares each file's
+  current tag against the value last recorded in the DB. A changed tag is a
+  correction and becomes a `source='user'` row. The user never has to say "I
+  reviewed these".
+- **This needs no daemon.** An incremental scan is cheap — stat 14k files, then
+  read tags only for files whose mtime or size moved — so every run starts with
+  one. A scheduled background run is an option, not a requirement.
+- **The app must not learn from itself.** A label the app wrote is logged as
+  `source='model'`. If the tag still matches what the app wrote, nothing
+  happened and no user row is created. Only genuine differences count. Without
+  this the model retrains on its own guesses and amplifies its own errors.
+- **Explicit confirmation stays available** for the case where the user *has*
+  deliberately reviewed a batch: training over a playlist means "these labels
+  are mine now", changed or not. Over the whole collection it means only
+  "pick up what changed" — it must never promote unreviewed model labels.
+- **Taste drifts, and that is normal.** The log is append-only and the newest
+  row for a track wins, so relabelling a track years later simply supersedes.
+  Timestamps make recency-weighted training possible later; not needed now.
 
-Retraining takes seconds at this size, so it happens on every training run; no
-incremental algorithm is needed. Predictions get useful once there are a few
-labels per class, and a mediocre model still helps: fixing a wrong label is
-cheaper than assigning one from scratch.
+### Which tracks to work on
 
-**Prerequisite**: the candidate pool must be embedded up front — selection can
-only choose among tracks it has already seen. That batch cost is unavoidable,
-which is why Phase 0 measures extraction wall-clock per backend, not only
-accuracy.
+Two different jobs, with opposite selection criteria — conflating them produces
+an empty batch, because one asks for the tracks the other refuses to touch:
 
-Every training run reports progress: labels so far, current accuracy estimate
-against the majority baseline, and which labels are still weak.
+**Bulk labelling (the user-facing job).** Label as much new music as possible.
+Take the tracks the model is **most** confident about; the confidence threshold
+skips the rest for a later run. Unattended, writes tags, `--limit` is throughput.
+
+**Uncertainty review (a development tool, not a user feature).** **decided**
+Take the tracks the model is **least** sure about — they teach the most per
+listen. Nobody wants to be handed a random pile of music to educate a
+classifier, so this stays a diagnostic for tuning and evaluating the model
+during the prototype, and is not part of the normal workflow.
+
+For the record, if it is ever wanted as a user feature, the selection method is
+active learning: cold start by farthest-first traversal (k-center greedy) over
+embeddings; once trained, margin sampling (`p(top1) - p(top2)`, smallest first)
+over a candidate pool, greedily diversified so the batch is not 20 copies of the
+same confusion; with a slice of pure random picks, since actively-selected
+tracks are a biased sample and accuracy measured on them means nothing.
+
+Retraining takes seconds at this size, so it happens whenever labels change; no
+incremental algorithm is needed.
+
+**Prerequisite**: tracks must be embedded before they can be labelled or
+selected. That batch cost is unavoidable, which is why Phase 0 measures
+extraction wall-clock per backend, not only accuracy.
+
+Runs report progress: labels so far, holdout accuracy against the majority
+baseline, and which labels are still weak.
 
 ### Playlist I/O robustness
 
@@ -593,43 +640,70 @@ The work is path normalisation on import, not parsing.
 **App shell**: deferred, and possibly never — see Phase 2. If it happens:
 Godot UI + local sidecar over stdio, a python GUI, or Tauri.
 
-## 8. Plan
+## 8. Roadmap
 
-- **Phase 0 — feasibility, read-only** *(next)*. Python, ffmpeg via brew, writes
-  nothing. In this order — the order matters: **decided**
-  1. implement 2-3 embedding backends behind one interface;
-  2. **export spike per candidate**: export to ONNX with preprocessing included,
-     one track, check cosine vs the python reference. Half a day each, and it
-     can veto a model *before* any bulk work;
-  3. embed a 2-3k subset; measure accuracy and wall-clock;
-  4. pick the winner on accuracy + wall-clock + export feasibility together;
-  5. only then embed the full library.
+**Phase 0 — feasibility. Deliverable: numbers, not software.** *(next)*
+Throwaway python. Take the tracks already labelled by hand, embed them with 2-3
+backends plus the MFCC baseline, and measure. In this order — the order matters:
+**decided**
 
-  The reordering is the point. Measuring accuracy first, picking a winner, then
-  discovering it will not port is how a project ends up hand-writing DSP with
-  the labelling effort already spent.
+1. implement the backends behind one interface;
+2. **export spike per candidate**: export to ONNX with preprocessing included,
+   one track, check cosine against the python reference. Half a day each, and it
+   can veto a model *before* any bulk work;
+3. embed the labelled subset; measure accuracy and wall-clock;
+4. pick the winner on accuracy + wall-clock + export feasibility together;
+5. only then embed the full library.
 
-  Reporting: overall and per-label accuracy under artist-grouped
-  cross-validation, against the majority baseline, plus install friction and
-  wall-clock per backend. Answers the question the whole project rests on:
-  *does this beat always-guessing-the-commonest-label on my labels, and by how
-  much?* If the answer is no, stop there — a valid outcome, cheaply reached.
-- **Phase 1 — usable**: tag writing, confidence threshold, playlist in/out,
-  batch selection, incremental rescan.
-- **Phase 2 — app**: *possibly unnecessary.* With playlists as the interface,
-  listening and correcting both happen in the user's existing software, so the
-  CLI may be the finished product. Only build a GUI if using the CLI proves
-  annoying in practice — do not assume it.
+Measuring accuracy first, picking a winner, then discovering it will not port is
+how a project ends up hand-writing DSP with the labelling effort already spent.
+
+Reporting: holdout accuracy overall and per label against the majority baseline,
+a learning curve (accuracy vs labels per label-value), and wall-clock plus
+install friction per backend. The learning curve answers "how many labels does
+this actually need" empirically, instead of guessing a number in advance.
+
+*Go/no-go*: does any backend beat always-guessing-the-commonest-label by a
+margin worth building on? If not, stop here — a valid outcome, cheaply reached.
+
+**Phase 1 — usable CLI. Deliverable: a tool in daily use.**
+Scan and index the full library, embed everything (the overnight job), train,
+bulk-label with the confidence threshold, write tags, incremental rescan that
+picks up corrections automatically, playlists as work lists. This is where it
+starts saving work.
+
+**Phase 2 — refinement. Deliverable: it improves efficiently.**
+Calibration, progress reporting, near-duplicate grouping, and the uncertainty
+review tool (§6 — a development aid, not a user feature). Deliberately later:
+with thousands of labels available up front, none of this is load-bearing for
+the thing working.
+
+**Phase 3 — the app. Deliverable: something other people can install.**
+Swift, ONNX export with preprocessing baked in, AVFoundation decode, codesign,
+notarise, `.dmg`. Only worth doing once Phases 0-1 prove the idea and the CLI
+has been lived with.
 
 ## 9. Open questions
 
 Deferred until Phase 0 produces numbers (cannot be answered by opinion):
-- Which embedding backend wins on my labels, and at what wall-clock cost.
-- Whether one cloud backend is worth a one-off comparison run.
-- How many labels are actually needed before suggestions become useful.
+- Which embedding backend wins on my labels, at what wall-clock and install cost.
+- Whether any cloud backend is worth a one-off comparison run.
+- Where the learning curve flattens — how many labels this problem needs.
+- Whether anything beats plain logistic regression enough to justify shipping a
+  heavier classifier (§4.4).
 
-Needs an answer from me, but not blocking Phase 0:
-- Ceiling check: re-label ~100 tracks blind and compare to my earlier labels.
+Known, accepted, not problems to solve:
+- **Anchoring**: reviewing a suggested label is not the same as labelling blind,
+  so acceptance rate is not evidence of accuracy. Nothing to fix — just never
+  report acceptance rate as accuracy; the holdout (§3) is the honest number.
+- **Taste drift**: labels legitimately change over time. Newest row wins.
+
+Needs an answer from me, but not blocking:
+- How many of the initial labels came from a playlist rule over metadata rather
+  than from listening? Anything driven by an inaudible rule caps what an
+  audio-only model can reach, and would be mistaken for the approach failing.
+  If the share is meaningful, Phase 0 should report those subsets separately.
+- Ceiling check: relabel ~100 tracks blind and compare to the earlier labels.
   That self-agreement rate is the real accuracy target; chasing above it is
   chasing noise.
 
