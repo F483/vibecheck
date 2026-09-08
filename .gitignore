@@ -1,0 +1,12 @@
+# macOS
+.DS_Store
+
+# editors
+.idea/
+*.swp
+
+# env / secrets
+.env
+.env.*
+
+# build / deps (stack TBD)
