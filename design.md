@@ -41,7 +41,7 @@ Consequences that follow directly from this and drive the rest of the design:
 - Handle DJ-scale collections (200 GB+ and growing). **decided**
 - The label is written into the mp3's ID3 genre field, so other software
   (Rekordbox, Traktor, players, file managers) sees it. **decided**
-- Runs on mac / linux / windows.
+- Runs on macOS, Apple Silicon (M1 or newer). Mac-only. **decided**
 - Corrections improve future guesses.
 
 **Non-goals (for now)**
@@ -126,25 +126,188 @@ not compute.
 ## 4. Pipeline
 
 ```
-scan -> decode excerpts -> embed -> [cache] -> train -> categorise -> write tag
-                                                 ^                        |
-                                                 |                        v
-                          train --input=batch.m3u8 <-- user fixes <-- batch.m3u8
+scan -> decode excerpts -> resample -> preprocess -> embed -> pool -> [cache]
+                                                                        |
+                             write tag <- categorise <- train <---------+
+                                  |                       ^
+                                  v                       |
+                            batch.m3u8 -> user fixes -> tags
 ```
 
-1. **Scan** — walk roots, stat files, hash (partial hash: first+last N bytes +
-   size is enough and fast), read ID3.
-2. **Excerpts** — DJ tracks have long intros/outros; a single 30 s window from
-   the start is unrepresentative. Take k windows (e.g. 3 × 30 s at 25/50/75 %),
-   embed each, average (or keep all and vote).
-3. **Embed** — frozen pretrained audio model -> vector (typically 512–1280 dim).
-   Pluggable backend; the winner is decided by §3 evaluation, not by reputation.
-4. **Classify** — one N-class model over the user's label set, trained on their
-   labels only. Start with logistic regression / kNN on the embeddings. Fitting
-   14k × 1k floats takes seconds, so "online learning" is really just *retrain
-   on every change*; no genuinely incremental algorithm is needed.
-5. **Abstain** — below a confidence threshold, output nothing rather than a
-   guess. Tuned so accepted suggestions are usually right.
+### 4.1 Stages
+
+1. **Scan** — walk roots, stat files, partial hash (first + last N bytes + size).
+2. **Decode** — mp3 -> PCM. Only the excerpt regions, not the whole file.
+   mp3 seeking is frame-aligned and the bit reservoir makes the first frames
+   after a seek inexact: decode slightly early and discard ~0.5 s.
+3. **Resample** — models want a fixed rate (typically 16 kHz mono; MERT 24 kHz);
+   mp3s are 44.1 kHz. The resampler is part of the model contract, not a detail:
+   a different one shifts the embeddings.
+4. **Preprocess** — log-mel spectrogram (or whatever the chosen model expects).
+   **See 4.2 — this is where the project can silently lose accuracy.**
+5. **Embed** — frozen model -> one vector per excerpt (512-1280 dim).
+6. **Pool** — mean across the 3 excerpts, then L2-normalise. Store the
+   per-excerpt vectors too: 3 x 1280 floats is 15 KB/track, ~200 MB for the
+   library, which buys the freedom to re-pool later without re-decoding.
+7. **Train** — logistic regression over pooled vectors, `source='user'` rows only.
+8. **Categorise** — predict, apply the confidence threshold, write tags, report
+   the batch as a playlist.
+
+### 4.2 Where the DSP lives — the parity trap
+
+The chain from file to embedding:
+
+```
+mp3 -> PCM 44.1k -> resample 16k -> STFT -> mel -> log -> neural net -> embedding
+                    \_________________ DSP ____________/   \__ the model file __/
+```
+
+Normally the exported model file contains only the neural net; everything left
+of it is done in python with librosa before feeding the model. Ship a native app
+and someone has to rewrite that DSP — matching sample rate, window function,
+window and hop length, centre padding, FFT size, magnitude vs power, mel band
+count, mel scale formula (**htk** and **slaney** both exist and differ),
+filterbank normalisation, log base, epsilon, and any final normalisation.
+
+Get one wrong and the model receives inputs unlike anything it was trained on.
+**Nothing errors.** The embeddings are just worse, accuracy drops a few points,
+and the cause is invisible.
+
+Three ways to place the DSP:
+
+| option | what it means | cost |
+|---|---|---|
+| **A. inside the model file** | exported graph takes raw PCM, returns embedding; the app only decodes | export work per model; in-graph resampling is awkward |
+| **B. reimplemented natively** | Swift computes mel via vDSP/Accelerate | must replicate librosa exactly; silent-failure risk; redo per model |
+| **C. ship python in the app** | bundle python + librosa + onnxruntime | 200-400 MB, hardened-runtime friction — but zero parity risk |
+
+**Decision: prototype in python (effectively C). Target A for the shipped app,
+keep C as the fallback, never B.** **decided** A is the only option that is both
+lean and parity-safe; B is the worst of both, hand-written DSP *and* the risk.
+
+Bundle-size expectation for A: ONNX Runtime (~50 MB) + weights (30-100 MB) + a
+few MB of app = a notarisable 100-150 MB `.app` with no python. C lands at
+200-400 MB — acceptable if A fails, not the goal.
+
+**Some models remove the problem entirely.** Raw-waveform models (MERT is
+HuBERT-style: raw 24 kHz into a conv encoder) have no spectrogram to reproduce;
+the only preprocessing is resampling. Mel-based models (effnet, CLAP) carry the
+whole chain. So the model choice *is* the choice of how hard the port is —
+prefer raw-waveform models when scores are close.
+
+**Two things that cost nothing now and keep A reachable:** **decided**
+
+- **Pin the preprocessing config as data in the repo** — sample rate, window,
+  hop, n_fft, n_mels, mel scale, log base, epsilon, normalisation — never rely
+  on library defaults. Librosa defaults have changed across versions, so an
+  implicit default is a bug waiting for an upgrade. This config *is* the port
+  spec later.
+- **Keep decode behind a narrow interface** — one function, `(path, offset,
+  duration) -> float array`. Then swapping ffmpeg for AVFoundation is a one-file
+  change, and the brew prototype never forecloses the notarised `.app`.
+
+**The parity test**: embed a fixed set of ~50 tracks through both paths and
+compare cosine similarity, expecting > 0.999. Written once, it catches this
+entire bug class permanently.
+
+### 4.3 Two runtimes, one artifact
+
+Research and shipping have opposite needs: research wants every model available
+and fast iteration; shipping wants a small signed binary with no toolchain.
+Resolve it by making the **exported model file the contract between them**.
+**decided**
+
+- **Research (Phase 0)**: python. torch/transformers/librosa, whatever it takes
+  to try candidates. Ends by exporting the winner to ONNX (with preprocessing
+  baked in) and recording its accuracy.
+- **Shipping**: a native binary that loads that ONNX file. No python, no torch.
+- Export cleanliness is a **selection criterion**, not an afterthought. A model
+  that scores well but will not export with its preprocessing is not a
+  candidate. No ready-made ONNX exports of the leading music embedding models
+  were found, so budget export work per candidate and verify numerically
+  (cosine similarity vs the python reference on a fixed set of tracks) before
+  trusting any of it.
+
+### 4.4 Training must ship, not just inference
+
+Most ML apps ship **inference only**: the developer trains, freezes and ships a
+model file. This one cannot. The classifier is trained on the user's machine
+from their own labels, repeatedly — everyone has different taste — so the
+**training code must live inside the shipped binary**, not just the prediction
+code.
+
+That is normally what forces an app to bundle python and sklearn. Here it does
+not, provided the classifier stays small: multinomial logistic regression over
+~14k x 1280 floats is one matmul plus a softmax to predict (~10 lines) and a few
+dozen lines of gradient descent to fit, running in seconds.
+
+So logistic regression is the **default, not a ban**. Keep the classifier behind
+a narrow boundary so a heavier one is a contained change, and require evidence
+before paying for it: measure whether anything actually beats LR on real labels.
+Lean and fast where possible — but a big app beats no app, so if a heavier
+classifier is what makes the thing work, ship it.
+
+### 4.5 Tech per stage, under the packaging constraint
+
+Packaging an installable, notarised mac app rules some things out.
+
+Target platform is **macOS on Apple Silicon (M1 or newer), mac-only**.
+**decided** Cross-platform is dropped; it was costing generality nobody asked
+for.
+
+| stage | shipped-app option | notes |
+|---|---|---|
+| decode | `minimp3` (public domain, single header) | tiny, embeddable, no license issue |
+| | AVFoundation / ExtAudioFile | native macOS, zero dependency, mac-only |
+| | ~~ffmpeg~~ | **avoid in the shipped app** — see below |
+| resample | baked into the model graph (4.2) | preferred |
+| | libsamplerate (BSD) / Apple AudioConverter | fallback |
+| preprocess | baked into the model graph (4.2) | preferred |
+| inference | ONNX Runtime (+ CoreML EP) | portable, one artifact everywhere |
+| | CoreML | ANE, smallest bundle, mac-only |
+| classifier | hand-written LR | ~50 lines, trains and predicts |
+| storage | SQLite | in every runtime already |
+
+**ffmpeg: depend on it, do not bundle it.** **decided** The distinction matters
+and only one side of it is a problem:
+
+- *Depending* on it — a brew formula with `depends_on "ffmpeg"`, called as a
+  subprocess — is clean. Nothing is redistributed, calling a separate program at
+  arm's length creates no derivative work, and the MIT license is unaffected.
+- *Bundling* it inside a distributed `.app`/`.dmg` means redistributing
+  GPL/LGPL binaries, and the obligations attach to the distribution.
+
+So: **prototype ships via brew with ffmpeg as a dependency.** The concern only
+returns for a double-clickable notarised `.app`, and on mac that is solved for
+free by AVFoundation, which decodes mp3 natively with no dependency at all —
+a one-file change behind the decode interface (§4.2).
+
+Shipping stack for the app phase: **Swift + AVFoundation + CoreML/ONNX Runtime +
+SQLite.** Smallest bundle, Neural Engine available, standard Xcode signing. A
+Godot front end remains possible over that core if a GUI is ever wanted; Godot
+cannot do the inference itself either way.
+
+### 4.6 macOS distribution requirements
+
+Wanting other people to install this on their macs implies, concretely:
+
+- **Prototype distribution is brew** — no signing, no notarisation, no Apple
+  account needed. **decided** Everything below applies to the later `.app`, and
+  the point of §4.2 and the decode interface is that nothing in the prototype
+  forecloses it.
+- **Apple Developer Program membership** (~$99/yr) for a Developer ID
+  certificate. There is no notarisation without it.
+- **Codesign + hardened runtime + notarise + staple.** Unnotarised downloads get
+  progressively more hostile Gatekeeper treatment on recent macOS.
+- **arm64-only is acceptable** (M1 or newer, per the constraint) — no universal
+  binary needed.
+- **Ship the model weights inside the bundle** (30-100 MB) rather than
+  downloading on first run; no hosting, no integrity checks, works offline.
+- **File-access permission**: a `.app` must obtain its own consent to read the
+  user's music folder, unlike a CLI run from Terminal which inherits the
+  terminal's. Verify what macOS currently requires for `~/Music` before
+  assuming it is unrestricted, and avoid the Mac App Store sandbox unless
+  there is a reason to accept it.
 
 ## 5. Labels
 
@@ -432,13 +595,25 @@ Godot UI + local sidecar over stdio, a python GUI, or Tauri.
 
 ## 8. Plan
 
-- **Phase 0 — feasibility, read-only** *(next)*: scan, embed, read labels the
-  user has applied by hand in their own software (a few hundred tracks), train,
-  artist-grouped cross-validation. Report overall and per-label accuracy against
-  the majority baseline, plus install friction and wall-clock per backend.
-  Writes nothing. Answers the question the whole project rests on: *does this
-  beat always-guessing-the-commonest-label on my labels, and by how much?*
-  If the answer is no, stop here — that is a valid outcome, cheaply reached.
+- **Phase 0 — feasibility, read-only** *(next)*. Python, ffmpeg via brew, writes
+  nothing. In this order — the order matters: **decided**
+  1. implement 2-3 embedding backends behind one interface;
+  2. **export spike per candidate**: export to ONNX with preprocessing included,
+     one track, check cosine vs the python reference. Half a day each, and it
+     can veto a model *before* any bulk work;
+  3. embed a 2-3k subset; measure accuracy and wall-clock;
+  4. pick the winner on accuracy + wall-clock + export feasibility together;
+  5. only then embed the full library.
+
+  The reordering is the point. Measuring accuracy first, picking a winner, then
+  discovering it will not port is how a project ends up hand-writing DSP with
+  the labelling effort already spent.
+
+  Reporting: overall and per-label accuracy under artist-grouped
+  cross-validation, against the majority baseline, plus install friction and
+  wall-clock per backend. Answers the question the whole project rests on:
+  *does this beat always-guessing-the-commonest-label on my labels, and by how
+  much?* If the answer is no, stop there — a valid outcome, cheaply reached.
 - **Phase 1 — usable**: tag writing, confidence threshold, playlist in/out,
   batch selection, incremental rescan.
 - **Phase 2 — app**: *possibly unnecessary.* With playlists as the interface,
