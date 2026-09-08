@@ -63,8 +63,9 @@ Consequences that follow directly from this and drive the rest of the design:
 
 ### Functional
 - **Scan**: walk one or more root folders, find mp3s, read the ID3 genre field.
-- **Index**: persist per-track state in a DB (path, size, mtime, content hash,
-  embedding, current tag, predicted tag, confidence, label history).
+- **Index**: persist state in the collection root, under `.vibecheck/`
+  (§7 Storage). Track index and an append-only label log in one SQLite file,
+  embeddings in a separate cache file, config in a text file. **decided**
 - **Train**: fit a classifier on tracks that carry a label.
 - **Predict**: for unlabelled/new tracks, output a label + confidence, or
   abstain below a threshold.
@@ -350,13 +351,81 @@ CoreML EP) over TensorFlow / `essentia-tensorflow`, whose Apple-silicon story is
 the most likely place to lose a weekend. A backend scoring 3 points higher but
 needing a bespoke toolchain is the wrong choice for a solo-maintained tool.
 
-**Storage**: SQLite. One file, no server, 14k rows is nothing, embeddings as
-BLOBs (~70 MB per backend at 1280-d float32).
+**Storage**: in the collection root, under a `.vibecheck/` directory:
+**decided**
+
+```
+~/Music/Collection/.vibecheck/
+  config.toml     # handful of options, human-edited
+  labels.db       # track index + label log — precious, tiny (~5 MB)
+  cache.db        # embeddings — large, regenerable, deletable
+```
+
+**Why in the collection root** — consequences that fall out for free:
+
+- **The index travels with the collection.** Move, rename or copy the folder and
+  the labels, embeddings and history come along. Nothing to re-derive.
+- **Store paths relative to the root**, which the directory defines. The
+  collection can then be mounted anywhere — different user, machine, external
+  drive — without invalidating every row.
+- **The collection root is the only configuration.** No `~/.config` state, no
+  registry of known libraries, no ambiguity about which collection a run means.
+  Several collections are simply several folders, each self-describing.
+- Multi-user portability (§3) comes free: hand someone the folder, they have a
+  working index.
+
+**Why three files and not one:**
+
+- **The label log is the only irreplaceable thing in the project.** It is hours
+  of listening. Embeddings cost 5-10 h of CPU but are re-derivable from the
+  audio at any time; the log is re-derivable from nothing. Separate files mean
+  the log can be backed up, synced, even kept in git, while a 100 MB+ cache is
+  ignored — and the cache can be deleted to switch embedding backends without
+  ever putting the log at risk.
+- **Config a human edits belongs in a text file, not rows in a binary DB.** A
+  handful of options in `config.toml` is editable, greppable and diffable, and
+  needs no subcommand to change a threshold. The DB holds only data the program
+  owns.
+
+**Journal mode: default rollback journal, not WAL.** **decided** WAL only pays
+off for concurrent readers alongside a writer, which never happens here — one
+process doing batch work. Default mode keeps each DB a single file at rest, with
+no `-wal`/`-shm` sidecars in the collection. `synchronous=FULL`; the write volume
+is far too low for the difference to matter.
+
+**Append-only label log.** The bulk of the DB is a log of label changes:
+
+```sql
+CREATE TABLE label_log (
+  id     INTEGER PRIMARY KEY,
+  path   TEXT NOT NULL,      -- relative to collection root
+  hash   TEXT NOT NULL,      -- survives renames
+  label  TEXT,               -- NULL = label removed
+  source TEXT NOT NULL,      -- 'user' | 'model'
+  ts     INTEGER NOT NULL
+);
+```
+
+Never `UPDATE`, never `DELETE`; the current label is the newest row for a path.
+This gives correction history for free, and the file stays trivially
+recoverable.
+
+**`source` is not bookkeeping, it is a correctness requirement.** **decided**
+Without it: a categorise run writes a tag, a later training run reads that tag
+back, and the model trains on its own output — a feedback loop that quietly
+amplifies its own errors until the labels are the model's opinion rather than
+the user's. Training consumes `source='user'` rows only.
+
+**Caution for other setups**: SQLite on cloud-synced storage (Dropbox, iCloud)
+can corrupt. Irrelevant on the reference internal SSD, but worth a warning for
+anyone whose collection lives on synced storage.
 
 **Prototype runtime**: python — all the model tooling lives there.
 
 **Playlist I/O**: `.m3u8` read/write is a few dozen lines; no library needed.
 The work is path normalisation on import, not parsing.
+
+**Config format**: TOML — stdlib `tomllib` in python 3.11+, no dependency.
 
 **App shell**: deferred, and possibly never — see Phase 2. If it happens:
 Godot UI + local sidecar over stdio, a python GUI, or Tauri.
