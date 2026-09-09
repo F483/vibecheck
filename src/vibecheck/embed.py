@@ -6,6 +6,7 @@ re-run evaluation as often as you like.
 
 from __future__ import annotations
 
+import resource
 import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -34,7 +35,15 @@ def _work(item: tuple[str, str]) -> tuple[str, np.ndarray | None, str | None]:
 
 
 def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
-              workers: int = 8, progress_every: int = 250) -> dict[str, int]:
+              workers: int = 8, progress_every: int = 250,
+              max_tasks_per_child: int = 150) -> dict[str, int]:
+    """`max_tasks_per_child` recycles the worker periodically.
+
+    Neural backends grow their memory over a long run -- the MPS caching
+    allocator fragments and `empty_cache()` does not fully give it back -- and
+    on a 16 GB machine that eventually gets the process killed. Restarting the
+    worker every N tracks bounds it for the price of reloading the model.
+    """
     root = root.resolve()
     b = backends.get(backend_name)
     cfg = b.preproc(cfg)
@@ -56,7 +65,8 @@ def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
     t0 = time.time()
     items = [(p, str(root / p)) for p in todo]
     with ProcessPoolExecutor(workers, initializer=_init,
-                             initargs=(backend_name, cfg)) as ex:
+                             initargs=(backend_name, cfg),
+                             max_tasks_per_child=max_tasks_per_child) as ex:
         for i, (rel, vec, err) in enumerate(ex.map(_work, items, chunksize=8), 1):
             if vec is None:
                 stats["failed"] += 1
@@ -72,7 +82,9 @@ def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
                 con.commit()
                 rate = i / (time.time() - t0)
                 eta = (len(items) - i) / rate / 60
-                print(f"  {i}/{len(items)}  {rate:.1f}/s  eta {eta:.1f}min", flush=True)
+                peak = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss / 1e9
+                print(f"  {i}/{len(items)}  {rate:.1f}/s  eta {eta:.1f}min  "
+                      f"peak child {peak:.1f}GB", flush=True)
 
     con.commit()
     con.close()
