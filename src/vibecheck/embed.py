@@ -19,8 +19,9 @@ _W: dict = {}
 
 
 def _init(backend_name: str, cfg: Preproc) -> None:
-    _W["backend"] = backends.get(backend_name)
-    _W["cfg"] = cfg
+    b = backends.get(backend_name)
+    _W["backend"] = b
+    _W["cfg"] = b.preproc(cfg)
 
 
 def _work(item: tuple[str, str]) -> tuple[str, np.ndarray | None, str | None]:
@@ -36,6 +37,7 @@ def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
               workers: int = 8, progress_every: int = 250) -> dict[str, int]:
     root = root.resolve()
     b = backends.get(backend_name)
+    cfg = b.preproc(cfg)
     con = store.cache_db(root)
     lab = store.labels_db(root)
 
@@ -81,6 +83,7 @@ def load(root: Path, backend_name: str, cfg: Preproc,
          paths: list[str]) -> tuple[list[str], np.ndarray]:
     root = root.resolve()
     b = backends.get(backend_name)
+    cfg = b.preproc(cfg)
     lab = store.labels_db(root)
     con = store.cache_db(root)
     hash_by_path = dict(lab.execute("SELECT path, hash FROM tracks"))

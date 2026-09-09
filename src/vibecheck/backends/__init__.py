@@ -17,8 +17,16 @@ class Backend(Protocol):
     name: str
     version: str
 
+    def preproc(self, base: Preproc) -> Preproc:
+        """The config this backend needs.
+
+        Models disagree about sample rate (MERT wants 24 kHz, CLAP 48 kHz), and
+        the rate changes the numbers, so it must reach the cache key rather than
+        being applied silently at decode time.
+        """
+
     def embed(self, excerpts: list[np.ndarray], cfg: Preproc) -> np.ndarray:
-        """Excerpt PCM -> one L2-normalised vector for the track."""
+        """Excerpt PCM -> one vector for the track."""
 
 
 def get(name: str) -> Backend:
@@ -26,4 +34,8 @@ def get(name: str) -> Backend:
         from .mfcc import MFCC
 
         return MFCC()
+    if name == "mert":
+        from .mert import MERT
+
+        return MERT()
     raise KeyError(f"unknown backend: {name}")

@@ -20,6 +20,9 @@ class MFCC:
     name = "mfcc"
     version = "2"  # v1 L2-normalised a heterogeneous vector; see below
 
+    def preproc(self, base: Preproc) -> Preproc:
+        return base
+
     def embed(self, excerpts: list[np.ndarray], cfg: Preproc) -> np.ndarray:
         # No L2 normalisation. These dimensions are in different units --
         # rolloff in Hz (thousands), MFCCs around +/-100, zcr in 0..1 -- so

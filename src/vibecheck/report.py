@@ -42,10 +42,10 @@ def run(root: Path, backend: str = "mfcc", reveal_test: bool = False) -> None:
     true = y[hold]
     for part, name in ((0, "colour"), (1, "level")):
         acc = evaluate.component_accuracy(pred, true, part)
-        parts = [s.split("_")[part] for s in true]
-        base = Counter(parts).most_common(1)[0][1] / len(parts)
+        vals = [s.split("_")[part] for s in true]
+        base = Counter(vals).most_common(1)[0][1] / len(vals)
         print(f"{name:>7} only        {acc * 100:5.1f}%   "
-              f"(baseline {base * 100:.1f}%, {len(set(parts))} values)")
+              f"(baseline {base * 100:.1f}%, {len(set(vals))} values)")
 
     print("\nper label (holdout):")
     for l, (n, acc) in sorted(rep.per_label.items(), key=lambda kv: -kv[1][0]):
