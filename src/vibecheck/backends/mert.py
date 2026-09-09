@@ -36,6 +36,9 @@ class MERT:
 
         self._device = "mps" if torch.backends.mps.is_available() else "cpu"
         model = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True)
+        # MERT ships custom modelling code that ignores the per-call
+        # output_hidden_states argument, so set it on the config instead
+        model.config.output_hidden_states = True
         self._model = model.to(self._device).eval()
         return self._model
 
@@ -47,13 +50,14 @@ class MERT:
         with torch.no_grad():
             for pcm in excerpts:
                 x = torch.from_numpy(pcm).float().unsqueeze(0).to(self._device)
-                out = model(x, output_hidden_states=True)
-                # Mean over time for each layer, then mean over layers.
-                # Published probes usually beat last-layer-only by using more
-                # than the final layer; averaging keeps the dimension at 768
-                # without having to pick a layer before measuring anything.
-                layers = torch.stack([h.mean(dim=1) for h in out.hidden_states])
-                vecs.append(layers.mean(dim=0).squeeze(0).cpu().numpy())
+                out = model(x)
+                # Mean-pool the final layer over time.
+                # MERT's bundled modelling code does not expose intermediate
+                # layers under transformers 5.x, and published probes often do
+                # better from a middle layer than the last one -- so layer
+                # choice is a knob worth revisiting with forward hooks *if*
+                # MERT proves competitive. Not worth the complexity before that.
+                vecs.append(out.last_hidden_state.mean(dim=1).squeeze(0).cpu().numpy())
         v = np.mean(vecs, axis=0)
         # homogeneous dimensions here, unlike the MFCC stat vector, so L2 is
         # safe and standard for a transformer embedding

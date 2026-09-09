@@ -10,7 +10,11 @@ requires-python = ">=3.12"
 dependencies = [
     "librosa>=1.0.0",
     "numpy>=2.5.3",
+    "onnxruntime>=1.29.0",
+    "onnxscript>=0.7.1",
     "scikit-learn>=1.9.0",
+    "torch>=2.14.0",
+    "transformers>=5.16.1",
 ]
 
 [build-system]
