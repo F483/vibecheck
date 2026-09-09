@@ -65,12 +65,17 @@ class CLAP:
 
         model = self._load()
         inputs = self._proc(
-            audios=[x.astype(np.float32) for x in excerpts],
+            audio=[x.astype(np.float32) for x in excerpts],
             sampling_rate=cfg.sample_rate, return_tensors="pt",
         )
         inputs = {k: v.to(self._device) for k, v in inputs.items()}
-        with torch.no_grad():
-            feats = model.get_audio_features(**inputs)
+        with torch.inference_mode():
+            out = model.get_audio_features(**inputs)
+        # transformers 5.x returns a model output here, not a tensor;
+        # pooler_output is the projected audio embedding CLAP is trained on
+        feats = out.pooler_output if hasattr(out, "pooler_output") else out
         v = feats.mean(dim=0).cpu().numpy()
+        if self._device == "mps":
+            torch.mps.empty_cache()
         n = np.linalg.norm(v)
         return ((v / n) if n else v).astype(np.float32)
