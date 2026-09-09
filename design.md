@@ -89,14 +89,19 @@ Consequences that follow directly from this and drive the rest of the design:
 - **Feedback**: detect labels that are new or changed since the last run by
   comparing each file's current tag to the last-seen value in the DB, and
   retrain on them.
-- **Holdout**: a fixed slice of labelled tracks (~10-20%) is **never trained
-  on**, and exists only to report honest accuracy. **decided** Membership is
-  derived deterministically from the content hash (e.g. `hash % 10 == 0`), so it
-  is stable as labels accumulate, needs no bookkeeping, and cannot drift.
+- **Holdout, in three parts**: labelled tracks are bucketed by content hash
+  into `hash % 10` — bucket 0 is **test**, bucket 1 is **validation**, the rest
+  is training. **decided** Deterministic from content, so the split is stable as
+  labels accumulate, survives renames, is reproducible after deleting the DB,
+  and has no state to get out of sync.
+  Three parts rather than two because picking the best of several backends
+  against one holdout inflates the winner's score by selection alone. Backend
+  choice and threshold tuning are decided on **validation**; **test** is looked
+  at once, at the end. Roughly 860 tracks each at current label counts, which
+  pins overall accuracy to about +/-1.5 points.
 - **Evaluate**: report accuracy on the holdout — overall and per label — against
-  the majority-class baseline. Near-duplicate tracks are grouped so that copies,
-  remixes and re-rips never straddle the train/holdout boundary (see §4.7).
-  This is the only meaningful benchmark and drives every model choice.
+  the majority-class baseline. This is the only meaningful benchmark and drives
+  every model choice.
 
 ### Non-functional
 - Incremental and resumable: rescans touch only changed files; a killed run
@@ -121,9 +126,29 @@ Consequences that follow directly from this and drive the rest of the design:
 - Never destroy tags: back up original tag values in the DB before any write.
 
 ### Scale estimate
-Reference collection (measured 2026-09-08): **13,848 mp3, 199 GB**, ~14 MB and
+Reference collection (measured 2026-09-09): **14,194 mp3, ~199 GB**, ~14 MB and
 ~6 min per track — DJ-length material at high bitrate. Other formats present but
 out of scope: mp3 only, the user converts beforehand. **decided**
+
+**Labels (measured 2026-09-09):** 8,619 tracks labelled (60.7%), 5,575 not.
+Exactly **24 distinct strings, no typos**. Applied **by ear**, not derived from
+metadata rules — so an audio-only model is being asked to predict something
+audible, and the numbers will mean what they appear to mean.
+
+- **Majority baseline 23.9%** (`Purple_C`, 2061 tracks). This is the number to
+  beat; 1/24 = 4.2% is not the relevant floor.
+- **Imbalance 412x**: `Purple_C` 2061 down to `Blue_A` 5, `Aqua_A` 8,
+  `Green_A` 18, `Orange_A` 37. Seventeen labels have >= 100 tracks; four have
+  under 30 and can be neither learned nor measured. Report per-label numbers
+  only above ~30 examples and mark the rest as insufficient data.
+- The vocabulary is `Colour_Level` over 8 colours and 3 levels, where **A is
+  best** — hence the skew: **C 65%, B 30%, A 5%**. Few favourites, many
+  merely-fine tracks.
+- Consequence for reading results: "always guess C" already scores 65% on the
+  level component while "always Purple" scores only ~27% on the colour, so
+  nearly all the difficulty is in the colour. A single joint accuracy number
+  hides this; the report decomposes both (diagnostic only — the app still
+  treats labels as opaque, §5).
 
 Reference machine: M1 Pro, 16 GB, collection on internal SSD. Sized for this,
 but **must not assume it** — see portability below.
@@ -325,23 +350,22 @@ Wanting other people to install this on their macs implies, concretely:
   assuming it is unrestricted, and avoid the Mac App Store sandbox unless
   there is a reason to accept it.
 
-### 4.7 Grouping for honest evaluation
+### 4.7 Near-duplicate grouping — considered, dropped
 
-The collection contains many near-identical files — an original, a remix, an
-edit, a re-rip of the same track. If one copy is trained on and its twin sits in
-the holdout, the model scores well by effectively recognising a track it has
-already seen rather than by having learned anything. The reported accuracy is
-then too high, and every decision built on it is built on a number that is not
-real.
+Originally the holdout was to be decided per group of near-identical tracks, so
+a track and its own copy could not sit on opposite sides of the split and
+inflate the score. **Dropped. decided**
 
-**Group near-duplicates using the embeddings themselves** — cosine similarity
-near 1.0 — and keep a group wholly inside training or wholly inside the
-holdout. **decided** This needs no metadata at all: no artist tag, no album, no
-folder heuristics, consistent with audio-only classification (§2). It is also
-free, since the embeddings already exist.
+Two reasons, both from the actual collection:
 
-To be explicit about a distinction that is easy to blur: file paths and content
-hashes are read to *identify files on disk*. They are never inputs to the model.
+- True duplicates are rare here, so the leak it prevents is small.
+- **Remixes and variations are labelled differently on purpose** — the user
+  hears them as different, which is the whole premise of the project. Grouping
+  by audio similarity would have pulled deliberately-distinct labels into one
+  group and done active harm.
+
+The holdout is therefore a plain per-track split, keyed on the content hash.
+Simpler, and it respects what the labels actually mean.
 
 ## 5. Labels
 
@@ -417,18 +441,20 @@ unresolved until the architecture is proven; getting the core right comes first,
 and a wrong interface is cheap to change while a wrong core is not.
 
 ```sh
-# train from entire collection, looking for new or changed labels
-vibecheck train --limit=100
+# pick up new files and any label edits made in other software, then retrain
+vibecheck sync
 
-# train from a limited playlist, looking for new or changed labels
-vibecheck train --limit=100 --input=<playlist>.m3u8
+# label unlabelled tracks the model is confident about; report what it touched
+vibecheck label --limit=100 --output=<playlist>.m3u8
 
-# categorise from entire collection, assigning labels to files without one
-vibecheck categorise --limit=100 --output=<playlist>.m3u8
-
-# categorise within a playlist, assigning labels to files without one
-vibecheck categorise --limit=100 --input=<playlist>.m3u8 --output=<playlist>.m3u8
+# any run can be restricted to a playlist instead of the whole collection
+vibecheck sync  --input=<playlist>.m3u8
+vibecheck label --input=<playlist>.m3u8 --limit=100
 ```
+
+There is no separate "train" step in normal use: corrections are detected by
+comparing tags against the last recorded value, so `sync` is scan, detect and
+retrain together.
 
 What matters at this stage is only the shape:
 
@@ -642,8 +668,10 @@ Godot UI + local sidecar over stdio, a python GUI, or Tauri.
 
 ## 8. Roadmap
 
-**Phase 0 — feasibility. Deliverable: numbers, not software.** *(next)*
-Throwaway python. Take the tracks already labelled by hand, embed them with 2-3
+**Phase 0 — feasibility. Deliverable: numbers, not software.** *(in progress)*
+Python. In practice the scanning, storage and embedding-cache parts follow the
+schema in §7 and are worth keeping into Phase 1; only the reporting is
+throwaway. Take the tracks already labelled by hand, embed them with 2-3
 backends plus the MFCC baseline, and measure. In this order — the order matters:
 **decided**
 
@@ -699,10 +727,6 @@ Known, accepted, not problems to solve:
 - **Taste drift**: labels legitimately change over time. Newest row wins.
 
 Needs an answer from me, but not blocking:
-- How many of the initial labels came from a playlist rule over metadata rather
-  than from listening? Anything driven by an inaudible rule caps what an
-  audio-only model can reach, and would be mistaken for the approach failing.
-  If the share is meaningful, Phase 0 should report those subsets separately.
 - Ceiling check: relabel ~100 tracks blind and compare to the earlier labels.
   That self-agreement rate is the real accuracy target; chasing above it is
   chasing noise.

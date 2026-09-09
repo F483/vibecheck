@@ -10,3 +10,11 @@
 .env.*
 
 # build / deps (stack TBD)
+
+# python
+.venv/
+__pycache__/
+*.pyc
+
+# phase 0 scratch output
+out/

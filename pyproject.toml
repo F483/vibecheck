@@ -1,0 +1,18 @@
+[project]
+name = "vibecheck"
+version = "0.1.0"
+description = "Learns your music labelling from audio and applies it to new tracks"
+readme = "README.md"
+authors = [
+    { name = "F483", email = "fabian.barkhau@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "librosa>=1.0.0",
+    "numpy>=2.5.3",
+    "scikit-learn>=1.9.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.11,<0.13.0"]
+build-backend = "uv_build"
