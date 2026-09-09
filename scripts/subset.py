@@ -18,9 +18,21 @@ from pathlib import Path
 from vibecheck import store
 
 TAKE_ALL_BELOW = 40
+FROZEN = Path(__file__).with_name("phase0_subset.txt")
 
 
 def subset(root: Path, target: int = 2500) -> list[str]:
+    """The frozen list wins when present.
+
+    Selection used to be derived from the content hash, which made it unstable:
+    changing the hash function silently re-drew the sample and stranded work
+    already done for the old one. A comparison set has to be an artifact, not
+    something recomputed from whatever the identity function happens to be
+    today.
+    """
+    if FROZEN.exists():
+        return [l for l in FROZEN.read_text().splitlines() if l]
+
     lab = store.labels_db(root)
     labels = store.current_labels(lab, source="user")
     hash_by_path = dict(lab.execute("SELECT path, hash FROM tracks"))
