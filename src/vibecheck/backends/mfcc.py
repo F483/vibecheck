@@ -18,13 +18,16 @@ def _stats(x: np.ndarray) -> np.ndarray:
 
 class MFCC:
     name = "mfcc"
-    version = "1"
+    version = "2"  # v1 L2-normalised a heterogeneous vector; see below
 
     def embed(self, excerpts: list[np.ndarray], cfg: Preproc) -> np.ndarray:
-        per_excerpt = [self._one(x, cfg) for x in excerpts]
-        v = np.mean(per_excerpt, axis=0)
-        n = np.linalg.norm(v)
-        return (v / n if n else v).astype(np.float32)
+        # No L2 normalisation. These dimensions are in different units --
+        # rolloff in Hz (thousands), MFCCs around +/-100, zcr in 0..1 -- so
+        # dividing by one norm lets the Hz-scaled dims consume the whole vector
+        # and numerically annihilates the rest. v1 did exactly that and scored
+        # below the majority baseline. Per-dimension standardisation belongs in
+        # the classifier, fitted on training data only.
+        return np.mean([self._one(x, cfg) for x in excerpts], axis=0).astype(np.float32)
 
     def _one(self, pcm: np.ndarray, cfg: Preproc) -> np.ndarray:
         mel = librosa.feature.melspectrogram(

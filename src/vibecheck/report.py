@@ -7,8 +7,6 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
-from sklearn.linear_model import LogisticRegression
-
 from . import embed, evaluate, store
 from .config import DEFAULT
 
@@ -30,18 +28,16 @@ def run(root: Path, backend: str = "mfcc", reveal_test: bool = False) -> None:
     parts = evaluate.split(hashes)
     against = evaluate.TEST if reveal_test else evaluate.VAL
     rep = evaluate.evaluate(X, y, parts, against)
-    hold = parts == against
+    hold, train = parts == against, parts == evaluate.TRAIN
 
-    print(f"\ntrain {rep.n_train}   {against} {rep.n_holdout}"
-          f"   (test slice sealed)" if not reveal_test else
-          f"\ntrain {rep.n_train}   {against} {rep.n_holdout}")
+    sealed = "" if reveal_test else "   (test slice sealed)"
+    print(f"\ntrain {rep.n_train}   {against} {rep.n_holdout}{sealed}")
     print(f"majority baseline  {rep.baseline * 100:5.1f}%")
     print(f"model accuracy     {rep.accuracy * 100:5.1f}%   "
           f"({(rep.accuracy - rep.baseline) * 100:+.1f} pts)")
 
     # diagnostics: did it learn the colour, or just the commonest level?
-    model = LogisticRegression(max_iter=2000, class_weight="balanced",
-                               n_jobs=-1).fit(X[~hold], y[~hold])
+    model = evaluate._fit(X[train], y[train])
     pred = model.predict(X[hold])
     true = y[hold]
     for part, name in ((0, "colour"), (1, "level")):
