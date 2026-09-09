@@ -15,18 +15,27 @@ from ..config import Preproc
 
 MODEL_ID = "m-a-p/MERT-v1-95M"
 SAMPLE_RATE = 24000
+WINDOW_SECONDS = 10.0
+N_WINDOWS = 9
 
 
 class MERT:
     name = "mert"
-    version = "1"
+    version = "2"  # v1 used 3x30s windows and exhausted memory; see preproc
 
     def __init__(self) -> None:
         self._model = None
         self._device = None
 
     def preproc(self, base: Preproc) -> Preproc:
-        return dataclasses.replace(base, sample_rate=SAMPLE_RATE)
+        # 9 x 10 s rather than 3 x 30 s: same 90 s of audio per track, but
+        # attention is quadratic in window length, so 30 s windows (2250
+        # tokens) cost 3x the compute and ~9x the peak memory of 10 s ones.
+        # v1 drove this machine to 23 GB of swap and was killed.
+        return dataclasses.replace(
+            base, sample_rate=SAMPLE_RATE,
+            excerpt_seconds=WINDOW_SECONDS, n_excerpts=N_WINDOWS,
+        )
 
     def _load(self):
         if self._model is not None:
@@ -47,7 +56,7 @@ class MERT:
 
         model = self._load()
         vecs = []
-        with torch.no_grad():
+        with torch.inference_mode():
             for pcm in excerpts:
                 x = torch.from_numpy(pcm).float().unsqueeze(0).to(self._device)
                 out = model(x)
@@ -58,6 +67,8 @@ class MERT:
                 # choice is a knob worth revisiting with forward hooks *if*
                 # MERT proves competitive. Not worth the complexity before that.
                 vecs.append(out.last_hidden_state.mean(dim=1).squeeze(0).cpu().numpy())
+        if self._device == "mps":
+            torch.mps.empty_cache()  # the caching allocator otherwise grows
         v = np.mean(vecs, axis=0)
         # homogeneous dimensions here, unlike the MFCC stat vector, so L2 is
         # safe and standard for a transformer embedding

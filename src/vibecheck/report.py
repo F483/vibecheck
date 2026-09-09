@@ -11,12 +11,19 @@ from . import embed, evaluate, store
 from .config import DEFAULT
 
 
-def run(root: Path, backend: str = "mfcc", reveal_test: bool = False) -> None:
+def run(root: Path, backend: str = "mfcc", reveal_test: bool = False,
+        only: list[str] | None = None) -> None:
+    """`only` restricts scoring to a fixed track list.
+
+    Backends must be compared on identical tracks; scoring one on 8,619 and
+    another on a 2,566 subset would compare training-set sizes, not backends.
+    """
     lab = store.labels_db(root)
     labels = store.current_labels(lab, source="user")
     hash_by_path = dict(lab.execute("SELECT path, hash FROM tracks"))
 
-    paths, X = embed.load(root, backend, DEFAULT, sorted(labels))
+    wanted = sorted(set(labels) & set(only)) if only else sorted(labels)
+    paths, X = embed.load(root, backend, DEFAULT, wanted)
     if not paths:
         sys.exit("no embeddings: run embed first")
     y = np.array([labels[p] for p in paths])
@@ -58,6 +65,13 @@ def run(root: Path, backend: str = "mfcc", reveal_test: bool = False) -> None:
 
 
 if __name__ == "__main__":
-    run(Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Music" / "Collection",
-        sys.argv[2] if len(sys.argv) > 2 else "mfcc",
-        reveal_test="--test" in sys.argv)
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    root = Path(args[0]) if args else Path.home() / "Music" / "Collection"
+    only = None
+    if "--subset" in sys.argv:
+        sys.path.insert(0, "scripts")
+        from subset import subset as _subset
+
+        only = _subset(root)
+    run(root, args[1] if len(args) > 1 else "mfcc",
+        reveal_test="--test" in sys.argv, only=only)

@@ -38,4 +38,8 @@ def get(name: str) -> Backend:
         from .mert import MERT
 
         return MERT()
+    if name == "clap":
+        from .clap import CLAP
+
+        return CLAP()
     raise KeyError(f"unknown backend: {name}")
