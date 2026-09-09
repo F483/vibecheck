@@ -42,4 +42,8 @@ def get(name: str) -> Backend:
         from .clap import CLAP
 
         return CLAP()
+    if name == "whisper":
+        from .whisper import Whisper
+
+        return Whisper()
     raise KeyError(f"unknown backend: {name}")
