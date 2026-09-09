@@ -24,9 +24,12 @@ def vibecheck_dir(root: Path) -> Path:
 def _connect(path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(path)
     # rollback journal, not WAL: one process, batch writes, and a single file
-    # at rest instead of -wal/-shm litter in the collection (design.md 7)
+    # at rest instead of -wal/-shm litter in the collection (README design §7)
     con.execute("PRAGMA journal_mode=DELETE")
     con.execute("PRAGMA synchronous=FULL")
+    # writers are brief but the chunked embedding loop means several processes
+    # touch these files; wait for the lock instead of failing the run
+    con.execute("PRAGMA busy_timeout=60000")
     return con
 
 
