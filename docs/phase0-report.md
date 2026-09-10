@@ -1,4 +1,4 @@
-# Phase 0 report — can a model learn one person's music labels?
+# Vibe Check — Phase 0 report: can a model learn one person's music labels?
 
 Date: 2026-09-10. Status: **complete. Verdict: GO.**
 

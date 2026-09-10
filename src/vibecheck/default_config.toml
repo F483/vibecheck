@@ -1,4 +1,4 @@
-# Default vibecheck configuration.
+# Default Vibe Check configuration.
 #
 # The app treats labels as opaque strings and never parses them. This file is
 # what tells it that "Purple" is a kind of "Vibrant" and a kind of "Dark" --
