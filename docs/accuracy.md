@@ -85,6 +85,34 @@ should be expected to buy about one point.**
 Tone is the extreme case: 78.6% from just 344 training tracks, 80.1% from
 6,891. It is essentially free.
 
+## Per-window experiment (24 windows, mean+std)
+
+Two hypotheses tested with a 9-hour re-embed keeping every window separate:
+that mean-pooling blurs the section of a track the label describes, and that
+9 x 10 s was too little of a ~6 minute track.
+
+```
+colour, validation
+   9 windows, mean          55.6%     (the shipped setup)
+   9 windows, mean+std      55.2%
+  24 windows, mean          56.7%
+  24 windows, mean+std      58.5%     <- best, +2.0
+```
+
+- **Both changes are needed.** More windows alone: +0.2. mean+std alone: worse.
+  The standard deviation across a track only becomes a stable estimate with
+  enough windows to measure it.
+- **Colour only.** hue 68.4 -> 68.3, tone 79.6 -> 78.9.
+- **The stated hypothesis was wrong.** If a track's label came from its peak
+  section, predicting from the single most confident window should have won. It
+  came last (55.1%). Training on all 165,384 windows individually reached
+  exactly 58.5% -- the same as pooling the same information better. There is no
+  characteristic moment carrying the label; the small gain is from how much a
+  track *varies*, not from finding its best part.
+
+Cost: 2.7x the embedding time (0.3 vs 0.7 tracks/s) for +2.0 on one axis.
+Worth adopting only if colour accuracy matters more than embedding throughput.
+
 ## What limits this
 
 Four independent representations were tested — CLAP (audio-text contrastive),
