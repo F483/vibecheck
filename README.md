@@ -383,6 +383,13 @@ Simpler, and it respects what the labels actually mean.
 **One flat set of label strings. One label per track. That is the entire
 model.** **decided**
 
+**Prediction is hierarchical even though labelling is not.** **decided** The
+user only ever applies the flat labels. The app derives coarser groupings from
+a declared hierarchy and predicts the finest level it is confident about, which
+is what makes it useful at all: 8-way colour is only ~56% accurate, but the
+2-way tone derived from it is ~80%. Writing "Dark" beats writing a wrong colour
+or writing nothing. See §5a.
+
 - The vocabulary is whatever strings the user provides — e.g. `Red_High`,
   `Red_Mid`, `Red_Low`, `Green_High`, ...
 - The app assigns **no meaning** to them: no axes, no ordering, no hue, no
@@ -398,6 +405,30 @@ structured scheme could have shared data across values and needed roughly half
 that. Accepted deliberately — the app not knowing anything about label semantics
 is worth more than the labels saved, and it is what makes the tool work
 unchanged for anyone else's scheme.
+
+### 5a. Cascading prediction
+
+Measured on held-out data, predicting one label per track caps out around 56%
+for eight colours. The same model reaches ~66% at four hue families and ~80% at
+two tones, because those distinctions are carried more strongly by the audio.
+
+So the app predicts all three from the same user labels, and emits the finest
+one that clears a confidence threshold:
+
+```
+confident about the colour  -> write "Purple"
+only about the hue family   -> write "Vibrant"
+only about the tone         -> write "Dark"
+confident about none        -> write nothing
+```
+
+Thresholds are not set by hand. The user states a target accuracy and the app
+derives per-level thresholds to meet it. Measured: target 0.85 labels ~84% of
+tracks at ~81% correct; target 0.90 labels ~72% at ~86%.
+
+The honest caveat, recorded so it is not forgotten: most of the coverage is
+tone. "Dark", correct 88% of the time, is a much weaker statement than "Purple"
+correct 88% of the time. This is a labelling accelerator, not an auto-labeller.
 
 ### What to expect from a taste-based vocabulary
 
