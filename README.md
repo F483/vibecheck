@@ -1,4 +1,4 @@
-# vibecheck
+# Vibe Check
 
 Learns a person's own music labelling from audio, and applies it to the rest of
 their collection. Local, mac-only, MIT licensed.
