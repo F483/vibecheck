@@ -42,6 +42,10 @@ def get(name: str) -> Backend:
         from .clap import CLAP
 
         return CLAP()
+    if name == "clapw":
+        from .clapw import CLAPWindows
+
+        return CLAPWindows()
     if name == "muq":
         from .muq import MuQ
 
