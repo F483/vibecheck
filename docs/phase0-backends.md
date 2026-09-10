@@ -230,10 +230,71 @@ Ranked by expected value per unit of work.
    locked — the global threshold currently treats a 2,000-example label and a
    5-example label identically.
 
-## 11. Next
+## 11. Full data, and the sealed test
 
-- Export spike on CLAP, to decide the winner on measurement rather than
-  assumption. Accuracy is tied, so the tiebreaker is portability, and MERT's
-  raw-waveform input is verified to export with cosine 1.000000.
-- Full-library embed for the winner (~6,050 more tracks, 2.5-3.5 h).
-- Configurations worth trying before settling: see §10.
+CLAP embedded over all 8,619 labelled tracks; Whisper added on the subset as a
+deliberately different (captioning-trained) candidate.
+
+**Cross-validation overturned the ensemble result.** 5-fold CV on 2,161
+training tracks, which is far tighter than the 269-track validation slice:
+
+```
+  clap                  43.5% +/- 0.6     <- best
+  clap+mert             43.5% +/- 1.1
+  clap+whisper          42.8% +/- 1.0
+  whisper               39.8% +/- 1.4
+  mert                  37.9% +/- 2.5
+  clap+whisper+mert     42.6% +/- 0.6
+```
+
+The apparent +1.9 from `clap+whisper` on the validation slice was noise. No
+combination beats CLAP alone. **Configuration locked: CLAP, logistic regression
+on standardised features, C=0.001 chosen by CV on the training split.**
+
+**Sealed test, read once, after locking:**
+
+```
+clap, LR C=0.001, 6,891 train / 861 test
+
+  baseline         22.9%
+  accuracy         45.6%   (+22.8)
+  colour only      55.7%   (baseline 26.1, +29.6)
+  level only       69.6%   (baseline 64.2, +5.3)
+  top-1 45.6%   top-2 58.4%   top-3 69.1%
+
+  threshold  kept   precision
+     0.3     63.8%    55.9%
+     0.4     45.5%    60.5%
+     0.5     32.2%    63.2%
+     0.6     22.9%    65.5%
+     0.7     13.4%    73.0%
+```
+
+Validation said 47.8%, test says 45.6%. That 2.2-point drop is the selection
+inflation predicted in §9 — the estimate was 2-4 points, and holding the test
+slice back is what made it visible instead of believed.
+
+**Level became learnable with more data.** At 2,161 training tracks it was
+*below* baseline for all three backends, and the earlier conclusion here was
+that taste is not audio-predictable. At 6,891 it is +5.3 on held-out data.
+Small, but real and outside noise. The earlier conclusion was wrong, and it was
+wrong because of data volume, not representation. Colour was never in doubt and
+is now +29.6.
+
+**Phase 0 go/no-go: GO.** The question was whether this beats always guessing
+the commonest label. It does, by 22.8 points on data never used for any
+decision, and the confidence threshold behaves: keeping the top 45% of
+predictions gives ~61% precision, the top 23% gives ~66%.
+
+## 12. Next
+
+- Phase 1: the CLI that uses this (scan, embed, bulk-label with the threshold,
+  write tags, pick up corrections).
+- Duplicate cleanup then re-measure: 676 redundant copies, and level labels are
+  contaminated by duplicate-downgrading (§7). Level is the weakest axis and this
+  is the one known, unexploited fix for it.
+- More labels still help: the learning curve had not flattened at 6,891.
+- Cheap unexplored: mean+std pooling, more windows per track, per-label
+  thresholds.
+- Not worth pursuing: MERT and Whisper as ensemble partners; MFCC as anything
+  but a floor.
