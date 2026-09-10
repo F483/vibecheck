@@ -23,13 +23,20 @@ def vibecheck_dir(root: Path) -> Path:
 
 def _connect(path: Path) -> sqlite3.Connection:
     con = sqlite3.connect(path)
-    # rollback journal, not WAL: one process, batch writes, and a single file
-    # at rest instead of -wal/-shm litter in the collection (README design §7)
-    con.execute("PRAGMA journal_mode=DELETE")
-    con.execute("PRAGMA synchronous=FULL")
-    # writers are brief but the chunked embedding loop means several processes
-    # touch these files; wait for the lock instead of failing the run
+    # busy_timeout FIRST: setting journal_mode itself needs a lock, so a
+    # timeout set afterwards does not protect the statement most likely to
+    # block against a concurrent writer.
     con.execute("PRAGMA busy_timeout=60000")
+    # rollback journal, not WAL: one process, batch writes, and a single file
+    # at rest instead of -wal/-shm litter in the collection (README design §7).
+    # DELETE is already SQLite's default, so this is defensive -- and it cannot
+    # be set while another connection holds the database, which busy_timeout
+    # does not cover. A reader must not fail because a writer is mid-commit.
+    try:
+        con.execute("PRAGMA journal_mode=DELETE")
+        con.execute("PRAGMA synchronous=FULL")
+    except sqlite3.OperationalError:
+        pass
     return con
 
 

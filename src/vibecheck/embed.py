@@ -16,6 +16,8 @@ import numpy as np
 from . import audio, backends, store
 from .config import Preproc
 
+COMMIT_EVERY = 10
+
 _W: dict = {}
 
 
@@ -96,6 +98,12 @@ def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
                  vec.shape[0], vec.astype(np.float32).tobytes(), int(time.time())),
             )
             stats["done"] += 1
+            # Commit far more often than we print. An open write transaction
+            # holds the lock, and at ~0.3 tracks/s a 100-track gap keeps the
+            # database locked for five minutes at a stretch -- long enough to
+            # stall a scan in normal use. Writes are tiny; commit cheaply.
+            if i % COMMIT_EVERY == 0:
+                con.commit()
             if i % progress_every == 0:
                 con.commit()
                 rate = i / (time.time() - t0)

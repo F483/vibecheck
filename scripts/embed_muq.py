@@ -93,8 +93,9 @@ def main(limit: int | None, which: str = "labelled") -> int:
             (hash_by_path[rel], b.name, b.version, cfg.digest(), v.shape[0],
              v.tobytes(), int(time.time())))
         done += 1
+        if i % 10 == 0:
+            cache.commit()   # short transactions: see COMMIT_EVERY in embed.py
         if i % 50 == 0:
-            cache.commit()
             r = i / (time.time() - t0)
             print(f"  {i}/{len(todo)}  {r:.1f}/s  eta {(len(todo)-i)/r/60:.1f}min",
                   flush=True)
