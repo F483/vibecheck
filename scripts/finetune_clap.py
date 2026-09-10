@@ -28,7 +28,8 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from torch.utils.data import DataLoader, Dataset
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, "src")
 from vibecheck import audio, evaluate, store  # noqa: E402
@@ -40,34 +41,61 @@ WIN = 10.0
 NWIN = 9
 
 
-class Windows(Dataset):
-    def __init__(self, root: Path, items, classes, proc):
+class Loader:
+    """Thread-prefetched batches.
+
+    Not torch's DataLoader: its worker *processes* deadlock against MPS on
+    macOS -- the run stalls silently at 0% CPU with no error. Decoding is an
+    ffmpeg subprocess and so releases the GIL, which makes threads a better fit
+    anyway. Prefetch depth is bounded so decoding cannot run ahead of the GPU
+    and exhaust memory.
+    """
+
+    def __init__(self, root, items, classes, proc, batch, shuffle, workers=4,
+                 depth=6):
         self.root, self.items, self.proc = root, items, proc
+        self.batch, self.shuffle = batch, shuffle
+        self.workers, self.depth = workers, depth
         self.cls = {c: i for i, c in enumerate(classes)}
         self.cfg = DEFAULT.__class__(sample_rate=SR, n_excerpts=NWIN,
                                      excerpt_seconds=WIN)
 
+    def _prepare(self, chunk):
+        feats, counts, ys = [], [], []
+        for rel, label in chunk:
+            try:
+                ws = audio.excerpts(str(self.root / rel), self.cfg)
+                n = min(len(w) for w in ws)
+                ws = [w[:n] for w in ws]
+            except Exception:
+                ws = [np.zeros(int(SR * WIN), dtype=np.float32)]
+            f = self.proc(audio=ws, sampling_rate=SR,
+                          return_tensors="pt")["input_features"]
+            feats.append(f); counts.append(f.shape[0]); ys.append(self.cls[label])
+        return torch.cat(feats), counts, torch.tensor(ys)
+
     def __len__(self):
-        return len(self.items)
+        return (len(self.items) + self.batch - 1) // self.batch
 
-    def __getitem__(self, i):
-        rel, label = self.items[i]
-        try:
-            ws = audio.excerpts(str(self.root / rel), self.cfg)
-        except Exception:
-            ws = [np.zeros(int(SR * WIN), dtype=np.float32)]
-        n = min(len(w) for w in ws)
-        ws = [w[:n] for w in ws]
-        feats = self.proc(audio=ws, sampling_rate=SR, return_tensors="pt")
-        return feats["input_features"], self.cls[label], i
-
-
-def collate(batch):
-    xs = torch.cat([b[0] for b in batch])
-    counts = [b[0].shape[0] for b in batch]
-    ys = torch.tensor([b[1] for b in batch])
-    idx = torch.tensor([b[2] for b in batch])
-    return xs, counts, ys, idx
+    def __iter__(self):
+        items = list(self.items)
+        if self.shuffle:
+            np.random.shuffle(items)
+        chunks = [items[i:i + self.batch] for i in range(0, len(items), self.batch)]
+        with ThreadPoolExecutor(self.workers) as ex:
+            pending = deque()
+            it = iter(chunks)
+            for _ in range(self.depth):
+                c = next(it, None)
+                if c is None:
+                    break
+                pending.append(ex.submit(self._prepare, c))
+            while pending:
+                out = pending.popleft().result()
+                c = next(it, None)
+                if c is not None:
+                    pending.append(ex.submit(self._prepare, c))
+                yield out
 
 
 def track_logits(logits, counts):
@@ -136,15 +164,14 @@ def main() -> int:
     ], weight_decay=0.01)
     lossf = torch.nn.CrossEntropyLoss()
 
-    loaders = {k: DataLoader(Windows(root, v, classes, proc),
-                             batch_size=args.batch_tracks, shuffle=(k == "train"),
-                             num_workers=4, collate_fn=collate, persistent_workers=True)
+    loaders = {k: Loader(root, v, classes, proc, args.batch_tracks,
+                         shuffle=(k == "train"))
                for k, v in split.items()}
 
     def run(split_name, train: bool):
         tower.train(train); head.train(train)
         tot = corr = 0; loss_sum = 0.0
-        for xs, counts, ys, _ in loaders[split_name]:
+        for n_done, (xs, counts, ys) in enumerate(loaders[split_name], 1):
             xs, ys = xs.to(dev), ys.to(dev)
             with torch.set_grad_enabled(train):
                 feats = projection(tower(xs).pooler_output)
@@ -152,8 +179,11 @@ def main() -> int:
                 loss = lossf(logits, ys)
                 if train:
                     opt.zero_grad(); loss.backward(); opt.step()
-            loss_sum += float(loss) * len(ys)
+            loss_sum += float(loss.detach()) * len(ys)
             corr += int((logits.argmax(1) == ys).sum()); tot += len(ys)
+            if train and n_done % 200 == 0:
+                print(f"    {n_done}/{len(loaders[split_name])} batches  "
+                      f"running acc {corr/max(tot,1)*100:.1f}%", flush=True)
         return loss_sum / max(tot, 1), corr / max(tot, 1)
 
     best = 0.0
