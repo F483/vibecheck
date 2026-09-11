@@ -28,14 +28,31 @@ Dark  = ["Red", "Green", "Blue", "Purple"]
 Light = ["Orange", "Yellow", "Aqua", "Pink"]
 
 [predict]
-# One dial. The app picks its own confidence thresholds per level to hit this,
-# accepting lower coverage as the target rises. Measured behaviour at 0.85:
-# ~84% of tracks labelled, ~81% correct; at 0.90: ~72% labelled, ~86% correct.
-target_accuracy = 0.85
-
-# Write the finest level that clears its threshold; leave the tag untouched when
-# nothing does. Silence is a valid, useful answer.
-write_coarse_labels = true
+# The only dial: how costly it is to be misled by a wrong label.
+#
+# The app does not use fixed confidence thresholds. It scores every option by
+# how much work it leaves the user -- how many binary choices remain -- and
+# picks the cheapest:
+#
+#   exactly right ....................... 0
+#   wrong label, right hue .............. 1 + misleading_cost
+#   wrong hue, right tone ............... 2 + misleading_cost
+#   wrong tone, or nothing emitted ...... 3   (+ misleading_cost if asserted)
+#   emits hue and it is right ........... 1
+#   emits tone and it is right .......... 2
+#
+# Near-misses get partial credit, so the model is pushed toward being close
+# rather than boldly wrong, and the cascade (colour -> hue -> tone -> silence)
+# falls out of the arithmetic instead of being hand-tuned.
+#
+# Measured per 100 new tracks (doing it all by hand costs 3.00/track):
+#   1  -> 55 exact, 32 near, 9 wrong, 0 silent   cost 1.31   56% less work
+#   2  -> 46 exact, 21 near, 5 wrong, 2 silent   cost 1.73   42% less work
+#   3  -> 33 exact, 10 near, 2 wrong, 16 silent  cost 2.01   33% less work
+#
+# Low when you are often unsure yourself and a near-miss costs little.
+# High when a wrong label you overlook is worse than a blank field.
+misleading_cost = 1.0
 
 [audio]
 # Pinned, not defaulted: librosa and model preprocessing defaults drift between

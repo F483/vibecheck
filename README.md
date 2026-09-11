@@ -422,9 +422,20 @@ only about the tone         -> write "Dark"
 confident about none        -> write nothing
 ```
 
-Thresholds are not set by hand. The user states a target accuracy and the app
-derives per-level thresholds to meet it. Measured: target 0.85 labels ~84% of
-tracks at ~81% correct; target 0.90 labels ~72% at ~86%.
+Thresholds are not set by hand, and in fact there are none. The app scores each
+option by the work it leaves the user -- how many binary choices remain -- and
+picks the cheapest. Near-misses get partial credit: a wrong colour with the
+right hue costs one choice, not a restart. The cascade falls out of that
+arithmetic rather than being imposed.
+
+One dial: `misleading_cost`, how bad it is to be misled by a wrong label.
+Measured per 100 new tracks, against 3.00 for labelling by hand:
+
+```
+misleading_cost = 1   55 exact, 32 near, 9 wrong,  0 silent   1.31   56% less work
+misleading_cost = 2   46 exact, 21 near, 5 wrong,  2 silent   1.73   42% less work
+misleading_cost = 3   33 exact, 10 near, 2 wrong, 16 silent   2.01   33% less work
+```
 
 The honest caveat, recorded so it is not forgotten: most of the coverage is
 tone. "Dark", correct 88% of the time, is a much weaker statement than "Purple"
