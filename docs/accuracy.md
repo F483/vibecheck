@@ -167,6 +167,32 @@ is near 60%, the ceiling is reached and no cloud model changes it. If it is
 near 85%, something systematic is wrong with the framing, which would be
 surprising given the table above.
 
+## Calibration: measured, not needed
+
+Temperature scaling fitted on validation, applied to test:
+
+```
+task      T      ECE before   ECE after
+colour   0.92      0.036        0.055
+hue      0.90      0.031        0.035
+tone     1.76      0.089        0.041
+```
+
+Effect on the decision policy: none worth having -- at most 0.03 of cost and
+two extra exact colours per 100 at misleading_cost=3, inside sampling noise.
+
+Colour and hue were already well calibrated, so scaling them slightly overfits
+the 867-track validation set and makes calibration error *worse*. Tone was
+genuinely overconfident and improves a lot, but it is a 2-way decision the
+policy mostly reaches by elimination, so sharper probabilities rarely change
+which option wins.
+
+This retracts an earlier claim that the probabilities were poorly calibrated
+and that fixing them would sharpen every decision. The shallow
+threshold-versus-precision curve that suggested it was an 8-way model spreading
+probability mass across eight classes -- structural, not a defect. **Do not add
+calibration to the tool.**
+
 ## What limits this
 
 Four independent representations were tested — CLAP (audio-text contrastive),
