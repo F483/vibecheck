@@ -114,8 +114,9 @@ def main() -> int:
     ap.add_argument("--lr-encoder", type=float, default=1e-5)
     ap.add_argument("--lr-head", type=float, default=1e-3)
     ap.add_argument("--limit", type=int, default=0, help="tracks per split, 0=all")
-    ap.add_argument("--unfreeze-last", type=int, default=0,
-                    help="0 = whole encoder trainable; N = only last N blocks")
+    ap.add_argument("--unfreeze-stages", type=int, default=1,
+                    help="train only the last N of the encoder's 4 stages "
+                         "(0 = all trainable)")
     args = ap.parse_args()
 
     from transformers import AutoProcessor, ClapModel
@@ -148,13 +149,20 @@ def main() -> int:
     projection = clap.audio_projection.to(dev)
     head = torch.nn.Linear(512, len(classes)).to(dev)
 
-    if args.unfreeze_last:
-        for p in tower.parameters():
-            p.requires_grad = False
-        blocks = [m for m in tower.modules() if isinstance(m, torch.nn.LayerNorm)]
-        for m in blocks[-args.unfreeze_last:]:
-            for p in m.parameters():
-                p.requires_grad = True
+    # Full fine-tuning does not fit: 68M params with AdamW needs the weights
+    # plus two optimiser state copies plus activations, and on a 16 GB machine
+    # that thrashes -- the process ends up at 20% CPU, almost entirely paged
+    # out. Training only the top stage (25M) keeps optimiser state near 300 MB.
+    if args.unfreeze_stages:
+        stages = tower.audio_encoder.layers
+        for prm in tower.parameters():
+            prm.requires_grad = False
+        for st in list(stages)[-args.unfreeze_stages:]:
+            for prm in st.parameters():
+                prm.requires_grad = True
+    n_train = sum(p.numel() for p in tower.parameters() if p.requires_grad)
+    print(f"trainable in encoder: {n_train/1e6:.0f}M of "
+          f"{sum(p.numel() for p in tower.parameters())/1e6:.0f}M", flush=True)
 
     enc_params = [p for p in list(tower.parameters()) + list(projection.parameters())
                   if p.requires_grad]
@@ -181,6 +189,8 @@ def main() -> int:
                     opt.zero_grad(); loss.backward(); opt.step()
             loss_sum += float(loss.detach()) * len(ys)
             corr += int((logits.argmax(1) == ys).sum()); tot += len(ys)
+            if train and n_done % 50 == 0 and dev == "mps":
+                torch.mps.empty_cache()
             if train and n_done % 200 == 0:
                 print(f"    {n_done}/{len(loaders[split_name])} batches  "
                       f"running acc {corr/max(tot,1)*100:.1f}%", flush=True)
