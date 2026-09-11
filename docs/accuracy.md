@@ -113,6 +113,60 @@ colour, validation
 Cost: 2.7x the embedding time (0.3 vs 0.7 tracks/s) for +2.0 on one axis.
 Worth adopting only if colour accuracy matters more than embedding throughput.
 
+## Fine-tuning the encoder
+
+The one intervention that changes what is *in* the representation rather than
+how it is read. Every other model tested was frozen. CLAP's audio tower, top
+stage trainable (25M of 68M), trained on the same 6,891 tracks the probe used,
+colour target, 9 x 10 s windows, window logits averaged to a track prediction
+before the loss.
+
+```
+epoch 1   train 49.2%   val 55.7%
+epoch 2   train 54.4%   val 55.9%
+epoch 3   train 56.6%   val 54.4%
+epoch 4   train 57.8%   val 56.5%
+epoch 5   train 59.2%   val 56.3%
+epoch 6   train 60.2%   val 57.1%   <- best
+
+frozen probe on the same split:      56.5%
+```
+
+**+0.6 points, against a +/-1.7 noise floor. Not an improvement.**
+
+The trajectory is the informative part: training accuracy climbs steadily from
+49% to 60% while validation stays flat near 56%. The extra trainable parameters
+fit the training set and none of it generalises. The representation was not the
+bottleneck -- there was nothing further in the audio for a larger model to find.
+
+Practical notes: full fine-tuning (all 68M) does not fit in 16 GB -- weights
+plus two AdamW state copies plus activations thrash to 5.7 GB of swap and the
+process ends up at 20% CPU, almost entirely paged out. Training only the top
+stage keeps optimiser state near 300 MB. torch's DataLoader worker processes
+also deadlock against MPS on macOS; a bounded thread prefetch avoids it, and
+decoding is an ffmpeg subprocess so it releases the GIL anyway.
+
+## Everything converges on the same number
+
+| intervention | result |
+|---|---|
+| 5 frozen encoders (MFCC, MERT, Whisper, CLAP, MuQ) | converge ~56% |
+| ~12 classifier variants (LR, kNN, SVC, MLP, OvR, per-label thresholds, factorised, PCA) | within 2 points |
+| 20x more training data | learning curves flat |
+| +1,857 labels imported from rekordbox | +0.3 |
+| 24 windows with mean+std pooling | +2.0 |
+| unfreezing the encoder | +0.6 |
+
+Six independent lines of attack, all landing at 56-58%. When methods this
+different agree this precisely, the constraint is the **target**, not the model:
+the labels themselves determine colour only to about that degree.
+
+This closes the local avenue. The decisive remaining measurement is the blind
+relabel -- how often the labeller agrees with their own past judgement. If that
+is near 60%, the ceiling is reached and no cloud model changes it. If it is
+near 85%, something systematic is wrong with the framing, which would be
+surprising given the table above.
+
 ## What limits this
 
 Four independent representations were tested — CLAP (audio-text contrastive),
