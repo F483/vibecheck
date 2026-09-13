@@ -10,6 +10,7 @@ import hashlib
 import os
 import sqlite3
 import time
+import unicodedata
 from pathlib import Path
 
 HEAD_TAIL_BYTES = 256 * 1024
@@ -102,6 +103,22 @@ def _has_id3v1(f, size: int) -> bool:
         return False
     f.seek(-128, os.SEEK_END)
     return f.read(3) == b"TAG"
+
+
+def norm(rel: str) -> str:
+    """Canonical form for comparing paths that came from elsewhere.
+
+    macOS stores filenames decomposed (NFD) while other software -- Rekordbox's
+    XML export among them -- writes them composed (NFC). The same file then has
+    two different string forms that never compare equal, and 665 tracks with
+    accented names silently fail to match.
+    """
+    return unicodedata.normalize("NFC", rel)
+
+
+def path_index(con: sqlite3.Connection) -> dict[str, str]:
+    """Map any normalisation of a path back to the form stored in the index."""
+    return {norm(p): p for (p,) in con.execute("SELECT path FROM tracks")}
 
 
 def partial_hash(path: Path, size: int) -> str:

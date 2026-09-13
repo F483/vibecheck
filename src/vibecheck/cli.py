@@ -147,7 +147,9 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
         if batches:
             src = str(batches[-1])
             print(f"using most recent batch: {src}")
-    rels = playlist.read(Path(src), root) if src else sorted(hb)
+    canon = store.path_index(con)
+    raw = playlist.read(Path(src), root) if src else sorted(hb)
+    rels = [canon.get(store.norm(r), r) for r in raw]
     args.input = src
     added = changed = confirmed = missing = 0
     for rel in rels:

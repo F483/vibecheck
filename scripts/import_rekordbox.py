@@ -60,7 +60,10 @@ def main(xml_path: Path, apply: bool) -> int:
     root = (Path.home() / "Music" / "Collection").resolve()
     rb = parse(xml_path, root)
     con = store.labels_db(root)
+    canon = store.path_index(con)
     known = dict(con.execute("SELECT path, hash FROM tracks"))
+    # rekordbox writes NFC, macOS stores NFD: match through the canonical form
+    rb = {canon.get(store.norm(k), k): v for k, v in rb.items()}
     current = store.current_labels(con, source="user")
 
     con.execute("""CREATE TABLE IF NOT EXISTS track_meta (
@@ -99,6 +102,12 @@ def main(xml_path: Path, apply: bool) -> int:
     col_only = sum(1 for r, v in rb.items()
                    if r in known and v["colour"] and not v["label"])
     print(f"colour but no rating  : {col_only}  (extra colour-only training data)")
+    if new > 1000:
+        print()
+        print(f"WARNING: this would add {new} labels. Rekordbox still holds the")
+        print("         pre-2026-09 colours and ratings for tracks that were")
+        print("         deliberately retired -- importing them would undo the")
+        print("         reset to the fresh labelling. Check before applying.")
     print("(dry run -- pass --apply to write)" if not apply else "written")
     return 0
 
