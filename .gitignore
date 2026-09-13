@@ -18,3 +18,7 @@ __pycache__/
 
 # phase 0 scratch output
 out/
+
+# personal library data: full paths and labels for one person's collection
+backup/
+scripts/phase0_subset.txt
