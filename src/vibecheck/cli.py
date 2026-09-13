@@ -123,8 +123,13 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
 
     out = Path(args.output or
                f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
-    playlist.write(out, root, entries)
+    risky = playlist.write(out, root, entries)
     print(f"\nwrote {out}")
+    if risky:
+        print(f"   note: {len(risky)} path(s) contain '#', which Rekordbox "
+              f"treats as a comment and will skip:")
+        for r in risky[:3]:
+            print(f"     {r}")
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"   {k:7} {v}")
     print("\ncorrect them in your DJ software, then: vibecheck sync " + str(out))
