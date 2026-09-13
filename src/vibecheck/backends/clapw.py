@@ -11,7 +11,7 @@ Two hypotheses in one backend:
 2. **We were only listening to a quarter of each track.** 9 x 10 s = 90 s of a
    ~6 minute track. 24 windows covers ~4 minutes.
 
-Stored as one row per track, dim = windows x 512, reshaped on load.
+Stored as mean and standard deviation across windows, 1024 dims per track.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ DIM = 512
 
 class CLAPWindows:
     name = "clapw"
-    version = "1"
+    version = "2"  # v1 stored all 24 window vectors; v2 stores mean+std
 
     def __init__(self) -> None:
         self._model = None
@@ -75,9 +75,15 @@ class CLAPWindows:
         feats = out.pooler_output if hasattr(out, "pooler_output") else out
         v = feats.float().cpu().numpy()            # (windows, 512)
         v /= np.maximum(np.linalg.norm(v, axis=1, keepdims=True), 1e-8)
-        # pad to a fixed window count so every row has the same width
         if v.shape[0] < N_WINDOWS:
             v = np.vstack([v, np.repeat(v[-1:], N_WINDOWS - v.shape[0], axis=0)])
+        v = v[:N_WINDOWS]
         if self._device == "mps":
             torch.mps.empty_cache()
-        return v[:N_WINDOWS].reshape(-1).astype(np.float32)
+        # Mean and standard deviation across windows, not the windows
+        # themselves. Keeping all 24 cost 12x the storage and bought nothing:
+        # training on individual windows scored identically to pooling them
+        # (58.5% either way), and predicting from the single most confident
+        # window was worse. What carries the small gain is how much a track
+        # *varies*, which mean+std captures in 1024 numbers.
+        return np.concatenate([v.mean(0), v.std(0)]).astype(np.float32)
