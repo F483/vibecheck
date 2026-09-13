@@ -10,6 +10,7 @@ requires-python = ">=3.12"
 dependencies = [
     "librosa>=1.0.0",
     "muq>=0.1.0",
+    "mutagen>=1.48.1",
     "numpy>=2.5.3",
     "onnxruntime>=1.29.0",
     "onnxscript>=0.7.1",
@@ -17,6 +18,9 @@ dependencies = [
     "torch>=2.14.0",
     "transformers>=5.16.1",
 ]
+
+[project.scripts]
+vibecheck = "vibecheck.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.11,<0.13.0"]
