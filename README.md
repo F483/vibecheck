@@ -172,6 +172,17 @@ The two changes that *did* matter were both about how the model is used rather
 than what it is: tuning regularisation (+11) and replacing confidence
 thresholds with the cost policy (17 → 55 exact colours per 100).
 
+## Open, deliberately
+
+- **CLAP has never been exported to ONNX.** It decides whether a packaged app
+  is ~500 MB or ~2 GB. Half a day of work, parked until packaging actually
+  starts — see [docs/design.md](docs/design.md) §7.
+- **Cloud encoders are untested on the current labels.** Worth ~$10 to settle,
+  once there are around 1,000 fresh labels — before that it would mostly
+  measure noise. See [docs/plan-b-cloud.md](docs/plan-b-cloud.md).
+- **The encoder comparison was run against the retired labels.** Re-running it
+  on fresh ones is free and may not give the same answer.
+
 ## Documentation
 
 - [docs/setup.md](docs/setup.md) — the working configuration, reproducibly

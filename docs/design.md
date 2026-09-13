@@ -343,11 +343,22 @@ UI**, packaged per platform. Swift with AVFoundation and CoreML would give the
 smallest mac bundle and Neural Engine access, but only on mac; with
 cross-platform kept open it is no longer the right trade.
 
-Still gating either path: **CLAP has never been exported to ONNX.** MERT was,
-and matched the python reference exactly (cosine 1.000000), but CLAP is
-mel-based and it is what ships, so its preprocessing has to survive the export.
-Half a day to find out, and it decides between a ~500 MB bundle and a ~2 GB
-one.
+**Parked until the app is actually built** *(2026-09-13)*: **CLAP has never
+been exported to ONNX.** MERT was, and matched the python reference exactly
+(cosine 1.000000), but CLAP is mel-based and it is what ships, so its
+preprocessing has to survive the export intact.
+
+Deliberately not resolved now. It is half a day of work whenever it is needed,
+nothing depends on it until packaging starts, and the answer could be made
+irrelevant by any of the things still in flux -- a different backend winning on
+fresh labels, a cloud encoder, or a change of interface. Resolving it early
+would be optimising a decision we might not have to make.
+
+**It must be settled before any packaging work begins**, because it decides
+what is being packaged: ONNX Runtime plus a model file (~500 MB) if the export
+is clean, or a bundled Python and PyTorch (~2 GB) if it is not. Designing a
+distribution pipeline around the smaller number and then discovering the larger
+one is the specific mistake to avoid.
 
 ### 4.6 macOS distribution requirements
 
