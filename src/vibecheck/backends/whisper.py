@@ -17,6 +17,7 @@ import dataclasses
 
 import numpy as np
 
+from .. import device
 from ..config import Preproc
 
 MODEL_ID = "openai/whisper-small"
@@ -46,7 +47,7 @@ class Whisper:
         import torch
         from transformers import AutoFeatureExtractor, WhisperModel
 
-        self._device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._device = device.pick()
         model = WhisperModel.from_pretrained(MODEL_ID)
         self._enc = model.get_encoder().to(self._device).eval()
         self._fe = AutoFeatureExtractor.from_pretrained(MODEL_ID)
@@ -64,8 +65,7 @@ class Whisper:
                 x = feats.input_features.to(self._device)
                 out = enc(x).last_hidden_state  # (1, frames, dim)
                 vecs.append(out.mean(dim=1).squeeze(0).float().cpu().numpy())
-        if self._device == "mps":
-            torch.mps.empty_cache()
+        device.empty_cache(self._device)
         v = np.mean(vecs, axis=0)
         n = np.linalg.norm(v)
         return ((v / n) if n else v).astype(np.float32)

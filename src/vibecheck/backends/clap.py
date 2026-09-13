@@ -16,6 +16,7 @@ import dataclasses
 
 import numpy as np
 
+from .. import device
 from ..config import Preproc
 
 MODEL_ID = "laion/larger_clap_music_and_speech"
@@ -47,7 +48,7 @@ class CLAP:
         import torch
         from transformers import AutoProcessor, ClapModel
 
-        self._device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._device = device.pick()
         for model_id in (MODEL_ID, FALLBACK_ID):
             try:
                 self._model = ClapModel.from_pretrained(model_id).to(self._device).eval()
@@ -75,7 +76,6 @@ class CLAP:
         # pooler_output is the projected audio embedding CLAP is trained on
         feats = out.pooler_output if hasattr(out, "pooler_output") else out
         v = feats.mean(dim=0).cpu().numpy()
-        if self._device == "mps":
-            torch.mps.empty_cache()
+        device.empty_cache(self._device)
         n = np.linalg.norm(v)
         return ((v / n) if n else v).astype(np.float32)

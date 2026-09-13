@@ -20,6 +20,7 @@ import dataclasses
 
 import numpy as np
 
+from .. import device
 from ..config import Preproc
 
 MODEL_ID = "laion/larger_clap_music_and_speech"
@@ -51,7 +52,7 @@ class CLAPWindows:
         import torch
         from transformers import AutoProcessor, ClapModel
 
-        self._device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._device = device.pick()
         for mid in (MODEL_ID, FALLBACK_ID):
             try:
                 self._model = ClapModel.from_pretrained(mid).to(self._device).eval()
@@ -78,8 +79,7 @@ class CLAPWindows:
         if v.shape[0] < N_WINDOWS:
             v = np.vstack([v, np.repeat(v[-1:], N_WINDOWS - v.shape[0], axis=0)])
         v = v[:N_WINDOWS]
-        if self._device == "mps":
-            torch.mps.empty_cache()
+        device.empty_cache(self._device)
         # Mean and standard deviation across windows, not the windows
         # themselves. Keeping all 24 cost 12x the storage and bought nothing:
         # training on individual windows scored identically to pooling them

@@ -11,6 +11,7 @@ import dataclasses
 
 import numpy as np
 
+from .. import device
 from ..config import Preproc
 
 MODEL_ID = "m-a-p/MERT-v1-95M"
@@ -43,7 +44,7 @@ class MERT:
         import torch
         from transformers import AutoModel
 
-        self._device = "mps" if torch.backends.mps.is_available() else "cpu"
+        self._device = device.pick()
         model = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True)
         # MERT ships custom modelling code that ignores the per-call
         # output_hidden_states argument, so set it on the config instead
@@ -67,8 +68,7 @@ class MERT:
                 # choice is a knob worth revisiting with forward hooks *if*
                 # MERT proves competitive. Not worth the complexity before that.
                 vecs.append(out.last_hidden_state.mean(dim=1).squeeze(0).cpu().numpy())
-        if self._device == "mps":
-            torch.mps.empty_cache()  # the caching allocator otherwise grows
+        device.empty_cache(self._device)
         v = np.mean(vecs, axis=0)
         # homogeneous dimensions here, unlike the MFCC stat vector, so L2 is
         # safe and standard for a transformer embedding

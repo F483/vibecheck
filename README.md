@@ -9,13 +9,16 @@ go with which of your strings. The default vocabulary maps onto the eight
 colour tags DJ software already exposes, so it fits an existing workflow rather
 than asking you to invent one.
 
-Local, mac, MIT licensed.
+Local, MIT licensed. Developed on macOS; the code is portable — CUDA, Metal or
+CPU, and every other dependency is cross-platform.
 
 ---
 
 ## Install
 
-Requires macOS on Apple Silicon, [uv](https://docs.astral.sh/uv/), and ffmpeg.
+Requires [uv](https://docs.astral.sh/uv/) and ffmpeg. Uses CUDA or Apple Metal
+if present, CPU otherwise — on CPU expect roughly 3–5× longer to analyse a
+batch, which is slow but workable.
 
 ```sh
 brew install uv ffmpeg
