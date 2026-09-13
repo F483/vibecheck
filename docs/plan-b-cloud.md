@@ -126,7 +126,15 @@ what this project exists not to use.
 4. Keep the local CLAP backend selectable, so the tool degrades to a working
    offline mode rather than breaking.
 
-## 8. What this does not fix
+## 8. Note on platforms
+
+*(added 2026-09-13.)* Cross-platform desktop support is now kept open, which
+strengthens the case for cloud inference in one narrow way: a hosted encoder is
+identical on every platform, where a local one depends on whatever accelerator
+the machine has. It does not change any of the reasoning above -- the trigger
+conditions in §1 still gate whether cloud is worth anything at all.
+
+## 9. What this does not fix
 
 Label noise, an 8-way distinction finer than the labeller reliably reproduces,
 and the level axis. If the ceiling check says the target is only ~65%

@@ -42,7 +42,13 @@ Consequences that follow directly from this and drive the rest of the design:
 - Handle DJ-scale collections (200 GB+ and growing). **decided**
 - The label is written into the mp3's ID3 genre field, so other software
   (Rekordbox, Traktor, players, file managers) sees it. **decided**
-- Runs on macOS, Apple Silicon (M1 or newer). Mac-only. **decided**
+- Runs locally on the user's own machine. **decided**
+- **Cross-platform is kept open.** *(revised 2026-09-13 -- supersedes the
+  earlier "mac-only" decision.)* macOS on Apple Silicon is the development
+  target, but nothing in the implementation depends on it: decoding is ffmpeg,
+  tags are mutagen, storage is SQLite, and the accelerator is chosen at runtime
+  (CUDA, Metal, or CPU). Mac-only was adopted to simplify shipping and was
+  never actually exploited, so the constraint was dropped rather than paid for.
 - Corrections improve future guesses.
 
 **Non-goals (for now)**
@@ -293,9 +299,17 @@ classifier is what makes the thing work, ship it.
 
 Packaging an installable, notarised mac app rules some things out.
 
-Target platform is **macOS on Apple Silicon (M1 or newer), mac-only**.
-**decided** Cross-platform is dropped; it was costing generality nobody asked
-for.
+Target platform is **any desktop the user runs**, with macOS on Apple Silicon
+as the development machine. *(revised 2026-09-13.)*
+
+Keeping this open rules out the native per-platform app: three codebases for a
+shared core of a few hundred lines is the wrong ratio. It makes the ONNX plan
+below *more* valuable rather than less -- ONNX Runtime exposes CUDA, DirectML,
+CoreML and CPU providers behind one API, so a single exported model file is
+accelerated everywhere with no platform-specific code.
+
+Expected shape: Python host + ONNX Runtime + a local web UI. One codebase, one
+model file, one interface, ~500 MB packaged instead of ~2 GB with torch.
 
 | stage | shipped-app option | notes |
 |---|---|---|
@@ -324,10 +338,16 @@ returns for a double-clickable notarised `.app`, and on mac that is solved for
 free by AVFoundation, which decodes mp3 natively with no dependency at all —
 a one-file change behind the decode interface (§4.2).
 
-Shipping stack for the app phase: **Swift + AVFoundation + CoreML/ONNX Runtime +
-SQLite.** Smallest bundle, Neural Engine available, standard Xcode signing. A
-Godot front end remains possible over that core if a GUI is ever wanted; Godot
-cannot do the inference itself either way.
+Shipping stack, *revised 2026-09-13*: **Python + ONNX Runtime + a local web
+UI**, packaged per platform. Swift with AVFoundation and CoreML would give the
+smallest mac bundle and Neural Engine access, but only on mac; with
+cross-platform kept open it is no longer the right trade.
+
+Still gating either path: **CLAP has never been exported to ONNX.** MERT was,
+and matched the python reference exactly (cosine 1.000000), but CLAP is
+mel-based and it is what ships, so its preprocessing has to survive the export.
+Half a day to find out, and it decides between a ~500 MB bundle and a ~2 GB
+one.
 
 ### 4.6 macOS distribution requirements
 
