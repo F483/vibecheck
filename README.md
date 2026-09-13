@@ -13,13 +13,52 @@ Local, mac, MIT licensed.
 
 ---
 
+## Install
+
+Requires macOS on Apple Silicon, [uv](https://docs.astral.sh/uv/), and ffmpeg.
+
+```sh
+brew install uv ffmpeg
+git clone https://github.com/F483/vibecheck && cd vibecheck
+uv sync
+```
+
+The first run downloads the audio model (~2 GB) and writes nothing outside
+`<your collection>/.vibecheck/` and the genre tag of tracks it labels.
+
+## Usage
+
+```sh
+# point it at your collection (default: ~/Music/Collection)
+uv run vibecheck scan
+
+# label some tracks by hand first -- it needs about 200 to be useful
+uv run vibecheck status
+
+# then, each round:
+uv run vibecheck label 300          # picks 300 unlabelled tracks, labels what
+                                    # it can, writes batch-<date>-<time>.m3u8
+#   ... import that playlist into your DJ software, correct what is wrong ...
+uv run vibecheck sync               # reads your corrections back and retrains
+```
+
+That loop is the whole product. Each round the model gets better, so each round
+you correct less.
+
+**What it writes:** the ID3 genre tag, and nothing else. Track identity is a
+hash of the audio only, so writing a label never changes what a track *is* and
+never invalidates its cached analysis.
+
+**Configuration** lives in `<your collection>/.vibecheck/config.toml` — copy
+[the default](src/vibecheck/default_config.toml) to start. It declares your
+label vocabulary, how labels group into coarser levels, and one dial:
+`misleading_cost`, how bad it is to be given a wrong label.
+
 ## Status
 
-**Research complete. Not yet built.** The question was whether a model can learn
-one person's labels from audio well enough to save real work. It can, with
-limits that are now measured rather than guessed.
-
-The next step is Phase 1: the CLI that uses it.
+**Prototype built and in use.** The research question — can a model learn one
+person's labels from audio well enough to save real work — is answered, and the
+loop above is running on the reference collection.
 
 ## What it achieves
 

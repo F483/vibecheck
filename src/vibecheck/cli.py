@@ -1,5 +1,6 @@
 """Three commands.
 
+    vibecheck scan              find tracks and pick up label changes
     vibecheck status            where things stand
     vibecheck label [N]         pick N unlabelled tracks, label what it can,
                                 write a playlist for you to correct
@@ -19,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import embed, playlist, store, tags
+from . import embed, index, playlist, store, tags
 from .config import DEFAULT
 from .predict import Model, levels_from
 
@@ -64,6 +65,14 @@ def train(root: Path, cfg: dict):
     m = Model(build_levels(cfg, sorted(set(y))))
     info = m.train(X, y)
     return m, info
+
+
+def cmd_scan(root: Path, cfg: dict, args) -> None:
+    print(f"scanning {root}", flush=True)
+    st = index.scan(root)
+    print(f"   {st.files} mp3 files, {st.new} new, {st.changed} changed")
+    print(f"   labels: {st.labels_added} added, {st.labels_changed} corrected"
+          + (f", {st.unreadable} unreadable" if st.unreadable else ""))
 
 
 def cmd_status(root: Path, cfg: dict, args) -> None:
@@ -177,6 +186,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="vibecheck")
     ap.add_argument("--root", default=str(Path.home() / "Music" / "Collection"))
     sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("scan")
     sub.add_parser("status")
     p = sub.add_parser("label")
     p.add_argument("count", nargs="?", type=int, default=300)
@@ -189,7 +199,8 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
     cfg = load_config(root)
-    return {"status": cmd_status, "label": cmd_label, "sync": cmd_sync}[args.cmd](
+    return {"scan": cmd_scan, "status": cmd_status, "label": cmd_label,
+            "sync": cmd_sync}[args.cmd](
         root, cfg, args) or 0
 
 
