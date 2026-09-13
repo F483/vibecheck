@@ -11,6 +11,7 @@ The loop is: label -> correct in your DJ software -> sync -> repeat.
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import random
 import sys
 import tomllib
@@ -92,16 +93,20 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         sys.exit("nothing left unlabelled")
     random.seed(args.seed)
     batch = sorted(random.sample(pool, min(args.count, len(pool))))
-    print(f"selected {len(batch)} of {len(pool)} unlabelled tracks")
+    print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks")
 
-    st = embed.embed_all(root, BACKEND, DEFAULT, batch, workers=1,
-                         progress_every=50)
-    print(f"embedded {st['done']} (cached {st['cached']}, failed {st['failed']})")
+    print(f"[2/4] listening to the tracks that are new to it "
+          f"(about 3 seconds each)", flush=True)
+    st = embed.embed_all(root, BACKEND, DEFAULT, batch, workers=1)
+    print(f"      {st['done']} embedded, {st['cached']} already known"
+          + (f", {st['failed']} failed" if st["failed"] else ""))
 
+    print("[3/4] training on what you have labelled so far", flush=True)
     model, info = train(root, cfg)
-    print(f"trained on {info['tracks']} tracks, {info['labels']} labels, "
+    print(f"      {info['tracks']} tracks, {info['labels']} labels, "
           f"levels: {' > '.join(reversed(info['levels']))}")
 
+    print("[4/4] deciding what it can say about each track", flush=True)
     paths, X = embed.load(root, BACKEND, DEFAULT, batch)
     preds = model.predict(X, cfg["predict"]["misleading_cost"])
 
@@ -116,7 +121,8 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         entries.append((rel, f"{p.label or '?':12} | {Path(rel).name}"))
     con.commit()
 
-    out = Path(args.output)
+    out = Path(args.output or
+               f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
     playlist.write(out, root, entries)
     print(f"\nwrote {out}")
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
@@ -130,8 +136,14 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
     last_user = store.current_labels(con, source="user")
     last_any = store.current_labels(con)
 
-    rels = (playlist.read(Path(args.input), root) if args.input
-            else sorted(hb))
+    src = args.input
+    if src is None:
+        batches = sorted(Path(".").glob("batch-*.m3u8"))
+        if batches:
+            src = str(batches[-1])
+            print(f"using most recent batch: {src}")
+    rels = playlist.read(Path(src), root) if src else sorted(hb)
+    args.input = src
     added = changed = confirmed = missing = 0
     for rel in rels:
         if rel not in hb:
@@ -161,7 +173,8 @@ def main(argv=None) -> int:
     sub.add_parser("status")
     p = sub.add_parser("label")
     p.add_argument("count", nargs="?", type=int, default=300)
-    p.add_argument("--output", default="batch.m3u8")
+    p.add_argument("--output", default=None,
+                   help="default: batch-<date>-<time>.m3u8")
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("sync")

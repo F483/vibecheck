@@ -38,6 +38,7 @@ def _work(item: tuple[str, str]) -> tuple[str, np.ndarray | None, str | None]:
 
 def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
               workers: int = 8, progress_every: int = 250,
+              progress_seconds: float = 15.0,
               max_tasks_per_child: int = 150,
               limit: int | None = None) -> dict[str, int]:
     """`max_tasks_per_child` recycles the worker periodically.
@@ -70,6 +71,7 @@ def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
         return stats
 
     t0 = time.time()
+    last_print = t0
     items = [(p, str(root / p)) for p in todo]
 
     if workers <= 1:
@@ -104,13 +106,18 @@ def embed_all(root: Path, backend_name: str, cfg: Preproc, paths: list[str],
             # stall a scan in normal use. Writes are tiny; commit cheaply.
             if i % COMMIT_EVERY == 0:
                 con.commit()
-            if i % progress_every == 0:
+            now = time.time()
+            # print on a timer, not a track count: a slow backend on a small
+            # batch would otherwise go minutes without output and look hung
+            if now - last_print >= progress_seconds or i == len(items):
+                last_print = now
                 con.commit()
-                rate = i / (time.time() - t0)
-                eta = (len(items) - i) / rate / 60
-                rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1e9
-                print(f"  {i}/{len(items)}  {rate:.1f}/s  eta {eta:.1f}min  "
-                      f"rss {rss:.1f}GB", flush=True)
+                rate = i / (now - t0)
+                eta = (len(items) - i) / rate if rate else 0
+                bar = int(20 * i / len(items))
+                print(f"  [{'#' * bar}{'.' * (20 - bar)}] {i}/{len(items)}  "
+                      f"{rate:.1f}/s  {int(now - t0)}s elapsed, "
+                      f"~{int(eta)}s left", flush=True)
     finally:
         if workers > 1:
             pool.shutdown()
