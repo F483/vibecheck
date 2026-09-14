@@ -327,23 +327,90 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
     print(f"labelled now: {len(labelled(root, cfg))}")
 
 
+USAGE = """\
+the loop
+  vibecheck scan                     find your tracks (once, and after adding music)
+  vibecheck label 300                pick 300 unlabelled tracks, label what it can,
+                                     write batch-<date>-<time>.m3u8
+  ... import that playlist into your DJ software and correct what is wrong ...
+  vibecheck sync                     read your corrections back and retrain
+
+  Each round it learns from your corrections, so each round you correct less.
+  It needs roughly 200 labels of your own before it is much use -- label a first
+  batch by hand, or let it guess and correct everything.
+
+examples
+  vibecheck status                        counts, and how many labels you have
+  vibecheck label 50 --dry-run            see what it would say, change nothing
+  vibecheck label 300 --include-unconfirmed
+                                          reuse tracks from a batch you have
+                                          not corrected yet
+  vibecheck discard batch-….m3u8          throw a batch away, free its tracks
+  vibecheck sync batch-….m3u8             sync one batch specifically
+  vibecheck clear --unknown               strip genre tags it has no record of
+  vibecheck --root /Volumes/DJ/Music status
+                                          work on a different collection
+
+what it touches
+  the ID3 genre tag of tracks it labels, and <collection>/.vibecheck/ .
+  Nothing else. Track identity is a hash of the audio, so writing a label never
+  changes what a track is.
+"""
+
+
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="vibecheck")
-    ap.add_argument("--root", default=str(Path.home() / "Music" / "Collection"))
-    sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("scan")
-    sub.add_parser("status")
-    p = sub.add_parser("label")
-    p.add_argument("count", nargs="?", type=int, default=300)
+    ap = argparse.ArgumentParser(
+        prog="vibecheck",
+        description="Learns how you label music, from the audio, and applies "
+                    "it to the rest of your collection.",
+        epilog=USAGE,
+        formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--root", default=str(Path.home() / "Music" / "Collection"),
+                    help="your music collection (default: %(default)s)")
+    sub = ap.add_subparsers(dest="cmd", metavar="command")
+
+    sub.add_parser("scan", help="find tracks and pick up label changes",
+                   description="Walk the collection, index new or moved files, "
+                               "and record any labels changed outside the app.")
+    sub.add_parser("status", help="counts, labels, and what is embedded")
+
+    p = sub.add_parser("label", help="label a batch of unlabelled tracks",
+                       description="Pick unlabelled tracks, say what it can "
+                                   "about each, write the tags and a playlist "
+                                   "for you to correct.")
+    p.add_argument("count", nargs="?", type=int, default=300,
+                   help="how many tracks (default: %(default)s)")
     p.add_argument("--output", default=None,
-                   help="default: batch-<date>-<time>.m3u8")
-    p.add_argument("--seed", type=int, default=None)
+                   help="playlist path (default: batch-<date>-<time>.m3u8)")
+    p.add_argument("--seed", type=int, default=None,
+                   help="fix the random selection, for reproducibility")
     p.add_argument("--dry-run", action="store_true",
                    help="predict and write the playlist, but change nothing")
     p.add_argument("--include-unconfirmed", action="store_true",
                    help="also pick tracks that already carry an unconfirmed "
-                        "label from a previous batch")
-    p = sub.add_parser("clear")
+                        "label from an earlier batch")
+
+    p = sub.add_parser("sync", help="read your corrections back and retrain",
+                       description="Read the genre tags of a batch, record "
+                                   "what you changed, and confirm what you "
+                                   "left alone.")
+    p.add_argument("input", nargs="?",
+                   help="playlist (default: the most recent batch here)")
+    p.add_argument("--all", action="store_true",
+                   help="read every tag in the collection, not just a batch")
+
+    p = sub.add_parser("discard", help="throw a batch away, free its tracks",
+                       description="Forget a batch's unconfirmed labels and "
+                                   "clear the tags it wrote. Tags you have "
+                                   "since corrected are kept.")
+    p.add_argument("input", nargs="?",
+                   help="playlist (default: every unconfirmed label)")
+    p.add_argument("--dry-run", action="store_true")
+
+    p = sub.add_parser("clear", help="housekeeping: remove genre tags",
+                       description="Remove genre tags by category. Saves what "
+                                   "it removes to .vibecheck/cleared-<date>.csv "
+                                   "first.")
     p.add_argument("input", nargs="?", help="restrict to a playlist")
     p.add_argument("--unknown", action="store_true",
                    help="tags this app has no record of")
@@ -352,22 +419,18 @@ def main(argv=None) -> int:
     p.add_argument("--confirmed", action="store_true",
                    help="your own labels (destroys work)")
     p.add_argument("--all", action="store_true", help="every genre tag")
-    p.add_argument("--apply", action="store_true", help="actually do it")
-    p = sub.add_parser("discard")
-    p.add_argument("input", nargs="?", help="playlist; default: every "
-                                            "unconfirmed label")
-    p.add_argument("--dry-run", action="store_true")
-    p = sub.add_parser("sync")
-    p.add_argument("input", nargs="?")
-    p.add_argument("--all", action="store_true",
-                   help="read every tag in the collection, not just a batch")
+    p.add_argument("--apply", action="store_true",
+                   help="actually do it (otherwise only reports)")
+
     args = ap.parse_args(argv)
+    if not args.cmd:
+        ap.print_help()
+        return 0
     root = Path(args.root).resolve()
     cfg = load_config(root)
     return {"scan": cmd_scan, "status": cmd_status, "label": cmd_label,
             "discard": cmd_discard, "clear": cmd_clear,
-            "sync": cmd_sync}[args.cmd](
-        root, cfg, args) or 0
+            "sync": cmd_sync}[args.cmd](root, cfg, args) or 0
 
 
 if __name__ == "__main__":
