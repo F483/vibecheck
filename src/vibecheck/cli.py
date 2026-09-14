@@ -140,6 +140,15 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
     paths, X = embed.load(root, BACKEND, DEFAULT, batch)
     preds = model.predict(X, cfg["predict"]["misleading_cost"])
 
+    # tags this app did not write, and does not know about: another tool's
+    # labels, or an earlier scheme. Overwriting them silently would destroy
+    # work the database has no record of.
+    foreign = [r for r in paths
+               if r not in spoken_for(root) and tags.read(root / r)]
+    if foreign and not args.dry_run:
+        print(f"      note: {len(foreign)} of these already carry a genre tag "
+              f"this app did not write; it will be replaced")
+
     entries, counts = [], {}
     for rel, p in zip(paths, preds):
         counts[p.level] = counts.get(p.level, 0) + 1
@@ -220,6 +229,13 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
         if batches:
             src = str(batches[-1])
             print(f"using most recent batch: {src}")
+        elif not args.all:
+            sys.exit(
+                "no batch playlist given and none found.\n"
+                "  Pass one, or --all to read every tag in the collection.\n"
+                "  --all adopts whatever the files currently say, which may\n"
+                "  include labels from other software or from an earlier\n"
+                "  scheme you have since moved on from.")
     canon = store.path_index(con)
     raw = playlist.read(Path(src), root) if src else sorted(hb)
     rels = [canon.get(store.norm(r), r) for r in raw]
@@ -268,6 +284,8 @@ def main(argv=None) -> int:
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("sync")
     p.add_argument("input", nargs="?")
+    p.add_argument("--all", action="store_true",
+                   help="read every tag in the collection, not just a batch")
     args = ap.parse_args(argv)
     root = Path(args.root).resolve()
     cfg = load_config(root)
