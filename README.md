@@ -52,7 +52,15 @@ uv run vibecheck label 50 --dry-run       # see what it would say, change nothin
 uv run vibecheck discard batch-….m3u8     # throw a batch away, free its tracks
 uv run vibecheck label 300 --include-unconfirmed   # reuse tracks from a batch
                                                    # you have not corrected yet
+
+uv run vibecheck clear --unknown          # housekeeping: strip genre tags this
+                                          # app has no record of
 ```
+
+`clear` takes `--unknown`, `--unconfirmed`, `--confirmed` or `--all`, shows
+what it would do, and only acts with `--apply`. Whatever it removes is written
+to `.vibecheck/cleared-<date>.csv` first, because a tag the database never knew
+about has no other record anywhere.
 
 A batch in progress is excluded from the next one, so batches never overlap and
 a new batch cannot overwrite corrections you have not synced. `discard` clears

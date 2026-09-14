@@ -6,6 +6,7 @@
                                 write a playlist for you to correct
     vibecheck sync [playlist]   read your corrections back and retrain
     vibecheck discard [playlist]  throw a batch away and free its tracks
+    vibecheck clear ...         housekeeping: remove genre tags
 
 The loop is: label -> correct in your DJ software -> sync -> repeat.
 """
@@ -217,6 +218,70 @@ def cmd_discard(root: Path, cfg: dict, args) -> None:
         print("(dry run -- nothing changed)")
 
 
+def cmd_clear(root: Path, cfg: dict, args) -> None:
+    """Remove genre tags. Housekeeping, and destructive, so it asks twice.
+
+    Anything cleared is first written to .vibecheck/cleared-<date>.csv, because
+    a tag the database never knew about has no other record anywhere.
+    """
+    import csv
+    import datetime as dt
+
+    con = store.labels_db(root)
+    hb = dict(con.execute("SELECT path, hash FROM tracks"))
+    canon = store.path_index(con)
+    confirmed = set(labelled(root, cfg))
+    known = set(store.current_labels(con))
+
+    scope = ([canon.get(store.norm(r), r)
+              for r in playlist.read(Path(args.input), root)]
+             if args.input else sorted(hb))
+
+    def wanted(rel: str) -> bool:
+        if args.all:
+            return True
+        if args.unknown and rel not in known:
+            return True
+        if args.unconfirmed and rel in known and rel not in confirmed:
+            return True
+        if args.confirmed and rel in confirmed:
+            return True
+        return False
+
+    if not (args.all or args.unknown or args.unconfirmed or args.confirmed):
+        sys.exit("choose what to clear: --unknown, --unconfirmed, "
+                 "--confirmed or --all")
+
+    targets = []
+    for rel in scope:
+        if not wanted(rel):
+            continue
+        tag = tags.read(root / rel)
+        if tag:
+            targets.append((rel, tag))
+
+    print(f"would clear {len(targets)} genre tags")
+    for rel, tag in targets[:5]:
+        print(f"   {tag:12} {Path(rel).name[:56]}")
+    if len(targets) > 5:
+        print(f"   ... and {len(targets) - 5} more")
+    if not args.apply:
+        print("\n(nothing changed -- pass --apply to do it)")
+        return
+
+    out = store.vibecheck_dir(root) / f"cleared-{dt.datetime.now():%Y%m%d-%H%M}.csv"
+    with open(out, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["path", "label"])
+        w.writerows(targets)
+    for rel, _ in targets:
+        tags.write(root / rel, None)
+        if rel in known:
+            store.log_label(con, rel, hb[rel], None, "user")
+    con.commit()
+    print(f"cleared {len(targets)}; saved to {out}")
+
+
 def cmd_sync(root: Path, cfg: dict, args) -> None:
     con = store.labels_db(root)
     hb = dict(con.execute("SELECT path, hash FROM tracks"))
@@ -278,6 +343,16 @@ def main(argv=None) -> int:
     p.add_argument("--include-unconfirmed", action="store_true",
                    help="also pick tracks that already carry an unconfirmed "
                         "label from a previous batch")
+    p = sub.add_parser("clear")
+    p.add_argument("input", nargs="?", help="restrict to a playlist")
+    p.add_argument("--unknown", action="store_true",
+                   help="tags this app has no record of")
+    p.add_argument("--unconfirmed", action="store_true",
+                   help="labels it wrote that you have not confirmed")
+    p.add_argument("--confirmed", action="store_true",
+                   help="your own labels (destroys work)")
+    p.add_argument("--all", action="store_true", help="every genre tag")
+    p.add_argument("--apply", action="store_true", help="actually do it")
     p = sub.add_parser("discard")
     p.add_argument("input", nargs="?", help="playlist; default: every "
                                             "unconfirmed label")
@@ -290,7 +365,8 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root)
     return {"scan": cmd_scan, "status": cmd_status, "label": cmd_label,
-            "discard": cmd_discard, "sync": cmd_sync}[args.cmd](
+            "discard": cmd_discard, "clear": cmd_clear,
+            "sync": cmd_sync}[args.cmd](
         root, cfg, args) or 0
 
 
