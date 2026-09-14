@@ -213,6 +213,7 @@ thresholds with the cost policy (17 → 55 exact colours per 100).
 - [docs/design.md](docs/design.md) — design decisions and their reasoning
 - [docs/phase0-report.md](docs/phase0-report.md) — the backend comparison in full
 - [docs/plan-b-cloud.md](docs/plan-b-cloud.md) — contingency, and when *not* to use it
+- [docs/frontend-options.md](docs/frontend-options.md) — UI options, not started
 
 ## License
 
