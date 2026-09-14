@@ -5,6 +5,7 @@
     vibecheck label [N]         pick N unlabelled tracks, label what it can,
                                 write a playlist for you to correct
     vibecheck sync [playlist]   read your corrections back and retrain
+    vibecheck discard [playlist]  throw a batch away and free its tracks
 
 The loop is: label -> correct in your DJ software -> sync -> repeat.
 """
@@ -108,14 +109,18 @@ def cmd_status(root: Path, cfg: dict, args) -> None:
 def cmd_label(root: Path, cfg: dict, args) -> None:
     con = store.labels_db(root)
     hb = dict(con.execute("SELECT path, hash FROM tracks"))
-    taken = spoken_for(root)
+    confirmed = set(labelled(root, cfg))
+    taken = confirmed if args.include_unconfirmed else spoken_for(root)
     pool = [p for p in sorted(hb) if p not in taken]
     if not pool:
         sys.exit("nothing left unlabelled")
-    out_now = len(taken) - len(labelled(root, cfg))
-    if out_now:
-        print(f"note: {out_now} tracks are already out in a batch awaiting "
-              f"your corrections; they are excluded")
+    out_now = len(spoken_for(root)) - len(confirmed)
+    if out_now and not args.include_unconfirmed:
+        print(f"note: {out_now} tracks are out in a batch awaiting your "
+              f"corrections and are excluded (--include-unconfirmed to reuse)")
+    elif out_now:
+        print(f"note: including {out_now} tracks that already carry an "
+              f"unconfirmed label")
     random.seed(args.seed)
     batch = sorted(random.sample(pool, min(args.count, len(pool))))
     print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks")
@@ -158,6 +163,49 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"   {k:7} {v}")
     print("\ncorrect them in your DJ software, then: vibecheck sync " + str(out))
+
+
+def cmd_discard(root: Path, cfg: dict, args) -> None:
+    """Undo a batch: forget its unconfirmed labels and clear the tags it wrote.
+
+    Only tags still holding exactly what the app wrote are cleared. A tag the
+    user has since changed is a correction, not a discard, so it is kept and
+    reported -- losing it would be indistinguishable from the app never having
+    predicted the track.
+    """
+    con = store.labels_db(root)
+    hb = dict(con.execute("SELECT path, hash FROM tracks"))
+    canon = store.path_index(con)
+    confirmed = set(labelled(root, cfg))
+    rows = {p: l for p, l in con.execute(
+        """SELECT l.path, l.label FROM label_log l
+           JOIN (SELECT path, MAX(id) id FROM label_log GROUP BY path) m
+             ON l.id = m.id WHERE l.source = 'model'""")}
+
+    if args.input:
+        rels = [canon.get(store.norm(r), r)
+                for r in playlist.read(Path(args.input), root)]
+    else:
+        rels = list(rows)
+
+    cleared = kept = 0
+    for rel in rels:
+        if rel in confirmed or rel not in rows:
+            continue
+        now = tags.read(root / rel)
+        if now != rows[rel]:
+            kept += 1          # user has edited it: that is a correction
+            continue
+        if not args.dry_run:
+            tags.write(root / rel, None)
+            store.log_label(con, rel, hb[rel], None, "model")
+        cleared += 1
+    con.commit()
+    print(f"discarded {cleared} unconfirmed labels"
+          + (f"; kept {kept} you had already corrected (sync to keep them)"
+             if kept else ""))
+    if args.dry_run:
+        print("(dry run -- nothing changed)")
 
 
 def cmd_sync(root: Path, cfg: dict, args) -> None:
@@ -209,6 +257,14 @@ def main(argv=None) -> int:
     p.add_argument("--output", default=None,
                    help="default: batch-<date>-<time>.m3u8")
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--dry-run", action="store_true",
+                   help="predict and write the playlist, but change nothing")
+    p.add_argument("--include-unconfirmed", action="store_true",
+                   help="also pick tracks that already carry an unconfirmed "
+                        "label from a previous batch")
+    p = sub.add_parser("discard")
+    p.add_argument("input", nargs="?", help="playlist; default: every "
+                                            "unconfirmed label")
     p.add_argument("--dry-run", action="store_true")
     p = sub.add_parser("sync")
     p.add_argument("input", nargs="?")
@@ -216,7 +272,7 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root)
     return {"scan": cmd_scan, "status": cmd_status, "label": cmd_label,
-            "sync": cmd_sync}[args.cmd](
+            "discard": cmd_discard, "sync": cmd_sync}[args.cmd](
         root, cfg, args) or 0
 
 

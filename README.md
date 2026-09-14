@@ -45,6 +45,20 @@ uv run vibecheck label 300          # picks 300 unlabelled tracks, labels what
 uv run vibecheck sync               # reads your corrections back and retrains
 ```
 
+Other things you may want:
+
+```sh
+uv run vibecheck label 50 --dry-run       # see what it would say, change nothing
+uv run vibecheck discard batch-….m3u8     # throw a batch away, free its tracks
+uv run vibecheck label 300 --include-unconfirmed   # reuse tracks from a batch
+                                                   # you have not corrected yet
+```
+
+A batch in progress is excluded from the next one, so batches never overlap and
+a new batch cannot overwrite corrections you have not synced. `discard` clears
+only tags still holding exactly what the app wrote — anything you have since
+edited is treated as a correction and kept.
+
 That loop is the whole product. Each round the model gets better, so each round
 you correct less.
 
