@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import embed, index, playlist, store, tags
+from . import embed, index, playlist, rekordbox, store, tags
 from .config import DEFAULT
 from .predict import Model, levels_from
 
@@ -150,19 +150,50 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         print(f"      note: {len(foreign)} of these already carry a genre tag "
               f"this app did not write; it will be replaced")
 
+    write_tags = (args.write_tags if args.write_tags is not None
+                  else cfg.get("debug", {}).get("write_genre_tags", False))
     entries, counts = [], {}
     for rel, p in zip(paths, preds):
         counts[p.level] = counts.get(p.level, 0) + 1
         if p.label is not None and not args.dry_run:
-            before = tags.read(root / rel)
             store.log_label(con, rel, hb[rel], p.label, "model")
-            if before != p.label:
-                tags.write(root / rel, p.label)
+            if write_tags:
+                if tags.read(root / rel) != p.label:
+                    tags.write(root / rel, p.label)
         entries.append((rel, f"{p.label or '?':12} | {Path(rel).name}"))
     con.commit()
 
-    out = Path(args.output or
-               f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
+    out = Path(args.output) if args.output else (
+        Path("out") / f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if args.rekordbox and not args.dry_run:
+        src = Path(args.rekordbox).expanduser()
+        if not src.exists():
+            sys.exit(f"no rekordbox export at {src}\n"
+                     "  export one from rekordbox (File > Export Collection in "
+                     "xml format),\n  or pass --rekordbox <path>, or "
+                     "--write-tags to use genre tags instead.")
+        # in place: rekordbox only ever re-reads the file it is pointed at
+        dst = src if args.in_place else out.with_suffix(".xml")
+        st = rekordbox.write(
+            src, dst, root,
+            [(rel, p.level, p.label) for rel, p in zip(paths, preds)],
+            cfg.get("rekordbox", {}).get("colours", {}),
+            cfg.get("rekordbox", {}).get("ratings", {}),
+            cfg["labels"].get("separator", "_"))
+        print(f"\nwrote {dst}")
+        print(f"   {st['coloured']} colours set, {st['rated']} ratings set"
+              + (f", {st['not_in_xml']} not found in the export"
+                 if st["not_in_xml"] else ""))
+        if st.get("backup"):
+            print(f"   previous export kept at {Path(st['backup']).name}")
+        if args.in_place:
+            print("   refresh the rekordbox xml node in rekordbox's sidebar; "
+                  "the batch appears as a playlist")
+        else:
+            print("   point rekordbox at this file, or use --in-place to "
+                  "update the one it already watches")
+
     risky = playlist.write(out, root, entries)
     print(f"\nwrote {out}")
     if risky:
@@ -288,29 +319,63 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
     last_user = store.current_labels(con, source="user")
     last_any = store.current_labels(con)
 
-    src = args.input
-    if src is None:
-        batches = sorted(Path(".").glob("batch-*.m3u8"))
-        if batches:
-            src = str(batches[-1])
-            print(f"using most recent batch: {src}")
-        elif not args.all:
-            sys.exit(
-                "no batch playlist given and none found.\n"
-                "  Pass one, or --all to read every tag in the collection.\n"
-                "  --all adopts whatever the files currently say, which may\n"
-                "  include labels from other software or from an earlier\n"
-                "  scheme you have since moved on from.")
     canon = store.path_index(con)
-    raw = playlist.read(Path(src), root) if src else sorted(hb)
-    rels = [canon.get(store.norm(r), r) for r in raw]
-    args.input = src
+    unconfirmed = {p for p in last_any if p not in last_user}
+
+    if args.tags:
+        src = args.input
+        if src is None:
+            batches = sorted(Path("out").glob("batch-*.m3u8"))
+            if batches:
+                src = str(batches[-1])
+                print(f"using most recent batch: {src}")
+            elif not args.all:
+                sys.exit("no batch playlist given and none found; pass one, "
+                         "or --all to read every tag in the collection.")
+        raw = playlist.read(Path(src), root) if src else sorted(hb)
+        rels = [canon.get(store.norm(r), r) for r in raw]
+        reading = {rel: tags.read(root / rel) for rel in rels}
+    else:
+        xml = Path(args.rekordbox).expanduser()
+        if not xml.exists():
+            sys.exit(f"no rekordbox export at {xml}\n"
+                     "  export one after correcting (File > Export Collection "
+                     "in xml format),\n  or pass --tags to read genre tags "
+                     "instead.")
+        # An export older than the batch cannot contain the corrections, and
+        # reading it would adopt whatever the tracks looked like *before* the
+        # batch was made -- silently, as though the user had confirmed it.
+        newest_batch = con.execute(
+            "SELECT MAX(ts) FROM label_log WHERE source='model'").fetchone()[0]
+        if newest_batch and xml.stat().st_mtime < newest_batch and not args.stale_ok:
+            import datetime as _dt
+            sys.exit(
+                f"{xml.name} was exported "
+                f"{_dt.datetime.fromtimestamp(xml.stat().st_mtime):%Y-%m-%d %H:%M}"
+                f", before the current batch was made "
+                f"({_dt.datetime.fromtimestamp(newest_batch):%Y-%m-%d %H:%M}).\n"
+                "  It cannot contain your corrections. Export a fresh one from\n"
+                "  rekordbox first, or pass --stale-ok if you really mean it.")
+        scope = (None if args.all else
+                 {store.norm(r) for r in (
+                     [canon.get(store.norm(x), x)
+                      for x in playlist.read(Path(args.input), root)]
+                     if args.input else unconfirmed)})
+        if scope is not None and not scope:
+            print("nothing awaiting correction")
+            return
+        raw = rekordbox.read_labels(
+            xml, root, cfg.get("rekordbox", {}).get("colours", {}),
+            cfg.get("rekordbox", {}).get("ratings", {}),
+            cfg["labels"].get("separator", "_"), only=scope)
+        reading = {canon.get(k, k): v for k, v in raw.items()}
+        print(f"reading {len(reading)} tracks from {xml.name}")
+
     added = changed = confirmed = missing = 0
-    for rel in rels:
+    for rel, now in reading.items():
         if rel not in hb:
             missing += 1
             continue
-        now = tags.read(root / rel)
         if now is None:
             continue
         if now != last_any.get(rel):
@@ -330,9 +395,11 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
 USAGE = """\
 the loop
   vibecheck scan                     find your tracks (once, and after adding music)
-  vibecheck label 300                pick 300 unlabelled tracks, label what it can,
-                                     write batch-<date>-<time>.m3u8
-  ... import that playlist into your DJ software and correct what is wrong ...
+  vibecheck label 300                pick 300 unlabelled tracks, label what it
+                                     can, and write the colours and star
+                                     ratings into the rekordbox xml
+  ... refresh the rekordbox xml node in rekordbox, import the new playlist,
+      correct what is wrong, then export the collection again ...
   vibecheck sync                     read your corrections back and retrain
 
   Each round it learns from your corrections, so each round you correct less.
@@ -345,8 +412,9 @@ examples
   vibecheck label 300 --include-unconfirmed
                                           reuse tracks from a batch you have
                                           not corrected yet
-  vibecheck discard batch-….m3u8          throw a batch away, free its tracks
-  vibecheck sync batch-….m3u8             sync one batch specifically
+  vibecheck discard out/batch-….m3u8      throw a batch away, free its tracks
+  vibecheck sync out/batch-….m3u8         sync one batch specifically
+  vibecheck sync --tags                   read genre tags instead of the export
   vibecheck clear --unknown               strip genre tags it has no record of
   vibecheck --root /Volumes/DJ/Music status
                                           work on a different collection
@@ -381,7 +449,7 @@ def main(argv=None) -> int:
     p.add_argument("count", nargs="?", type=int, default=300,
                    help="how many tracks (default: %(default)s)")
     p.add_argument("--output", default=None,
-                   help="playlist path (default: batch-<date>-<time>.m3u8)")
+                   help="playlist path (default: out/batch-<date>-<time>.m3u8)")
     p.add_argument("--seed", type=int, default=None,
                    help="fix the random selection, for reproducibility")
     p.add_argument("--dry-run", action="store_true",
@@ -389,15 +457,40 @@ def main(argv=None) -> int:
     p.add_argument("--include-unconfirmed", action="store_true",
                    help="also pick tracks that already carry an unconfirmed "
                         "label from an earlier batch")
+    p.add_argument("--rekordbox", metavar="XML",
+                   default="~/Documents/rekordbox.xml",
+                   help="rekordbox export to build the batch from "
+                        "(default: %(default)s)")
+    p.add_argument("--no-rekordbox", dest="rekordbox", action="store_const",
+                   const=None, help="skip the rekordbox XML")
+    p.add_argument("--in-place", action="store_true", default=True,
+                   help="rewrite the rekordbox export itself, so a refresh in "
+                        "rekordbox shows the batch (default)")
+    p.add_argument("--separate-file", dest="in_place", action="store_false",
+                   help="write a new xml instead of updating in place")
+    p.add_argument("--write-tags", action="store_true", default=None,
+                   help="also write the ID3 genre tag, showing how specific "
+                        "each prediction was (default: debug.write_genre_tags "
+                        "in config)")
+    p.add_argument("--no-write-tags", dest="write_tags", action="store_false",
+                   help="do not touch genre tags")
 
     p = sub.add_parser("sync", help="read your corrections back and retrain",
                        description="Read the genre tags of a batch, record "
                                    "what you changed, and confirm what you "
                                    "left alone.")
     p.add_argument("input", nargs="?",
-                   help="playlist (default: the most recent batch here)")
+                   help="playlist, to restrict which tracks are read")
+    p.add_argument("--rekordbox", metavar="XML",
+                   default="~/Documents/rekordbox.xml",
+                   help="rekordbox export to read (default: %(default)s)")
+    p.add_argument("--tags", action="store_true",
+                   help="read ID3 genre tags instead of the rekordbox export")
     p.add_argument("--all", action="store_true",
-                   help="read every tag in the collection, not just a batch")
+                   help="read the whole collection, not just what is awaiting "
+                        "correction")
+    p.add_argument("--stale-ok", action="store_true",
+                   help="read an export older than the current batch")
 
     p = sub.add_parser("discard", help="throw a batch away, free its tracks",
                        description="Forget a batch's unconfirmed labels and "

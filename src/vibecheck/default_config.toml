@@ -12,6 +12,10 @@
 # The only labels a user ever applies by hand. Everything below is derived.
 values = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Pink"]
 
+# Level values, finest part of a label. A is best. D and E extend the original
+# A/B/C so every rekordbox star rating has a name.
+levels = ["A", "B", "C", "D", "E"]
+
 # Tags in the reference setup are "Colour_Level". The separator lets the app
 # treat the leading part as a coarser level of the same hierarchy, so it can
 # fall back to "Pink" when it cannot commit to "Pink_C". It still never
@@ -64,6 +68,14 @@ Light = ["Orange", "Yellow", "Aqua", "Pink"]
 # High when a wrong label you overlook is worse than a blank field.
 misleading_cost = 1.0
 
+[debug]
+# Also write the prediction into the ID3 genre tag. Rekordbox's colour and
+# rating fields are the real channel, so this is redundant -- but it makes the
+# app's reasoning visible while the tool is young: the tag shows how specific
+# the prediction was, where the colour swatch alone cannot. "Vibrant" means it
+# only committed to a hue; "Pink_C" means it committed to everything.
+write_genre_tags = true
+
 [audio]
 # Pinned, not defaulted: librosa and model preprocessing defaults drift between
 # versions, and these values are part of the cache key.
@@ -73,3 +85,24 @@ window_seconds = 10.0
 
 [model]
 backend = "clap"   # laion/larger_clap_music_and_speech
+
+# Writing predictions straight into a rekordbox library XML, for import.
+# This sets the real colour tag and star rating rather than piggybacking on
+# the genre text field, and needs no tag reload. The app does not know what a
+# label means -- these tables say how its parts map onto rekordbox's fields.
+[rekordbox.colours]
+Red = "0xFF0000"
+Orange = "0xFFA500"
+Yellow = "0xFFFF00"
+Green = "0x00FF00"
+Aqua = "0x25FDE9"
+Blue = "0x0000FF"
+Purple = "0x660099"
+Pink = "0xFF007F"
+
+[rekordbox.ratings]
+A = 5
+B = 4
+C = 3
+D = 2
+E = 1
