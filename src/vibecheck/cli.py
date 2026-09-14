@@ -53,7 +53,19 @@ def build_levels(cfg: dict, labels: list[str]):
 
 
 def labelled(root: Path, cfg: dict) -> dict[str, str]:
+    """Labels the user stands behind -- the only thing worth training on."""
     return store.current_labels(store.labels_db(root), source="user")
+
+
+def spoken_for(root: Path) -> set[str]:
+    """Tracks that already carry a label from anyone, including this app.
+
+    A model-written label means the track is out in a batch the user is
+    partway through correcting. Selecting it again would overwrite a correction
+    that has not been synced yet -- silently, since the tag looks like
+    something the app wrote in the first place.
+    """
+    return set(store.current_labels(store.labels_db(root)))
 
 
 def train(root: Path, cfg: dict):
@@ -95,11 +107,15 @@ def cmd_status(root: Path, cfg: dict, args) -> None:
 
 def cmd_label(root: Path, cfg: dict, args) -> None:
     con = store.labels_db(root)
-    lab = labelled(root, cfg)
     hb = dict(con.execute("SELECT path, hash FROM tracks"))
-    pool = [p for p in sorted(hb) if p not in lab]
+    taken = spoken_for(root)
+    pool = [p for p in sorted(hb) if p not in taken]
     if not pool:
         sys.exit("nothing left unlabelled")
+    out_now = len(taken) - len(labelled(root, cfg))
+    if out_now:
+        print(f"note: {out_now} tracks are already out in a batch awaiting "
+              f"your corrections; they are excluded")
     random.seed(args.seed)
     batch = sorted(random.sample(pool, min(args.count, len(pool))))
     print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks")
