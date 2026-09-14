@@ -24,7 +24,7 @@ import numpy as np
 
 from . import embed, index, playlist, rekordbox, store, tags
 from .config import DEFAULT
-from .predict import Model, levels_from
+from .predict import Axis, Model
 
 BACKEND = "clapw"
 
@@ -35,23 +35,53 @@ def load_config(root: Path) -> dict:
     return tomllib.loads(src.read_text())
 
 
-def build_levels(cfg: dict, labels: list[str]):
-    """Finest to coarsest, from the observed vocabulary plus config groupings.
+def build_axes(cfg: dict, labels: list[str]) -> tuple[list, dict]:
+    """Axes from config, plus the grid that turns axis values back into a label.
 
-    The app still never interprets a label. Config supplies the separator that
-    splits a tag into its parts, and the groupings over the leading part.
+    The app still never interprets a label: config says where the string
+    divides and which values group together, and the grid is derived from what
+    the labels actually are.
     """
     sep = cfg["labels"].get("separator", "")
     head = (lambda l: l.split(sep)[0]) if sep else (lambda l: l)
-    maps = [("full", {l: l for l in labels})]
-    if sep and any(sep in l for l in labels):
-        maps.append(("colour", {l: head(l) for l in labels}))
+    tail = (lambda l: l.split(sep)[1] if sep and sep in l else None)
+    mc = cfg["predict"]["misleading_cost"]
+    rmc = cfg["predict"].get("rating_misleading_cost", mc)
+
+    axes = []
     for entry in cfg.get("hierarchy", []):
         g = {c: grp for grp, members in entry.items() if grp != "name"
              for c in members}
         if all(head(l) in g for l in labels):
-            maps.append((entry["name"], {l: g[head(l)] for l in labels}))
-    return levels_from(labels, maps)
+            groups = {grp for grp in entry if grp != "name"}
+            axes.append(Axis(entry["name"], {l: g[head(l)] for l in labels},
+                             mc, n_values=len(groups)))
+    if any(tail(l) for l in labels):
+        declared = cfg["labels"].get("levels") or []
+        axes.append(Axis("rating", {l: tail(l) or "?" for l in labels}, rmc,
+                         n_values=len(declared)))
+
+    # (hue, tone) -> colour, read off the labels themselves
+    named = [a.name for a in axes if a.name != "rating"]
+    grid = {}
+    for l in labels:
+        key = tuple(next(a for a in axes if a.name == n).group[l] for n in named)
+        grid[key] = head(l)
+    return axes, {"axes": named, "grid": grid}
+
+
+def compose(pred, spec: dict) -> tuple[str | None, str]:
+    """The most specific thing the prediction supports, and what level that is."""
+    names = spec["axes"]
+    if pred.said(*names):
+        key = tuple(pred.values[n] for n in names)
+        got = spec["grid"].get(key)
+        if got:
+            return got, "colour"
+    for n in names:                      # a single axis, most specific first
+        if n in pred.values:
+            return pred.values[n], n
+    return None, "none"
 
 
 def labelled(root: Path, cfg: dict) -> dict[str, str]:
@@ -76,9 +106,11 @@ def train(root: Path, cfg: dict):
         sys.exit(f"only {len(lab)} labels; label some tracks first")
     paths, X = embed.load(root, BACKEND, DEFAULT, sorted(lab))
     y = np.array([lab[p] for p in paths])
-    m = Model(build_levels(cfg, sorted(set(y))))
+    labs = sorted(set(y))
+    axes, spec = build_axes(cfg, labs)
+    m = Model(axes)
     info = m.train(X, y)
-    return m, info
+    return m, info, spec
 
 
 def cmd_scan(root: Path, cfg: dict, args) -> None:
@@ -133,13 +165,13 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
           + (f", {st['failed']} failed" if st["failed"] else ""))
 
     print("[3/4] training on what you have labelled so far", flush=True)
-    model, info = train(root, cfg)
+    model, info, spec = train(root, cfg)
     print(f"      {info['tracks']} tracks, {info['labels']} labels, "
-          f"levels: {' > '.join(reversed(info['levels']))}")
+          f"axes: {', '.join(info['axes'])}")
 
     print("[4/4] deciding what it can say about each track", flush=True)
     paths, X = embed.load(root, BACKEND, DEFAULT, batch)
-    preds = model.predict(X, cfg["predict"]["misleading_cost"])
+    preds = model.predict(X)
 
     # tags this app did not write, and does not know about: another tool's
     # labels, or an earlier scheme. Overwriting them silently would destroy
@@ -152,15 +184,22 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
 
     write_tags = (args.write_tags if args.write_tags is not None
                   else cfg.get("debug", {}).get("write_genre_tags", False))
+    sep = cfg["labels"].get("separator", "_")
     entries, counts = [], {}
+    rated = 0
     for rel, p in zip(paths, preds):
-        counts[p.level] = counts.get(p.level, 0) + 1
-        if p.label is not None and not args.dry_run:
-            store.log_label(con, rel, hb[rel], p.label, "model")
-            if write_tags:
-                if tags.read(root / rel) != p.label:
-                    tags.write(root / rel, p.label)
-        entries.append((rel, f"{p.label or '?':12} | {Path(rel).name}"))
+        label, level = compose(p, spec)
+        rating = p.values.get("rating")
+        counts[level] = counts.get(level, 0) + 1
+        rated += rating is not None
+        full = f"{label}{sep}{rating}" if label and rating and level == "colour" \
+            else label
+        if full is not None and not args.dry_run:
+            store.log_label(con, rel, hb[rel], full, "model")
+            if write_tags and tags.read(root / rel) != label:
+                tags.write(root / rel, label)
+        shown = f"{label or '?'}{' ' + rating if rating else ''}"
+        entries.append((rel, f"{shown:14} | {Path(rel).name}"))
     con.commit()
 
     out = Path(args.output) if args.output else (
@@ -177,7 +216,10 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         dst = src if args.in_place else out.with_suffix(".xml")
         st = rekordbox.write(
             src, dst, root,
-            [(rel, p.level, p.label) for rel, p in zip(paths, preds)],
+            [(rel, compose(p, spec)[1],
+              (lambda l, r: f"{l}{sep}{r}" if l and r else l)(
+                  compose(p, spec)[0], p.values.get("rating")))
+             for rel, p in zip(paths, preds)],
             cfg.get("rekordbox", {}).get("colours", {}),
             cfg.get("rekordbox", {}).get("ratings", {}),
             cfg["labels"].get("separator", "_"))
@@ -203,6 +245,7 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
             print(f"     {r}")
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"   {k:7} {v}")
+    print(f"   rating  {rated} (independent of the colour)")
     print("\ncorrect them in your DJ software, then: vibecheck sync " + str(out))
 
 

@@ -1,5 +1,14 @@
 # What accuracy to expect
 
+> **Note (2026-09-14):** the figures below were measured against the retired
+> label set, with predictions arranged as a cascade (tone → hue → colour). Both
+> have since changed: the labels were replaced by a fresh, more consistent set,
+> and the cascade was replaced by independent axes after it turned out that hue
+> and tone form a 4×2 grid whose cells *are* the colours — so a confident hue
+> plus a confident tone already determines the colour, and the cascade was
+> discarding it. Current behaviour is summarised in the README; the analysis
+> below still stands as the record of what limits this.
+
 Measured with the shipped setup (CLAP embeddings + logistic regression,
 `docs/setup.md`) on 8,619 labelled tracks: 6,891 training, 861 test, test never
 used to choose anything about the model.
