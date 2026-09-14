@@ -105,25 +105,19 @@ loop above is running on the reference collection.
 Measured on 861 tracks never used for any modelling decision, from a reference
 collection of 14,194 mp3s with 8,619 hand-applied labels.
 
-**Per 100 new tracks**, with the default setting:
+Measured as the binary decisions you still have to make, where labelling a
+track by hand from eight colours costs 3.00:
 
 ```
-55 get exactly the right colour
-32 get a colour that is close — right hue pair, or at least right tone
- 9 are completely wrong
- 4 get a hue family instead of a colour
+setting              decisions left   work saved   what it says
+misleading_cost 1         1.35            55%      a colour on 96%, 53% right
+misleading_cost 2         1.81            40%      a colour on 41% at 67%,
+                                                   a hue on 17% at 88%,
+                                                   a tone on 28% at 94%
 ```
 
-That is **56% less labelling work** than doing it by hand, measured as the
-number of binary decisions you still have to make. A more cautious setting
-trades exact colours for fewer mistakes and a "don't know" answer:
-
-```
-setting              exact   close   wrong   silent   work saved
-misleading_cost 1      55      32       9        0       56%
-misleading_cost 2      46      21       5        2       42%
-misleading_cost 3      33      10       2       16       33%
-```
+The star rating is decided separately, and with `rating_misleading_cost = 4`
+it rates about 10% of tracks at ~81% accuracy rather than 93% at 55%.
 
 Accuracy by granularity, against always guessing the commonest answer:
 
@@ -160,21 +154,31 @@ something no one can do by hand. See [docs/ceiling.md](docs/ceiling.md).
 ## How it works
 
 ```
-mp3 → 24 × 10 s excerpts → CLAP embedding → logistic regression → label
-                                                     ↓
-                        cheapest of: colour / hue / tone / say nothing
+mp3 → 24 × 10 s excerpts → CLAP embedding ─┬─▶ hue     (4 values)  ─┐
+                                           ├─▶ tone    (2 values)  ─┴─▶ colour
+                                           └─▶ rating  (5 values)  ────▶ stars
 ```
+
+**The label is a set of independent axes, not a hierarchy.** Hue and tone form
+a 4×2 grid whose cells are the eight colours, so a confident hue plus a
+confident tone *is* a colour; one without the other narrows the choice without
+making it. The rating is a third axis entirely — it can be sure a track is four
+stars while only knowing it is Warm.
 
 - Pretrained audio models are used **only as feature extractors**. They never
   see a label. Everything about your taste lives in a small classifier trained
   on your own tags, which is what lets the same pipeline serve a completely
   different vocabulary.
-- There are **no confidence thresholds**. Every option is scored by how much
-  work it leaves you — how many binary choices remain — and the cheapest wins.
-  Near-misses get partial credit, so the model is pushed toward being close
-  rather than boldly wrong, and the colour → hue → tone → silence cascade falls
-  out of the arithmetic rather than being hand-tuned.
-- **One dial**: `misleading_cost`, how bad it is to be misled by a wrong label.
+- There are **no confidence thresholds to set**. Each axis knows how much of
+  your decision it removes — knowing the hue narrows eight colours to two,
+  which is two binary choices — and speaks when `(1 − p) × (cost +
+  misleading_cost) < cost`, i.e. when being right is likely enough to be worth
+  the risk. The threshold is derived, not configured: 33% for hue, 50% for
+  tone, 63% for the rating.
+- **Two dials**: `misleading_cost` for the colour axes, and
+  `rating_misleading_cost` for the stars, because a wrong star rating pollutes
+  the view you use to find your best tracks where a wrong colour is just a
+  wrong colour.
 
 ## Current best setup
 

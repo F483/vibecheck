@@ -23,9 +23,11 @@ levels = ["A", "B", "C", "D", "E"]
 # Set separator = "" if the tag is atomic.
 separator = "_"
 
-# Coarser groupings, derived automatically from the labels above. The user never
-# applies these; the app predicts them when it cannot confidently name a colour,
-# because "this is Warm" is more useful than a wrong guess or silence.
+# The axes the app actually predicts. Each is independent, and together they
+# determine the label: hue x tone is a 4x2 grid whose cells are the eight
+# colours, so a confident hue plus a confident tone *is* a colour. Predicting
+# one axis and not the other narrows the choice without making it, which is
+# still worth saying.
 [[hierarchy]]
 name = "hue"
 Warm    = ["Red", "Orange"]
@@ -67,6 +69,16 @@ Light = ["Orange", "Yellow", "Aqua", "Pink"]
 # Low when you are often unsure yourself and a near-miss costs little.
 # High when a wrong label you overlook is worse than a blank field.
 misleading_cost = 1.0
+
+# The rating is a separate axis with its own tolerance, because a wrong star
+# rating costs more than a wrong colour -- it pollutes the view you use to find
+# your best tracks, where a wrong colour is just a wrong colour.
+#
+# Measured on 300 labels (always guessing the commonest rating = 44%):
+#   1  -> rates 93% of tracks, 55% right
+#   2  -> rates 45%,           65% right
+#   4  -> rates 10%,           81% right
+rating_misleading_cost = 4.0
 
 [debug]
 # Also write the prediction into the ID3 genre tag. Rekordbox's colour and

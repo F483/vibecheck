@@ -1,29 +1,33 @@
 """Deciding what to say about a track.
 
-There are no confidence thresholds. Each level of the label hierarchy is scored
-by the work it leaves the user -- how many binary decisions remain, log2 of the
-options still open -- and the cheapest wins:
+The label is not a hierarchy, it is a set of **independent axes**. In the
+reference vocabulary, hue (4 values) and tone (2 values) form a 4x2 grid whose
+cells are the 8 colours, and the rating is a third axis entirely. Knowing hue
+and tone *is* knowing the colour; knowing only one of them narrows the choice
+without making it.
 
-    full label right (Pink_C)     0       nothing left to decide
-    colour right, level unknown   1.58    3 levels remain
-    hue right                     2.58    6 remain
-    tone right                    3.58    12 remain
-    says nothing                  4.58    all 24
+Treating that as a cascade -- tone, then hue, then colour -- was wrong, and
+cost real information: a model confident about hue and tone would emit only the
+hue, discarding a colour it had already determined.
 
-An assertion that turns out wrong is charged at the finest level where it was
-*still* correct, plus `misleading_cost` -- so calling a Pink_C track Pink_B is
-cheap, calling it Green_A is not. Near-misses earning partial credit is what
-pushes the model toward being close rather than boldly wrong, and the cascade
-from fine to coarse falls out of the arithmetic rather than being hand-tuned.
+Each axis is decided on its own, by expected cost. Knowing an axis of n values
+saves log2(n) binary decisions; getting it wrong costs that saving back plus
+`misleading_cost`, because the user has to notice and undo it. So an axis is
+asserted when
 
-Nothing here knows what a label means. A level is just a map from the full
-label to a coarser group, supplied by config.
+    (1 - p) * (cost + misleading_cost) < cost
+
+which is just "assert when being right is likely enough to be worth the risk".
+Costs add across axes, so no axis needs to know about any other.
+
+Nothing here knows what a label means. An axis is a map from the full label to
+one of its values, supplied by config.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from sklearn.linear_model import LogisticRegression
@@ -34,30 +38,31 @@ C = 0.001
 
 
 @dataclass
-class Level:
+class Axis:
     name: str
-    group: dict[str, str]      # full label -> this level's value
-    cost: float = 0.0          # decisions remaining when right at this level
+    group: dict[str, str]          # full label -> this axis's value
+    misleading_cost: float = 1.0
+    n_values: int = 0              # how many the *vocabulary* allows
+    cost: float = 0.0              # decisions saved by knowing it
+
+    def __post_init__(self):
+        # From the declared vocabulary, not from what training happened to
+        # contain. A user with five ratings who has only used three still
+        # faces a five-way choice, so knowing the rating is worth more than
+        # the training data alone would suggest -- and the axis should not
+        # become more reluctant to speak simply because it has seen less.
+        n = self.n_values or len(set(self.group.values()))
+        self.cost = self.cost or math.log2(max(n, 1))
 
 
 @dataclass
 class Prediction:
-    level: str
-    label: str | None
-    confidence: float
+    """What was asserted on each axis, and how sure it was."""
+    values: dict[str, str] = field(default_factory=dict)
+    confidence: dict[str, float] = field(default_factory=dict)
 
-
-def levels_from(labels: list[str], maps: list[tuple[str, dict[str, str]]]) -> list[Level]:
-    """Finest first. Cost = log2(labels still possible once this is known)."""
-    out = []
-    for name, m in maps:
-        sizes = {}
-        for lab in labels:
-            sizes.setdefault(m[lab], 0)
-            sizes[m[lab]] += 1
-        mean_remaining = sum(sizes.values()) / len(sizes)
-        out.append(Level(name, m, math.log2(max(mean_remaining, 1))))
-    return out
+    def said(self, *axes: str) -> bool:
+        return all(a in self.values for a in axes)
 
 
 def _fit(X, y):
@@ -66,48 +71,34 @@ def _fit(X, y):
 
 
 class Model:
-    def __init__(self, levels: list[Level]):
-        self.levels = levels
-        self.none_cost = math.log2(len({v for lv in levels for v in lv.group}) or 1)
+    def __init__(self, axes: list[Axis]):
+        self.axes = axes
 
     def train(self, X: np.ndarray, y: np.ndarray) -> dict:
         self.labels = sorted(set(y))
-        self.none_cost = math.log2(len(self.labels))
-        self.models = [_fit(X, np.array([lv.group[v] for v in y])) for lv in self.levels]
-        return {"tracks": len(y), "labels": len(self.labels),
-                "levels": [lv.name for lv in self.levels]}
+        self.models = {}
+        trained = []
+        for ax in self.axes:
+            values = np.array([ax.group[v] for v in y])
+            if len(set(values)) < 2:
+                continue          # nothing to learn yet
+            self.models[ax.name] = _fit(X, values)
+            trained.append(ax.name)
+        return {"tracks": len(y), "labels": len(self.labels), "axes": trained}
 
-    def _cost_if(self, asserted: str, truth: str, k: int, M: float) -> float:
-        """Cost of asserting `asserted` at level k when the truth is `truth`."""
-        lv = self.levels[k]
-        if lv.group[truth] == asserted:
-            return lv.cost
-        for j in range(k + 1, len(self.levels)):
-            deeper = self.levels[j]
-            # was the assertion still right at this coarser level?
-            same = {l for l in self.labels if lv.group[l] == asserted}
-            if any(deeper.group[l] == deeper.group[truth] for l in same):
-                return deeper.cost + M
-        return self.none_cost + M
-
-    def predict(self, X: np.ndarray, misleading_cost: float = 1.0) -> list[Prediction]:
-        M = misleading_cost
-        n = len(X)
-        best = np.full(n, self.none_cost)
-        chosen: list[list] = [[None, None, 0.0] for _ in range(n)]
-        for k, (lv, m) in enumerate(zip(self.levels, self.models)):
+    def predict(self, X: np.ndarray) -> list[Prediction]:
+        out = [Prediction() for _ in range(len(X))]
+        for ax in self.axes:
+            m = self.models.get(ax.name)
+            if m is None:
+                continue
             P = m.predict_proba(X)
             classes = list(m.classes_)
-            for j, cand in enumerate(classes):
-                cost = np.array([self._cost_if(cand, t, k, M) for t in self.labels])
-                # P is over this level's groups; expand to a per-label distribution
-                w = np.zeros((n, len(self.labels)))
-                for li, lab in enumerate(self.labels):
-                    w[:, li] = P[:, classes.index(lv.group[lab])] / \
-                        sum(1 for x in self.labels if lv.group[x] == lv.group[lab])
-                e = w @ cost
-                better = e < best
-                best[better] = e[better]
-                for i in np.nonzero(better)[0]:
-                    chosen[i] = [lv.name, cand, float(P[i].max())]
-        return [Prediction(c[0] or "none", c[1], c[2]) for c in chosen]
+            M = ax.misleading_cost
+            for i, row in enumerate(P):
+                j = int(row.argmax())
+                p = float(row[j])
+                if (1 - p) * (ax.cost + M) < ax.cost:
+                    out[i].values[ax.name] = classes[j]
+                    out[i].confidence[ax.name] = p
+        return out
