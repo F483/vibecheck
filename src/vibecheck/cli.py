@@ -373,7 +373,12 @@ def cmd_migrate(root: Path, cfg: dict, args) -> None:
 
 
 def cmd_clear(root: Path, cfg: dict, args) -> None:
-    """Remove genre tags. Housekeeping, and destructive, so it asks twice.
+    """Remove genre tags. Housekeeping, so it asks twice.
+
+    The genre tag is debug output (debug.write_genre_tags): rekordbox's colour
+    and rating are where a label actually lives. So clearing a tag says nothing
+    about the label and must not touch it -- the categories below only choose
+    *which* tracks' tags to strip.
 
     Anything cleared is first written to .vibecheck/cleared-<date>.csv, because
     a tag the database never knew about has no other record anywhere.
@@ -430,10 +435,8 @@ def cmd_clear(root: Path, cfg: dict, args) -> None:
         w.writerows(targets)
     for rel, _ in targets:
         tags.write(root / rel, None)
-        if rel in known:
-            store.log_label(con, ids[rel], Label(None, None), "user")
-    con.commit()
     print(f"cleared {len(targets)}; saved to {out}")
+    print("   labels are untouched: colour and rating live in rekordbox")
 
 
 def cmd_sync(root: Path, cfg: dict, args) -> None:
@@ -654,16 +657,19 @@ def main(argv=None) -> int:
                    help="actually migrate (otherwise only reports)")
 
     p = sub.add_parser("clear", help="housekeeping: remove genre tags",
-                       description="Remove genre tags by category. Saves what "
-                                   "it removes to .vibecheck/cleared-<date>.csv "
-                                   "first.")
-    p.add_argument("input", nargs="?", help="restrict to a playlist")
+                       description="Remove ID3 genre tags by category. This is "
+                                   "debug output only -- your colours and star "
+                                   "ratings live in rekordbox and are not "
+                                   "touched. Saves what it removes to "
+                                   ".vibecheck/cleared-<date>.csv first.")
+    p.add_argument("input", nargs="?",
+                   help="a playlist, to restrict which tracks are considered")
     p.add_argument("--unknown", action="store_true",
-                   help="tags this app has no record of")
+                   help="tags on tracks this app has no label for")
     p.add_argument("--unconfirmed", action="store_true",
-                   help="labels it wrote that you have not confirmed")
+                   help="tags on tracks whose label is still the model's")
     p.add_argument("--confirmed", action="store_true",
-                   help="your own labels (destroys work)")
+                   help="tags on tracks you have labelled yourself")
     p.add_argument("--all", action="store_true", help="every genre tag")
     p.add_argument("--apply", action="store_true",
                    help="actually do it (otherwise only reports)")
