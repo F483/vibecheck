@@ -20,7 +20,7 @@ from vibecheck import rekordbox, store  # noqa: E402
 def main(out: Path | None) -> int:
     root = (Path.home() / "Music" / "Collection").resolve()
     cfg = tomllib.loads(Path("src/vibecheck/default_config.toml").read_text())
-    labels = store.current_labels(store.labels_db(root), source="user")
+    labels = store.current(store.labels_db(root), source='user')
     preds = [(rel, "full", lbl) for rel, lbl in sorted(labels.items())]
     src = Path("~/Documents/rekordbox.xml").expanduser()
     out = out or src

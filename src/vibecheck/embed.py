@@ -18,6 +18,16 @@ from .config import Preproc
 
 COMMIT_EVERY = 10
 
+
+def fingerprint(backend_name: str, cfg: Preproc) -> str:
+    """Everything that decides what a vector means.
+
+    Stored with each round and each fit: when a curve moves, this says whether
+    the model got better or the inputs changed underneath it.
+    """
+    b = backends.get(backend_name)
+    return f"{backend_name}/{b.version}/{b.preproc(cfg).digest()}"
+
 _W: dict = {}
 
 

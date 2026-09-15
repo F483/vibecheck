@@ -22,9 +22,10 @@ from pathlib import Path
 
 import numpy as np
 
-from . import embed, index, playlist, rekordbox, store, tags
+from . import embed, evaluate, index, palette, playlist, rekordbox, store, tags
 from .config import DEFAULT
-from .predict import Axis, Model
+from .predict import Model, axes_for, targets_for
+from .store import Label
 
 BACKEND = "clapw"
 
@@ -35,58 +36,25 @@ def load_config(root: Path) -> dict:
     return tomllib.loads(src.read_text())
 
 
-def build_axes(cfg: dict, labels: list[str]) -> tuple[list, dict]:
-    """Axes from config, plus the grid that turns axis values back into a label.
-
-    The app still never interprets a label: config says where the string
-    divides and which values group together, and the grid is derived from what
-    the labels actually are.
-    """
-    sep = cfg["labels"].get("separator", "")
-    head = (lambda l: l.split(sep)[0]) if sep else (lambda l: l)
-    tail = (lambda l: l.split(sep)[1] if sep and sep in l else None)
+def build_axes(cfg: dict) -> list:
+    """The three axes, with the two dials config actually owns."""
     mc = cfg["predict"]["misleading_cost"]
-    rmc = cfg["predict"].get("rating_misleading_cost", mc)
-
-    axes = []
-    for entry in cfg.get("hierarchy", []):
-        g = {c: grp for grp, members in entry.items() if grp != "name"
-             for c in members}
-        if all(head(l) in g for l in labels):
-            groups = {grp for grp in entry if grp != "name"}
-            axes.append(Axis(entry["name"], {l: g[head(l)] for l in labels},
-                             mc, n_values=len(groups)))
-    if any(tail(l) for l in labels):
-        declared = cfg["labels"].get("levels") or []
-        axes.append(Axis("rating", {l: tail(l) or "?" for l in labels}, rmc,
-                         n_values=len(declared)))
-
-    # (hue, tone) -> colour, read off the labels themselves
-    named = [a.name for a in axes if a.name != "rating"]
-    grid = {}
-    for l in labels:
-        key = tuple(next(a for a in axes if a.name == n).group[l] for n in named)
-        grid[key] = head(l)
-    return axes, {"axes": named, "grid": grid}
+    return axes_for(mc, cfg["predict"].get("rating_misleading_cost", mc))
 
 
-def compose(pred, spec: dict) -> tuple[str | None, str]:
-    """The most specific thing the prediction supports, and what level that is."""
-    names = spec["axes"]
-    if pred.said(*names):
-        key = tuple(pred.values[n] for n in names)
-        got = spec["grid"].get(key)
-        if got:
-            return got, "colour"
-    for n in names:                      # a single axis, most specific first
-        if n in pred.values:
-            return pred.values[n], n
-    return None, "none"
+def specificity(pred) -> str:
+    """How far the prediction got: a colour, one axis of it, or nothing."""
+    if pred.colour:
+        return "colour"
+    for ax in ("hue", "tone"):
+        if ax in pred.values:
+            return ax
+    return "none"
 
 
-def labelled(root: Path, cfg: dict) -> dict[str, str]:
+def labelled(root: Path, cfg: dict) -> dict[str, Label]:
     """Labels the user stands behind -- the only thing worth training on."""
-    return store.current_labels(store.labels_db(root), source="user")
+    return store.current(store.labels_db(root), source="user")
 
 
 def spoken_for(root: Path) -> set[str]:
@@ -97,54 +65,116 @@ def spoken_for(root: Path) -> set[str]:
     that has not been synced yet -- silently, since the tag looks like
     something the app wrote in the first place.
     """
-    return set(store.current_labels(store.labels_db(root)))
+    return set(store.current(store.labels_db(root)))
 
 
-def train(root: Path, cfg: dict):
+def train(root: Path, cfg: dict, measure: bool = True):
     lab = labelled(root, cfg)
     if len(lab) < 20:
         sys.exit(f"only {len(lab)} labels; label some tracks first")
     paths, X = embed.load(root, BACKEND, DEFAULT, sorted(lab))
-    y = np.array([lab[p] for p in paths])
-    labs = sorted(set(y))
-    axes, spec = build_axes(cfg, labs)
+    y = targets_for([lab[p] for p in paths])
+    axes = build_axes(cfg)
     m = Model(axes)
     info = m.train(X, y)
-    return m, info, spec
+    # Measured before the model is used, on a slice it was not fitted on, so
+    # the round has an honest number attached to it in the database. Skipping
+    # this saves one fit per axis and loses the only record of the round.
+    hb = store.hash_by_path(store.labels_db(root))
+    parts = evaluate.split([hb[p] for p in paths])
+    info["n_train"] = int((parts == evaluate.TRAIN).sum())
+    info["labels"] = len({(l.colour, l.stars) for l in lab.values()})
+    info["scores"] = (evaluate.score_axes(X, y, [hb[p] for p in paths], axes)
+                      if measure else [])
+    return m, info
 
 
 def cmd_scan(root: Path, cfg: dict, args) -> None:
     print(f"scanning {root}", flush=True)
-    st = index.scan(root)
-    print(f"   {st.files} mp3 files, {st.new} new, {st.changed} changed")
-    print(f"   labels: {st.labels_added} added, {st.labels_changed} corrected"
-          + (f", {st.unreadable} unreadable" if st.unreadable else ""))
+    st = index.scan(root, adopt_tags=args.adopt_tags)
+    parts = [f"{st.files} mp3 files", f"{st.new} new"]
+    for n, what in ((st.moved, "moved"), (st.changed, "changed"),
+                    (st.missing, "now missing"), (st.returned, "back"),
+                    (st.unreadable, "unreadable")):
+        if n:
+            parts.append(f"{n} {what}")
+    print("   " + ", ".join(parts))
+    if st.labels_added:
+        print(f"   adopted {st.labels_added} genre tags as your labels")
+    if st.tags_differ:
+        print(f"   {st.tags_differ} genre tags were not read"
+              + ("" if args.adopt_tags else
+                 " (--adopt-tags to take them as your labels,"
+                 " or sync to read corrections)"))
 
 
 def cmd_status(root: Path, cfg: dict, args) -> None:
+    from collections import Counter
+
     con = store.labels_db(root)
-    total = con.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+    total, gone = con.execute(
+        "SELECT SUM(missing_at IS NULL), SUM(missing_at IS NOT NULL) "
+        "FROM tracks").fetchone()
+    total, gone = total or 0, gone or 0
     lab = labelled(root, cfg)
     cache = store.cache_db(root)
     have = {h for (h,) in cache.execute(
         "SELECT hash FROM embeddings WHERE backend=?", (BACKEND,))}
-    hb = dict(con.execute("SELECT path, hash FROM tracks"))
-    print(f"collection      {total} tracks")
+    hb = store.hash_by_path(con)
+
+    print(f"collection      {total} tracks"
+          + (f"   ({gone} no longer on disk)" if gone else ""))
     print(f"labelled        {len(lab)}")
     print(f"unlabelled      {total - len(lab)}")
     print(f"embedded        {sum(1 for p in hb if hb[p] in have)}")
+
     if lab:
-        from collections import Counter
-        for l, n in Counter(lab.values()).most_common(8):
-            print(f"   {l:12} {n}")
+        parts = evaluate.split([hb[p] for p in lab if p in hb])
+        held = int((parts != evaluate.TRAIN).sum())
+        print(f"holdout         {held} of {len(lab)} labels"
+              + ("   (none yet: nothing can be measured)" if not held else ""))
+
+    last = con.execute("""
+        SELECT f.id, f.ts, f.n_train, r.name FROM fits f
+        LEFT JOIN rounds r ON r.id = f.round_id ORDER BY f.id DESC LIMIT 1
+    """).fetchone()
+    if last:
+        fid, ts, n, name = last
+        left, hand = con.execute(
+            "SELECT SUM(cost_left), SUM(cost) FROM fit_axes WHERE fit_id=?",
+            (fid,)).fetchone()
+        print(f"last measured   {left:.2f} of {hand:.2f} decisions left per "
+              f"track   ({name or 'no round'}, {n} labels, "
+              f"{dt.datetime.fromtimestamp(ts):%Y-%m-%d})")
+
+    rounds = con.execute("SELECT name, size, n_labels, closed FROM rounds "
+                         "ORDER BY id").fetchall()
+    if rounds:
+        print(f"rounds          {len(rounds)}")
+        for name, size, n, closed in rounds[-5:]:
+            print(f"   {name:22} {size:4} tracks, knew {n:5}"
+                  + ("" if closed else "   (open)"))
+
+    if lab:
+        print("colours")
+        for c in palette.COLOURS:
+            n = sum(1 for v in lab.values() if v.colour == c.name)
+            if n:
+                print(f"   {c.name:8} {n:5}   {c.hue}/{c.tone}")
+        print("stars")
+        by_star = Counter(v.stars for v in lab.values() if v.stars is not None)
+        for k in sorted(by_star, reverse=True):
+            print(f"   {'*' * k or '-':8} {by_star[k]:5}")
 
 
 def cmd_label(root: Path, cfg: dict, args) -> None:
     con = store.labels_db(root)
-    hb = dict(con.execute("SELECT path, hash FROM tracks"))
+    ids = store.track_ids(con)
     confirmed = set(labelled(root, cfg))
     taken = confirmed if args.include_unconfirmed else spoken_for(root)
-    pool = [p for p in sorted(hb) if p not in taken]
+    live = {p for (p,) in con.execute(
+        "SELECT path FROM tracks WHERE missing_at IS NULL")}
+    pool = [p for p in sorted(live) if p not in taken]
     if not pool:
         sys.exit("nothing left unlabelled")
     out_now = len(spoken_for(root)) - len(confirmed)
@@ -156,7 +186,13 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
               f"unconfirmed label")
     random.seed(args.seed)
     batch = sorted(random.sample(pool, min(args.count, len(pool))))
-    print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks")
+    # One name for the round: the playlist, the label rows, the predictions and
+    # the run all carry it, which is what makes them joinable afterwards.
+    out = Path(args.output) if args.output else (
+        Path("out") / f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
+    name = out.stem
+    print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks "
+          f"as {name}")
 
     print(f"[2/4] listening to the tracks that are new to it "
           f"(about 3 seconds each)", flush=True)
@@ -165,9 +201,20 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
           + (f", {st['failed']} failed" if st["failed"] else ""))
 
     print("[3/4] training on what you have labelled so far", flush=True)
-    model, info, spec = train(root, cfg)
-    print(f"      {info['tracks']} tracks, {info['labels']} labels, "
+    model, info = train(root, cfg)
+    print(f"      {info['tracks']} tracks, {info['labels']} distinct labels, "
           f"axes: {', '.join(info['axes'])}")
+    for sc in info["scores"]:
+        print(f"      {sc.axis:7} speaks on {sc.coverage * 100:3.0f}% at "
+              f"{sc.accuracy * 100:3.0f}%, leaving {sc.cost_left:.2f} of "
+              f"{sc.cost:.2f} decisions   (holdout n={sc.n})")
+    if not info["scores"]:
+        print("      not scored: no labelled track falls in the measurement "
+              "slice yet, so this round goes unrecorded")
+
+    encoder = embed.fingerprint(BACKEND, DEFAULT)
+    rid = None if args.dry_run else store.open_round(
+        con, name, len(batch), BACKEND, encoder, info["tracks"])
 
     print("[4/4] deciding what it can say about each track", flush=True)
     paths, X = embed.load(root, BACKEND, DEFAULT, batch)
@@ -184,26 +231,31 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
 
     write_tags = (args.write_tags if args.write_tags is not None
                   else cfg.get("debug", {}).get("write_genre_tags", False))
-    sep = cfg["labels"].get("separator", "_")
     entries, counts = [], {}
     rated = 0
     for rel, p in zip(paths, preds):
-        label, level = compose(p, spec)
-        rating = p.values.get("rating")
-        counts[level] = counts.get(level, 0) + 1
-        rated += rating is not None
-        full = f"{label}{sep}{rating}" if label and rating and level == "colour" \
-            else label
-        if full is not None and not args.dry_run:
-            store.log_label(con, rel, hb[rel], full, "model")
-            if write_tags and tags.read(root / rel) != label:
-                tags.write(root / rel, label)
-        shown = f"{label or '?'}{' ' + rating if rating else ''}"
+        colour, stars = p.colour, p.stars
+        label = Label(colour.name if colour else None, stars)
+        counts[specificity(p)] = counts.get(specificity(p), 0) + 1
+        rated += stars is not None
+        if label and not args.dry_run:
+            store.log_label(con, ids[rel], label, "model", round_id=rid)
+            # debug only, and the colour alone: the rating has its own field
+            if write_tags and tags.read(root / rel) != label.colour:
+                tags.write(root / rel, label.colour)
+        shown = f"{label.colour or '?'}{' ' + '*' * stars if stars else ''}"
         entries.append((rel, f"{shown:14} | {Path(rel).name}"))
+
+    if not args.dry_run:
+        # every axis, asserted or not: this is the record that makes the
+        # threshold reviewable later, and it cannot be recovered afterwards
+        store.log_predictions(con, rid, [(ids[rel], p)
+                                         for rel, p in zip(paths, preds)])
+        if info["scores"]:      # a fit with nothing measured would plot as zero
+            store.log_fit(con, rid, BACKEND, encoder, evaluate.VAL,
+                          info["n_train"], info["labels"], info["scores"])
     con.commit()
 
-    out = Path(args.output) if args.output else (
-        Path("out") / f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
     out.parent.mkdir(parents=True, exist_ok=True)
     if args.rekordbox and not args.dry_run:
         src = Path(args.rekordbox).expanduser()
@@ -216,13 +268,9 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         dst = src if args.in_place else out.with_suffix(".xml")
         st = rekordbox.write(
             src, dst, root,
-            [(rel, compose(p, spec)[1],
-              (lambda l, r: f"{l}{sep}{r}" if l and r else l)(
-                  compose(p, spec)[0], p.values.get("rating")))
-             for rel, p in zip(paths, preds)],
-            cfg.get("rekordbox", {}).get("colours", {}),
-            cfg.get("rekordbox", {}).get("ratings", {}),
-            cfg["labels"].get("separator", "_"))
+            [(rel, specificity(p),
+              Label(p.colour.name if p.colour else None, p.stars))
+             for rel, p in zip(paths, preds)])
         print(f"\nwrote {dst}")
         print(f"   {st['coloured']} colours set, {st['rated']} ratings set"
               + (f", {st['not_in_xml']} not found in the export"
@@ -245,7 +293,7 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
             print(f"     {r}")
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"   {k:7} {v}")
-    print(f"   rating  {rated} (independent of the colour)")
+    print(f"   stars   {rated} (independent of the colour)")
     print("\ncorrect them in your DJ software, then: vibecheck sync " + str(out))
 
 
@@ -256,15 +304,17 @@ def cmd_discard(root: Path, cfg: dict, args) -> None:
     user has since changed is a correction, not a discard, so it is kept and
     reported -- losing it would be indistinguishable from the app never having
     predicted the track.
+
+    What this cannot undo is the colours and ratings already imported into
+    rekordbox: that is rekordbox's database, not a file this app owns. The
+    batch playlist is still there to select and clear.
     """
     con = store.labels_db(root)
-    hb = dict(con.execute("SELECT path, hash FROM tracks"))
+    ids = store.track_ids(con)
     canon = store.path_index(con)
     confirmed = set(labelled(root, cfg))
-    rows = {p: l for p, l in con.execute(
-        """SELECT l.path, l.label FROM label_log l
-           JOIN (SELECT path, MAX(id) id FROM label_log GROUP BY path) m
-             ON l.id = m.id WHERE l.source = 'model'""")}
+    rows = {p: (c, r) for p, c, r in con.execute(
+        "SELECT path, colour, round_id FROM current WHERE source = 'model'")}
 
     if args.input:
         rels = [canon.get(store.norm(r), r)
@@ -276,20 +326,50 @@ def cmd_discard(root: Path, cfg: dict, args) -> None:
     for rel in rels:
         if rel in confirmed or rel not in rows:
             continue
+        was, rid = rows[rel]
         now = tags.read(root / rel)
-        if now != rows[rel]:
+        if now is not None and now != was:
             kept += 1          # user has edited it: that is a correction
             continue
         if not args.dry_run:
-            tags.write(root / rel, None)
-            store.log_label(con, rel, hb[rel], None, "model")
+            if now is not None:
+                tags.write(root / rel, None)
+            store.log_label(con, ids[rel], Label(None, None), "model",
+                            round_id=rid)
         cleared += 1
     con.commit()
     print(f"discarded {cleared} unconfirmed labels"
           + (f"; kept {kept} you had already corrected (sync to keep them)"
              if kept else ""))
+    if cleared and not args.dry_run:
+        print("   colours and ratings already imported into rekordbox are "
+              "rekordbox's;\n   select the batch playlist there to clear them")
     if args.dry_run:
         print("(dry run -- nothing changed)")
+
+
+def cmd_migrate(root: Path, cfg: dict, args) -> None:
+    """Bring labels.db up to the current schema, or say what that would take."""
+    path = store.vibecheck_dir(root) / "labels.db"
+    if not path.exists():
+        print(f"no database at {path}; run scan to create one")
+        return
+    con = store._connect(path)
+    have = con.execute("PRAGMA user_version").fetchone()[0]
+    todo = store.migrate(con, path, dry_run=True)
+    print(f"{path}")
+    print(f"   at schema v{have}, this build is v{store.SCHEMA_VERSION}")
+    if not todo:
+        print("   up to date, nothing to do")
+        return
+    print(f"   {len(todo)} migration(s) to apply: {', '.join(todo)}")
+    if not args.apply:
+        print("\n(nothing changed -- pass --apply to migrate)")
+        return
+    done = store.migrate(con, path)
+    con.commit()
+    print(f"   applied {', '.join(done)}; now v{store.SCHEMA_VERSION}")
+    print(f"   previous database kept at {path.with_suffix(f'.db.pre-v{have}').name}")
 
 
 def cmd_clear(root: Path, cfg: dict, args) -> None:
@@ -302,14 +382,14 @@ def cmd_clear(root: Path, cfg: dict, args) -> None:
     import datetime as dt
 
     con = store.labels_db(root)
-    hb = dict(con.execute("SELECT path, hash FROM tracks"))
+    ids = store.track_ids(con)
     canon = store.path_index(con)
     confirmed = set(labelled(root, cfg))
-    known = set(store.current_labels(con))
+    known = set(store.current(con))
 
     scope = ([canon.get(store.norm(r), r)
               for r in playlist.read(Path(args.input), root)]
-             if args.input else sorted(hb))
+             if args.input else sorted(ids))
 
     def wanted(rel: str) -> bool:
         if args.all:
@@ -351,16 +431,16 @@ def cmd_clear(root: Path, cfg: dict, args) -> None:
     for rel, _ in targets:
         tags.write(root / rel, None)
         if rel in known:
-            store.log_label(con, rel, hb[rel], None, "user")
+            store.log_label(con, ids[rel], Label(None, None), "user")
     con.commit()
     print(f"cleared {len(targets)}; saved to {out}")
 
 
 def cmd_sync(root: Path, cfg: dict, args) -> None:
     con = store.labels_db(root)
-    hb = dict(con.execute("SELECT path, hash FROM tracks"))
-    last_user = store.current_labels(con, source="user")
-    last_any = store.current_labels(con)
+    ids = store.track_ids(con)
+    last_user = store.current(con, source="user")
+    last_any = store.current(con)
 
     canon = store.path_index(con)
     unconfirmed = {p for p in last_any if p not in last_user}
@@ -375,9 +455,10 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
             elif not args.all:
                 sys.exit("no batch playlist given and none found; pass one, "
                          "or --all to read every tag in the collection.")
-        raw = playlist.read(Path(src), root) if src else sorted(hb)
+        raw = playlist.read(Path(src), root) if src else sorted(ids)
         rels = [canon.get(store.norm(r), r) for r in raw]
-        reading = {rel: tags.read(root / rel) for rel in rels}
+        # genre tags carry the colour only; the rating has its own field
+        reading = {rel: Label(tags.read(root / rel), None) for rel in rels}
     else:
         xml = Path(args.rekordbox).expanduser()
         if not xml.exists():
@@ -389,7 +470,7 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
         # reading it would adopt whatever the tracks looked like *before* the
         # batch was made -- silently, as though the user had confirmed it.
         newest_batch = con.execute(
-            "SELECT MAX(ts) FROM label_log WHERE source='model'").fetchone()[0]
+            "SELECT MAX(ts) FROM labels WHERE source='model'").fetchone()[0]
         if newest_batch and xml.stat().st_mtime < newest_batch and not args.stale_ok:
             import datetime as _dt
             sys.exit(
@@ -407,28 +488,46 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
         if scope is not None and not scope:
             print("nothing awaiting correction")
             return
-        raw = rekordbox.read_labels(
-            xml, root, cfg.get("rekordbox", {}).get("colours", {}),
-            cfg.get("rekordbox", {}).get("ratings", {}),
-            cfg["labels"].get("separator", "_"), only=scope)
+        raw = rekordbox.read_labels(xml, root, only=scope)
         reading = {canon.get(k, k): v for k, v in raw.items()}
         print(f"reading {len(reading)} tracks from {xml.name}")
 
+    of_round = store.round_of(con)
+    touched: set[int] = set()
     added = changed = confirmed = missing = 0
     for rel, now in reading.items():
-        if rel not in hb:
+        if rel not in ids:
             missing += 1
             continue
-        if now is None:
+        prev = last_any.get(rel)
+        if not now and prev is None:
+            continue          # blank before, blank now: not an event
+        if now == prev:
+            if args.input and rel not in last_user:
+                # in a batch the user reviewed: an unchanged model label is
+                # now theirs
+                store.log_label(con, ids[rel], now, "user",
+                                round_id=of_round.get(rel))
+                touched.add(of_round.get(rel))
+                confirmed += 1
             continue
-        if now != last_any.get(rel):
-            store.log_label(con, rel, hb[rel], now, "user")
-            changed += 1 if rel in last_user else 0
-            added += 0 if rel in last_user else 1
-        elif args.input and rel not in last_user:
-            # in a batch the user reviewed: an unchanged model label is now theirs
-            store.log_label(con, rel, hb[rel], now, "user")
+        # Only the axes the previous statement actually made can be
+        # contradicted. Rekordbox reports an unrated track as zero stars, so a
+        # round that asserted a colour and stayed silent on the rating comes
+        # back looking different without the user having touched anything.
+        contradicts = prev is not None and any(
+            getattr(prev, f) is not None and getattr(now, f) != getattr(prev, f)
+            for f in ("colour", "stars"))
+        store.log_label(con, ids[rel], now, "user", round_id=of_round.get(rel))
+        touched.add(of_round.get(rel))
+        if prev is None:
+            added += 1
+        elif contradicts:
+            changed += 1
+        else:
             confirmed += 1
+    for rid in touched - {None}:
+        store.close_round(con, rid)
     con.commit()
     print(f"new labels {added}, corrections {changed}, confirmed {confirmed}"
           + (f", not in index {missing}" if missing else ""))
@@ -480,9 +579,13 @@ def main(argv=None) -> int:
                     help="your music collection (default: %(default)s)")
     sub = ap.add_subparsers(dest="cmd", metavar="command")
 
-    sub.add_parser("scan", help="find tracks and pick up label changes",
-                   description="Walk the collection, index new or moved files, "
-                               "and record any labels changed outside the app.")
+    p = sub.add_parser("scan", help="find tracks, and notice what moved",
+                       description="Walk the collection and index new, moved "
+                                   "or missing files. Labels are not read from "
+                                   "tags unless you ask.")
+    p.add_argument("--adopt-tags", action="store_true",
+                   help="also take existing genre tags as your own labels "
+                        "(bootstrapping from another tool)")
     sub.add_parser("status", help="counts, labels, and what is embedded")
 
     p = sub.add_parser("label", help="label a batch of unlabelled tracks",
@@ -543,6 +646,13 @@ def main(argv=None) -> int:
                    help="playlist (default: every unconfirmed label)")
     p.add_argument("--dry-run", action="store_true")
 
+    p = sub.add_parser("migrate", help="bring the database up to date",
+                       description="Apply any pending schema migrations. The "
+                                   "app does this on its own when it opens the "
+                                   "database; this is for looking first.")
+    p.add_argument("--apply", action="store_true",
+                   help="actually migrate (otherwise only reports)")
+
     p = sub.add_parser("clear", help="housekeeping: remove genre tags",
                        description="Remove genre tags by category. Saves what "
                                    "it removes to .vibecheck/cleared-<date>.csv "
@@ -565,7 +675,7 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root)
     return {"scan": cmd_scan, "status": cmd_status, "label": cmd_label,
-            "discard": cmd_discard, "clear": cmd_clear,
+            "discard": cmd_discard, "clear": cmd_clear, "migrate": cmd_migrate,
             "sync": cmd_sync}[args.cmd](root, cfg, args) or 0
 
 

@@ -123,7 +123,7 @@ def main() -> int:
 
     root = Path.home() / "Music" / "Collection"
     lab = store.labels_db(root)
-    labels = store.current_labels(lab, source="user")
+    labels = {p: l.colour for p, l in store.current(lab, source='user').items()}
     hb = dict(lab.execute("SELECT path, hash FROM tracks"))
     paths = sorted(labels)
     parts = evaluate.split([hb[p] for p in paths])

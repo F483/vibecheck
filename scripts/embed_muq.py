@@ -57,7 +57,7 @@ def main(limit: int | None, which: str = "labelled") -> int:
     lab = store.labels_db(root)
     cache = store.cache_db(root)
 
-    labels = store.current_labels(lab, source="user")
+    labels = {p: l.colour for p, l in store.current(lab, source='user').items()}
     if which == "subset":
         frozen = Path("scripts/phase0_subset.txt")
         keep = {l for l in frozen.read_text().splitlines() if l}

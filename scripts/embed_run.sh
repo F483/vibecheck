@@ -24,7 +24,7 @@ if which == 'subset':
     from subset import subset
     paths = subset(root)
 elif which == 'labelled':
-    paths = sorted(store.current_labels(store.labels_db(root), source='user'))
+    paths = sorted(store.current(store.labels_db(root), source='user'))
 else:
     paths = sorted(p for (p,) in store.labels_db(root).execute('SELECT path FROM tracks'))
 st = embed.embed_all(root, '$backend', DEFAULT, paths,

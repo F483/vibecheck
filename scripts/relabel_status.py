@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 sys.path.insert(0, "src")
-from vibecheck.index import read_genre  # noqa: E402
+from vibecheck.tags import read as read_genre  # noqa: E402
 
 ROOT = Path.home() / "Music" / "Collection"
 

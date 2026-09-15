@@ -9,9 +9,8 @@ Writing somewhere else produces a file rekordbox never looks at, which is why
 this updates in place -- keeping a .bak of what was there before.
 
 One flat playlist per batch, named with the time so several a day do not
-collide. How specific each prediction was shows in the genre tag rather than in
-the playlist structure -- a track reading "Vibrant" got a hue, one reading
-"Pink_C" got the lot.
+collide. Tracks are ordered by how specific the prediction was, so the ones the
+model committed to come first.
 """
 
 from __future__ import annotations
@@ -21,9 +20,8 @@ import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from . import store
-
-STARS = {5: "255", 4: "204", 3: "153", 2: "102", 1: "51", 0: "0"}
+from . import palette, store
+from .store import Label
 
 
 def _locations(root_el, collection: Path) -> dict[str, ET.Element]:
@@ -37,19 +35,19 @@ def _locations(root_el, collection: Path) -> dict[str, ET.Element]:
     return out
 
 
-def read_labels(xml_in: Path, collection: Path, colours: dict[str, str],
-                ratings: dict[str, int], separator: str = "_",
-                only: set[str] | None = None) -> dict[str, str]:
-    """Labels as rekordbox currently has them: colour tag plus star rating.
+def read_labels(xml_in: Path, collection: Path,
+                only: set[str] | None = None) -> dict[str, Label]:
+    """Colour and star rating as rekordbox currently has them.
+
+    A track rekordbox knows is a complete statement: it has a colour or it has
+    none, it has stars or it has none. That is why one label row holds both.
 
     `only` restricts the read, and callers should almost always pass it. The
     export carries the whole library, including tracks whose colour predates
     whatever scheme is current, and adopting all of it wholesale would quietly
     resurrect a retired vocabulary.
     """
-    by_hex = {v: k for k, v in colours.items()}
-    by_star = {STARS[v]: k for k, v in ratings.items()}
-    out: dict[str, str] = {}
+    out: dict[str, Label] = {}
     for t in ET.parse(xml_in).getroot().findall(".//COLLECTION/TRACK"):
         loc = urllib.parse.unquote(t.get("Location", "").replace("file://localhost", ""))
         try:
@@ -58,24 +56,16 @@ def read_labels(xml_in: Path, collection: Path, colours: dict[str, str],
             continue
         if only is not None and rel not in only:
             continue
-        colour = by_hex.get(t.get("Colour", ""))
-        if not colour:
-            continue
-        level = by_star.get(t.get("Rating", "0"))
-        out[rel] = f"{colour}{separator}{level}" if level else colour
+        colour = palette.BY_RGB.get(t.get("Colour", ""))
+        out[rel] = Label(colour.name if colour else None,
+                         palette.stars_from_rating(t.get("Rating")))
     return out
 
 
 def write(xml_in: Path, xml_out: Path, collection: Path,
-          predictions: list[tuple[str, str, str | None]],
-          colours: dict[str, str], ratings: dict[str, int],
-          separator: str = "_", name: str | None = None) -> dict:
-    """predictions: (relative path, level, label)
-
-    `colours` maps a label's colour part to a rekordbox hex value, `ratings`
-    maps its level part to a star count. Both come from config -- nothing here
-    knows what a label means.
-    """
+          predictions: list[tuple[str, str, Label]],
+          name: str | None = None) -> dict:
+    """predictions: (relative path, how specific it was, what to write)."""
     tree = ET.parse(xml_in)
     root_el = tree.getroot()
     by_path = _locations(root_el, collection)
@@ -88,19 +78,15 @@ def write(xml_in: Path, xml_out: Path, collection: Path,
         if el is None:
             stats["not_in_xml"] += 1
             continue
-        key = el.get("TrackID")
-        groups.setdefault(level, []).append(key)
-        if label is None:
-            continue
-        head, _, tail = label.partition(separator)
-        if head in colours:
-            el.set("Colour", colours[head])
+        groups.setdefault(level, []).append(el.get("TrackID"))
+        if label.colour:
+            el.set("Colour", palette.BY_NAME[label.colour].rgb)
             stats["coloured"] += 1
-        if tail and tail in ratings:
-            el.set("Rating", STARS[ratings[tail]])
+        if label.stars:
+            el.set("Rating", palette.rating_from_stars(label.stars))
             stats["rated"] += 1
 
-    keys = [k for level in ("full", "colour", "hue", "tone", "none")
+    keys = [k for level in ("colour", "hue", "tone", "none")
             for k in groups.get(level, [])]
     playlists = root_el.find("PLAYLISTS/NODE")
     node = ET.SubElement(playlists, "NODE",

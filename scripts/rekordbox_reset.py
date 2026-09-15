@@ -25,7 +25,7 @@ from vibecheck import store  # noqa: E402
 def main(xml_in: Path, xml_out: Path, limit: int, keep_confirmed: bool) -> int:
     root = (Path.home() / "Music" / "Collection").resolve()
     con = store.labels_db(root)
-    keep = set(store.current_labels(con, source="user")) if keep_confirmed else set()
+    keep = set(store.current(con, source='user')) if keep_confirmed else set()
     keep = {store.norm(k) for k in keep}
 
     tree = ET.parse(xml_in)
