@@ -15,10 +15,18 @@
 .venv/
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # phase 0 scratch output
 out/
 
-# personal library data: full paths and labels for one person's collection
+# personal library data: full paths and labels for one person's collection.
+# This repo is public. Anything listing tracks stays out of it -- and note that
+# ignoring a file does not untrack one that is already committed.
 backup/
 scripts/phase0_subset.txt
+*.m3u8
+*.csv
+
+# build artefacts
+dist/
