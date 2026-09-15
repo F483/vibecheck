@@ -19,8 +19,9 @@ def run(root: Path, backend: str = "mfcc", reveal_test: bool = False,
     another on a 2,566 subset would compare training-set sizes, not backends.
     """
     lab = store.labels_db(root)
-    labels = store.current_labels(lab, source="user")
-    hash_by_path = dict(lab.execute("SELECT path, hash FROM tracks"))
+    labels = {p: l.colour for p, l in store.current(lab, source="user").items()
+              if l.colour}
+    hash_by_path = store.hash_by_path(lab)
 
     wanted = sorted(set(labels) & set(only)) if only else sorted(labels)
     paths, X = embed.load(root, backend, DEFAULT, wanted)
@@ -30,7 +31,7 @@ def run(root: Path, backend: str = "mfcc", reveal_test: bool = False,
     hashes = [hash_by_path[p] for p in paths]
 
     print(f"backend {backend}   tracks {len(paths)}   dim {X.shape[1]}   "
-          f"labels {len(set(y))}")
+          f"colours {len(set(y))}")
 
     parts = evaluate.split(hashes)
     against = evaluate.TEST if reveal_test else evaluate.VAL
@@ -43,13 +44,15 @@ def run(root: Path, backend: str = "mfcc", reveal_test: bool = False,
     print(f"model accuracy     {rep.accuracy * 100:5.1f}%   "
           f"({(rep.accuracy - rep.baseline) * 100:+.1f} pts)")
 
-    # diagnostics: did it learn the colour, or just the commonest level?
+    # diagnostics: did it learn the colour, or only which half of the wheel?
+    from . import palette
     model = evaluate._fit(X[train], y[train])
     pred = model.predict(X[hold])
     true = y[hold]
-    for part, name in ((0, "colour"), (1, "level")):
-        acc = evaluate.component_accuracy(pred, true, part)
-        vals = [s.split("_")[part] for s in true]
+    for name, of in (("hue", lambda c: palette.BY_NAME[c].hue),
+                     ("tone", lambda c: palette.BY_NAME[c].tone)):
+        vals = [of(c) for c in true]
+        acc = float(np.mean([of(a) == b for a, b in zip(pred, vals)]))
         base = Counter(vals).most_common(1)[0][1] / len(vals)
         print(f"{name:>7} only        {acc * 100:5.1f}%   "
               f"(baseline {base * 100:.1f}%, {len(set(vals))} values)")

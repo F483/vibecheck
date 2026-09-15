@@ -34,7 +34,7 @@ def subset(root: Path, target: int = 2500) -> list[str]:
         return [l for l in FROZEN.read_text().splitlines() if l]
 
     lab = store.labels_db(root)
-    labels = store.current_labels(lab, source="user")
+    labels = {p: l.colour for p, l in store.current(lab, source='user').items()}
     hash_by_path = dict(lab.execute("SELECT path, hash FROM tracks"))
 
     by_label: dict[str, list[str]] = defaultdict(list)
@@ -60,7 +60,7 @@ if __name__ == "__main__":
     root = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Music" / "Collection"
     ps = subset(root)
     lab = store.labels_db(root)
-    labels = store.current_labels(lab, source="user")
+    labels = {p: l.colour for p, l in store.current(lab, source='user').items()}
     c = Counter(labels[p] for p in ps)
     print(f"subset: {len(ps)} tracks, {len(c)} labels")
     for l, n in sorted(c.items(), key=lambda kv: -kv[1]):

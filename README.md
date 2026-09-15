@@ -3,11 +3,11 @@
 Learns how *you* label music, from the audio, and applies it to the rest of
 your collection.
 
-Not a genre classifier. There is no built-in taxonomy, no Discogs or Beatport
-vocabulary, and the app never interprets a label — it only learns which sounds
-go with which of your strings. The default vocabulary maps onto the eight
-colour tags DJ software already exposes, so it fits an existing workflow rather
-than asking you to invent one.
+Not a genre classifier. There is no taxonomy, no Discogs or Beatport
+vocabulary — it learns which sounds you give which colour, and nothing about
+what a colour is supposed to mean. It works in the eight colour tags and five
+stars Rekordbox already has, so it fits your existing workflow rather than
+asking you to invent one.
 
 Local, MIT licensed. Developed on macOS; the code is portable — CUDA, Metal or
 CPU, and every other dependency is cross-platform.
@@ -34,6 +34,7 @@ The first run downloads the audio model (~2 GB) and writes nothing outside
 ```sh
 # point it at your collection (default: ~/Music/Collection)
 uv run vibecheck scan
+uv run vibecheck scan --adopt-tags   # ... or, if you already label in genre tags
 
 # label some tracks by hand first -- it needs about 200 to be useful
 uv run vibecheck status
@@ -53,10 +54,9 @@ field, by rewriting the XML rekordbox is pointed at (Preferences → Advanced �
 Database → rekordbox xml) — the same trick Mixed In Key uses. Your previous
 export is kept as `rekordbox.xml.bak`.
 
-The genre tag is also written by default, showing *how specific* each
-prediction was: `Vibrant` means it would only commit to a hue, `Pink_C` means
-it committed to everything. Turn that off with `debug.write_genre_tags` in
-config once it stops being interesting.
+The genre tag is also written by default, as a way of seeing what the model
+did without opening Rekordbox — the colour name, and nothing else. Turn it off
+with `debug.write_genre_tags` in config once it stops being interesting.
 
 Other things you may want:
 
@@ -90,9 +90,10 @@ land in `out/`. Track identity is a hash of the audio only, so writing a label
 never changes what a track *is* and never invalidates its cached analysis.
 
 **Configuration** lives in `<your collection>/.vibecheck/config.toml` — copy
-[the default](src/vibecheck/default_config.toml) to start. It declares your
-label vocabulary, how labels group into coarser levels, and one dial:
-`misleading_cost`, how bad it is to be given a wrong label.
+[the default](src/vibecheck/default_config.toml) to start. It holds two dials:
+`misleading_cost`, how bad it is to be given a wrong colour, and
+`rating_misleading_cost`, the same for stars. The palette is not configurable —
+eight colours and six star ratings is Rekordbox's UI, not a preference.
 
 ## Status
 
@@ -156,7 +157,7 @@ something no one can do by hand. See [docs/ceiling.md](docs/ceiling.md).
 ```
 mp3 → 24 × 10 s excerpts → CLAP embedding ─┬─▶ hue     (4 values)  ─┐
                                            ├─▶ tone    (2 values)  ─┴─▶ colour
-                                           └─▶ rating  (5 values)  ────▶ stars
+                                           └─▶ stars   (6 values)  ────▶ rating
 ```
 
 **The label is a set of independent axes, not a hierarchy.** Hue and tone form
@@ -167,8 +168,7 @@ stars while only knowing it is Warm.
 
 - Pretrained audio models are used **only as feature extractors**. They never
   see a label. Everything about your taste lives in a small classifier trained
-  on your own tags, which is what lets the same pipeline serve a completely
-  different vocabulary.
+  on your own tags — the structure is fixed, the meaning is entirely yours.
 - There are **no confidence thresholds to set**. Each axis knows how much of
   your decision it removes — knowing the hue narrows eight colours to two,
   which is two binary choices — and speaks when `(1 − p) × (cost +

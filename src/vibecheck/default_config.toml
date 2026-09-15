@@ -1,76 +1,43 @@
 # Default Vibe Check configuration.
 #
-# The app treats labels as opaque strings and never parses them. This file is
-# what tells it that "Purple" is a kind of "Vibrant" and a kind of "Dark" --
-# change it, and a completely different vocabulary works the same way.
+# The palette is not here. Rekordbox exposes exactly eight colour tags and six
+# star ratings, and that is its UI, not a matter of taste -- it lives in
+# palette.py, typed, where a statistic can reach it. What is personal is which
+# track gets which colour, and that is learned rather than declared.
 #
-# The default vocabulary is eight colours, chosen to map onto the colour tags
-# already used in DJ software (Rekordbox and others expose eight), so it fits an
-# existing workflow rather than asking anyone to invent one.
-
-[labels]
-# The only labels a user ever applies by hand. Everything below is derived.
-values = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Pink"]
-
-# Level values, finest part of a label. A is best. D and E extend the original
-# A/B/C so every rekordbox star rating has a name.
-levels = ["A", "B", "C", "D", "E"]
-
-# Tags in the reference setup are "Colour_Level". The separator lets the app
-# treat the leading part as a coarser level of the same hierarchy, so it can
-# fall back to "Pink" when it cannot commit to "Pink_C". It still never
-# interprets a label -- this only says where the string divides.
-# Set separator = "" if the tag is atomic.
-separator = "_"
-
-# The axes the app actually predicts. Each is independent, and together they
-# determine the label: hue x tone is a 4x2 grid whose cells are the eight
-# colours, so a confident hue plus a confident tone *is* a colour. Predicting
-# one axis and not the other narrows the choice without making it, which is
-# still worth saying.
-[[hierarchy]]
-name = "hue"
-Warm    = ["Red", "Orange"]
-Acidic  = ["Green", "Yellow"]
-Cool    = ["Blue", "Aqua"]
-Vibrant = ["Purple", "Pink"]
-
-[[hierarchy]]
-name = "tone"
-Dark  = ["Red", "Green", "Blue", "Purple"]
-Light = ["Orange", "Yellow", "Aqua", "Pink"]
+# Hue and tone are a property of those eight, not an opinion: Warm/Acidic/
+# Cool/Vibrant crossed with Dark/Light is a 4x2 grid whose cells are the
+# colours. A confident hue plus a confident tone *is* a colour.
 
 [predict]
 # The only dial: how costly it is to be misled by a wrong label.
 #
-# The app does not use fixed confidence thresholds. It scores every option by
-# how much work it leaves the user -- how many binary choices remain -- and
-# picks the cheapest:
+# There are no confidence thresholds to set. Each axis knows how much of your
+# decision it removes -- knowing the hue narrows eight colours to two, which is
+# two binary choices -- and speaks when being right is likely enough to be
+# worth the risk:
 #
-#   exactly right ....................... 0
-#   wrong label, right hue .............. 1 + misleading_cost
-#   wrong hue, right tone ............... 2 + misleading_cost
-#   wrong tone, or nothing emitted ...... 3   (+ misleading_cost if asserted)
-#   emits hue and it is right ........... 1
-#   emits tone and it is right .......... 2
+#   (1 - p) * (cost + misleading_cost) < cost
 #
-# Near-misses get partial credit, so the model is pushed toward being close
-# rather than boldly wrong, and the cascade (colour -> hue -> tone -> silence)
-# falls out of the arithmetic instead of being hand-tuned.
+#   right ........... 0            it is decided
+#   silent .......... cost         still yours to decide
+#   wrong ........... cost + misleading_cost   decide it, and undo this
 #
-# Measured per 100 new tracks (doing it all by hand costs 3.00/track):
-# Measured on 300 labels with the full four-level hierarchy
-# (tone > hue > colour > full label), against 4.58 for labelling by hand:
-#   1  -> full 27% @43%, colour 27% @60%, hue 45% @61%   cost 2.89   37% less work
-#   2  -> full  9% @62%, colour 17% @67%, hue 53% @72%   cost 3.23   29% less work
-# The finest level is emitted only when it is the cheapest option, so it stays
-# rare while the model is weak and becomes common as labels accumulate.
+# The threshold is derived, not configured. At misleading_cost = 1 that is 33%
+# for hue, 50% for tone; the axes are independent, so hue and tone can both
+# speak and together name a colour.
+#
+# Measured on the reference collection, where naming a colour by hand costs
+# 3.00 binary decisions (hue 2.00 + tone 1.00):
+#   1  -> a colour on 96% of tracks, 53% right      1.35 left   55% less work
+#   2  -> a colour on 41% at 67%, a hue on 17% at
+#         88%, a tone on 28% at 94%                 1.81 left   40% less work
 #
 # Low when you are often unsure yourself and a near-miss costs little.
 # High when a wrong label you overlook is worse than a blank field.
 misleading_cost = 1.0
 
-# The rating is a separate axis with its own tolerance, because a wrong star
+# The star rating is a separate axis with its own tolerance, because a wrong
 # rating costs more than a wrong colour -- it pollutes the view you use to find
 # your best tracks, where a wrong colour is just a wrong colour.
 #
@@ -84,8 +51,8 @@ rating_misleading_cost = 4.0
 # Also write the prediction into the ID3 genre tag. Rekordbox's colour and
 # rating fields are the real channel, so this is redundant -- but it makes the
 # app's reasoning visible while the tool is young: the tag shows how specific
-# the prediction was, where the colour swatch alone cannot. "Vibrant" means it
-# only committed to a hue; "Pink_C" means it committed to everything.
+# the prediction was, where the colour swatch alone cannot. The tag holds the
+# colour name and nothing else -- the rating has a field of its own.
 write_genre_tags = true
 
 [audio]
@@ -98,23 +65,3 @@ window_seconds = 10.0
 [model]
 backend = "clap"   # laion/larger_clap_music_and_speech
 
-# Writing predictions straight into a rekordbox library XML, for import.
-# This sets the real colour tag and star rating rather than piggybacking on
-# the genre text field, and needs no tag reload. The app does not know what a
-# label means -- these tables say how its parts map onto rekordbox's fields.
-[rekordbox.colours]
-Red = "0xFF0000"
-Orange = "0xFFA500"
-Yellow = "0xFFFF00"
-Green = "0x00FF00"
-Aqua = "0x25FDE9"
-Blue = "0x0000FF"
-Purple = "0x660099"
-Pink = "0xFF007F"
-
-[rekordbox.ratings]
-A = 5
-B = 4
-C = 3
-D = 2
-E = 1

@@ -88,18 +88,6 @@ def evaluate(X: np.ndarray, y: np.ndarray, parts: np.ndarray,
     )
 
 
-def component_accuracy(pred: np.ndarray, true: np.ndarray, part: int) -> float:
-    """Diagnostic only: split labels like 'Purple_C' on '_'.
-
-    The app never does this — labels are opaque symbols (design.md 5). But when
-    reading results it matters hugely whether a model learned the colour or just
-    learned to say the commonest level.
-    """
-    p = [s.split("_")[part] if "_" in s else s for s in pred]
-    t = [s.split("_")[part] if "_" in s else s for s in true]
-    return float(np.mean([a == b for a, b in zip(p, t)]))
-
-
 def learning_curve(X: np.ndarray, y: np.ndarray, parts: np.ndarray,
                    against: str = VAL,
                    fractions=(0.1, 0.2, 0.4, 0.6, 0.8, 1.0),
@@ -116,4 +104,73 @@ def learning_curve(X: np.ndarray, y: np.ndarray, parts: np.ndarray,
             continue
         m = _fit(Xtr[idx], ytr[idx])
         out.append((len(idx), float((m.predict(Xte) == yte).mean())))
+    return out
+
+
+@dataclass
+class AxisScore:
+    """One axis, measured on a holdout, in the units the app optimises."""
+    axis: str
+    n_values: int
+    cost: float          # decisions a correct assertion saves
+    misleading: float
+    n: int               # holdout tracks whose truth is known for this axis
+    spoke: int
+    correct: int
+    cost_left: float     # decisions still to make, per track
+
+    @property
+    def coverage(self) -> float:
+        return self.spoke / self.n if self.n else 0.0
+
+    @property
+    def accuracy(self) -> float:
+        return self.correct / self.spoke if self.spoke else 0.0
+
+
+def score_axes(X: np.ndarray, y: dict, hashes: list[str], axes: list,
+               against: str = VAL) -> list[AxisScore]:
+    """Fit on the training slice only, then score each axis on a holdout.
+
+    Deliberately a second fit: the model the app then uses is trained on
+    everything, which is right for predicting and useless for measuring. The
+    cost is one extra logistic regression per axis per round.
+
+    Scored through the real Model, not a reimplementation of the decision rule,
+    so the number recorded is the number the user experiences.
+    """
+    from .predict import Model
+
+    parts = split(hashes)
+    tr, ho = parts == TRAIN, parts == against
+    if tr.sum() < 2 or ho.sum() == 0:
+        return []
+
+    model = Model(axes)
+    model.train(X[tr], {k: v[tr] for k, v in y.items()})
+    preds = model.predict(X[ho])
+
+    out = []
+    for ax in axes:
+        if ax.name not in model.models:
+            continue
+        n = spoke = correct = 0
+        left = 0.0
+        for truth, pred in zip(y[ax.name][ho], preds):
+            if truth is None:        # this label says nothing about this axis
+                continue
+            n += 1
+            said = pred.values.get(ax.name)
+            if said is None:
+                left += ax.cost                      # still to be decided
+            elif said == truth:
+                spoke += 1
+                correct += 1                         # nothing left to do
+            else:
+                spoke += 1
+                left += ax.cost + ax.misleading_cost  # decide it, and undo this
+        if n:
+            out.append(AxisScore(ax.name, ax.n_values, ax.cost,
+                                 ax.misleading_cost, n, spoke, correct,
+                                 left / n))
     return out

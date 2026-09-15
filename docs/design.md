@@ -38,7 +38,8 @@ Consequences that follow directly from this and drive the rest of the design:
 **Goals**
 - Learn one person's taste and labelling, not a public consensus. **decided**
 - Flat user-defined label set, opaque to the app; no color, rating, axis or
-  genre vocabulary is hard-coded, and label strings are never parsed. **decided**
+  genre vocabulary is hard-coded, and label strings are never parsed.
+  **superseded 2026-09-15 — see §7, "The palette is fixed"**
 - Handle DJ-scale collections (200 GB+ and growing). **decided**
 - The label is written into the mp3's ID3 genre field, so other software
   (Rekordbox, Traktor, players, file managers) sees it. **decided**
@@ -704,28 +705,135 @@ process doing batch work. Default mode keeps each DB a single file at rest, with
 no `-wal`/`-shm` sidecars in the collection. `synchronous=FULL`; the write volume
 is far too low for the difference to matter.
 
-**Append-only label log.** The bulk of the DB is a log of label changes:
+**The palette is fixed.** **decided, reversing §2** Rekordbox exposes exactly
+eight colour tags and six star ratings. That is the target software's UI, not a
+matter of taste, and modelling it as opaque strings was generality about the
+wrong thing: it bought vocabulary-independence nothing will use, and paid for
+it by making hue, tone and rating unqueryable -- every statistic had to re-parse
+a string against a config file to find out what it was looking at.
+
+The structure now lives in `palette.py`, typed, and in a seeded `colours`
+table: id, name, hue, tone, and the hex rekordbox writes. Hue and tone are a
+property of the eight, not an opinion. What stays personal -- and it is the
+whole product -- is *which track gets which colour*, which is learned rather
+than declared. A label is a colour and a rating, each nullable, each meaning
+"nothing was said" when absent.
+
+**A record of what happened, not a snapshot of where things stand.**
+**decided** Everything derivable is derived: the current label is the newest row
+in `labels`, the collection's size on any past date comes from `first_seen` and
+`missing_at`, and how well a round did comes from joining what the model said to
+what the user said afterwards. A number overwritten today is a chart that cannot
+be drawn next month.
 
 ```sql
-CREATE TABLE label_log (
-  id     INTEGER PRIMARY KEY,
-  path   TEXT NOT NULL,      -- relative to collection root
-  hash   TEXT NOT NULL,      -- survives renames
-  label  TEXT,               -- NULL = label removed
-  source TEXT NOT NULL,      -- 'user' | 'model'
-  ts     INTEGER NOT NULL
-);
+colours     id, name, hue, tone, rgb                 -- seeded, eight rows
+tracks      id, path, hash, size, mtime, first_seen, last_seen, missing_at
+rounds      id, name, started, closed, size, backend, encoder, n_labels
+labels      id, track_id, colour_id, stars, source, round_id, ts  -- append-only
+predictions (round_id, track_id), hue, hue_p, hue_said,
+                                  tone, tone_p, tone_said,
+                                  stars, stars_p, stars_said, colour_id
+fits        id, round_id, ts, backend, encoder, slice,
+            n_train, n_holdout, n_labels
+fit_axes    (fit_id, axis), n_values, cost, misleading,
+            n, spoke, correct, cost_left
+current     view: newest label per track, with hue and tone spelled out
 ```
 
-Never `UPDATE`, never `DELETE`; the current label is the newest row for a path.
-This gives correction history for free, and the file stays trivially
-recoverable.
+**Files are identified by audio hash, referred to by `id`.** **decided** A
+rename is then a rename: scan matches the new path to the existing row and
+updates it in place, keeping the track's labels and its listening history. Only
+unambiguous moves count -- with two copies of the same audio there is no way to
+say which one moved, and guessing would attach one track's history to another.
+
+**`first_seen` is written once; files that vanish are marked, never deleted.**
+**decided** The previous schema had a single `seen_at` that every scan
+overwrote, which made the library's growth -- one of the things the user asked
+to see -- unrecoverable. `first_seen` plus `missing_at` gives the collection's
+size at any date, for the price of one integer.
+
+**One row is one complete statement about a track.** **decided** That is how
+the data arrives: rekordbox hands over a colour and a rating together. NULL
+means the statement said nothing on that axis -- a round sure of the colour and
+not the rating. `stars = 0` is different, being rekordbox's "unrated", which is
+an answer. Having no row at all is different again: never asked, or never
+answered, so the `current` view exposes `label_id` to tell those apart.
+
+That distinction has teeth. Reading an export back, a round that asserted a
+colour and stayed silent on the rating returns as `(colour, 0 stars)` and looks
+changed although the user touched nothing -- so `sync` compares only the axes
+the earlier statement actually made.
 
 **`source` is not bookkeeping, it is a correctness requirement.** **decided**
-Without it: a categorise run writes a tag, a later training run reads that tag
-back, and the model trains on its own output — a feedback loop that quietly
-amplifies its own errors until the labels are the model's opinion rather than
-the user's. Training consumes `source='user'` rows only.
+Without it: a round writes a tag, a later training run reads that tag back, and
+the model trains on its own output -- a feedback loop that quietly amplifies its
+own errors until the labels are the model's opinion rather than the user's.
+Training consumes `source='user'` rows only. For the same reason, reading labels
+out of genre tags at scan time is opt-in (`--adopt-tags`): the app writes genre
+tags itself, and writes the colour without the rating, so a differing tag is as
+likely to be its own output as a correction. Corrections come through `sync`,
+which knows which round they answer.
+
+**`round_id` joins the two halves of a round.** **decided** A round is a
+prediction followed, days later, by a correction. Without a shared key the two
+can only be reassociated by clustering timestamps, which is guesswork that
+breaks the first time two batches are in flight at once. `label` opens the round
+and names it after its playlist; `sync` carries that id onto the user's row and
+closes it.
+
+**Predictions are recorded per axis, including the silent ones.** **decided**
+One wide row per track per round, so it joins 1:1 against the label row that
+followed. The colour alone cannot say *why* it was that coarse -- whether an axis
+was silent, or wrong, or never trained. Keeping `value` and `conf` for axes that
+stayed silent also makes the threshold reviewable: "what would
+`misleading_cost = 2` have done to that round?" becomes a query, rather than a
+re-run of a model that has since learned from the answers.
+
+**`fits` is separate from `rounds`.** **decided** Coverage, accuracy and
+decisions-left per axis were being computed every round, printed, and discarded.
+They are measured on the hash-derived holdout by a second fit that never sees it
+-- the deployed model is fitted on everything, which is right for predicting and
+useless for measuring. Separate, because a fit can also be a plain measurement:
+the once-only test-slice reading at the end, or a later re-measurement of
+history. `encoder` (backend/version/preproc digest) is stored with both, so a
+jump in a curve can be attributed to the model improving rather than the inputs
+changing underneath it.
+
+A consequence worth stating: the holdout only exists if labelled tracks fall in
+it. The first 300 labels came from a blind relabel drawn entirely from the
+training split, so they measure nothing; batches are drawn at random, so ~20% of
+each one lands in val or test and measurement becomes possible from the first
+round onward. That 20% is the price of being able to tell whether any of this is
+working.
+
+**Migrations: plain SQL keyed on `PRAGMA user_version`.** **decided** No
+framework. Alembic is the standard and is alive, but it needs SQLAlchemy and
+its value -- autogenerate, a branching revision graph, team workflows -- has no
+purchase on one developer and six tables. yoyo, refinery and Alembic all keep
+their own bookkeeping table, and *that* is the part that would commit us:
+`user_version` is a SQLite built-in every language reads in one line, so the
+runner can become rusqlite, Dart or Node later without two disagreeing records
+of what version a database is. No frontend is chosen (docs/frontend-options.md),
+and this is the option that does not presuppose one.
+
+Steps live in `src/vibecheck/migrations/NNNN_name.sql`, read through
+`importlib.resources` so an installed app finds them with no source tree beside
+it, and the number is the version a database is *at* once the step has run.
+Each step is one transaction; SQLite rolls back DDL, so a failure leaves the
+database exactly where it was. Anything but a fresh database is copied to
+`labels.db.pre-v<n>` first -- `rounds`, `predictions` and `fits` exist nowhere
+else, and rekordbox can restore what a track is labelled but not what the model
+predicted or what a round cost.
+
+Two rules, both learned the hard way in one afternoon: a migration never uses
+`IF NOT EXISTS` -- one that silently does nothing is worse than one that fails
+-- and a database older than the baseline is refused, never run through it. The
+baseline builds the schema from nothing, so over an older database it would
+find every table present, do nothing, and stamp the new version anyway, leaving
+a database that claims v3 while holding v2's columns. `tests/test_migrations.py`
+covers both, and adding a migration means adding a fixture database built by the
+previous build.
 
 **Caution for other setups**: SQLite on cloud-synced storage (Dropbox, iCloud)
 can corrupt. Irrelevant on the reference internal SSD, but worth a warning for
