@@ -45,7 +45,12 @@ class MERT:
         from transformers import AutoModel
 
         self._device = device.pick()
-        model = AutoModel.from_pretrained(MODEL_ID, trust_remote_code=True)
+        from . import cached_first
+
+        _, model = cached_first(
+            lambda mid, local: AutoModel.from_pretrained(
+                mid, trust_remote_code=True, local_files_only=local),
+            MODEL_ID)
         # MERT ships custom modelling code that ignores the per-call
         # output_hidden_states argument, so set it on the config instead
         model.config.output_hidden_states = True
