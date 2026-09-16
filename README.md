@@ -26,8 +26,10 @@ git clone https://github.com/F483/vibecheck && cd vibecheck
 uv sync
 ```
 
-The first run downloads the audio model (~2 GB) and writes nothing outside
-`<your collection>/.vibecheck/` and the genre tag of tracks it labels.
+The first run downloads the audio model (~2 GB). **After that it needs no
+network at all** — once the model is cached it runs fully offline, and writes
+nothing outside `<your collection>/.vibecheck/` and the Rekordbox XML you point
+it at.
 
 ## Usage
 
@@ -46,7 +48,8 @@ uv run vibecheck label 300   # picks 300 unlabelled tracks, labels what it can,
 #   ... refresh the rekordbox xml node in rekordbox's sidebar, import the new
 #       vibecheck-<date>-<time> playlist, correct what is wrong while you
 #       listen, then export your collection again ...
-uv run vibecheck sync        # reads your corrections back and retrains
+uv run vibecheck sync        # reads your corrections back
+                             # (the model is refitted by the next `label`)
 ```
 
 It writes into **rekordbox's own colour tag and star rating**, not a text
@@ -54,15 +57,16 @@ field, by rewriting the XML rekordbox is pointed at (Preferences → Advanced �
 Database → rekordbox xml) — the same trick Mixed In Key uses. Your previous
 export is kept as `rekordbox.xml.bak`.
 
-The genre tag is also written by default, as a way of seeing what the model
-did without opening Rekordbox — the colour name, and nothing else. Turn it off
-with `debug.write_genre_tags` in config once it stops being interesting.
+The ID3 genre tag is left alone. If you do not use Rekordbox, set
+`debug.write_genre_tags` in config and the genre field becomes the channel
+instead: predictions are written there, and `vibecheck sync --tags` reads your
+corrections back out of it.
 
 Other things you may want:
 
 ```sh
 uv run vibecheck label 50 --dry-run        # see what it would say, change nothing
-uv run vibecheck discard out/batch-….m3u8  # throw a batch away, free its tracks
+uv run vibecheck discard out/vibecheck-….m3u8   # throw a batch away, free its tracks
 uv run vibecheck sync --tags               # read genre tags instead of the export
 uv run vibecheck label 300 --include-unconfirmed   # reuse tracks from a batch
                                                    # you have not corrected yet
@@ -84,8 +88,9 @@ edited is treated as a correction and kept.
 That loop is the whole product. Each round the model gets better, so each round
 you correct less.
 
-**What it writes:** the rekordbox XML it is pointed at, the ID3 genre tag while
-`debug.write_genre_tags` is on, and `<your collection>/.vibecheck/`. Playlists
+**What it writes:** the rekordbox XML it is pointed at, `<your
+collection>/.vibecheck/`, and the ID3 genre tag only if you turn
+`debug.write_genre_tags` on. Playlists
 land in `out/`. Track identity is a hash of the audio only, so writing a label
 never changes what a track *is* and never invalidates its cached analysis.
 
@@ -229,6 +234,7 @@ thresholds with the cost policy (17 → 55 exact colours per 100).
 - [docs/setup.md](docs/setup.md) — the working configuration, reproducibly
 - [docs/accuracy.md](docs/accuracy.md) — what accuracy to expect, and what limits it
 - [docs/ceiling.md](docs/ceiling.md) — label consistency, and why the model beats it
+- [docs/landscape.md](docs/landscape.md) — who else does this, and how this differs
 - [docs/design.md](docs/design.md) — design decisions and their reasoning
 - [docs/phase0-report.md](docs/phase0-report.md) — the backend comparison in full
 - [docs/plan-b-cloud.md](docs/plan-b-cloud.md) — contingency, and when *not* to use it

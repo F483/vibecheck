@@ -48,9 +48,17 @@ class Whisper:
         from transformers import AutoFeatureExtractor, WhisperModel
 
         self._device = device.pick()
-        model = WhisperModel.from_pretrained(MODEL_ID)
+        from . import cached_first
+
+        _, model = cached_first(
+            lambda mid, local: WhisperModel.from_pretrained(
+                mid, local_files_only=local),
+            MODEL_ID)
         self._enc = model.get_encoder().to(self._device).eval()
-        self._fe = AutoFeatureExtractor.from_pretrained(MODEL_ID)
+        _, self._fe = cached_first(
+            lambda mid, local: AutoFeatureExtractor.from_pretrained(
+                mid, local_files_only=local),
+            MODEL_ID)
         return self._enc
 
     def embed(self, excerpts: list[np.ndarray], cfg: Preproc) -> np.ndarray:

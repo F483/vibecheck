@@ -52,16 +52,18 @@ class CLAPWindows:
         import torch
         from transformers import AutoProcessor, ClapModel
 
+        from . import cached_first
+
         self._device = device.pick()
-        for mid in (MODEL_ID, FALLBACK_ID):
-            try:
-                self._model = ClapModel.from_pretrained(mid).to(self._device).eval()
-                self._proc = AutoProcessor.from_pretrained(mid)
-                break
-            except Exception:
-                continue
-        if self._model is None:
-            raise RuntimeError("could not load CLAP")
+
+        def load(mid, local_only):
+            model = ClapModel.from_pretrained(mid, local_files_only=local_only)
+            proc = AutoProcessor.from_pretrained(mid, local_files_only=local_only)
+            return model, proc
+
+        mid, (model, proc) = cached_first(load, MODEL_ID, FALLBACK_ID)
+        self._model = model.to(self._device).eval()
+        self._proc = proc
         return self._model
 
     def embed(self, excerpts: list[np.ndarray], cfg: Preproc) -> np.ndarray:

@@ -49,16 +49,15 @@ class CLAP:
         from transformers import AutoProcessor, ClapModel
 
         self._device = device.pick()
-        for model_id in (MODEL_ID, FALLBACK_ID):
-            try:
-                self._model = ClapModel.from_pretrained(model_id).to(self._device).eval()
-                self._proc = AutoProcessor.from_pretrained(model_id)
-                self._id = model_id
-                break
-            except Exception:  # model id may not exist; try the next
-                continue
-        if self._model is None:
-            raise RuntimeError("could not load any CLAP checkpoint")
+        from . import cached_first
+
+        def load(mid, local_only):
+            return (ClapModel.from_pretrained(mid, local_files_only=local_only),
+                    AutoProcessor.from_pretrained(mid, local_files_only=local_only))
+
+        self._id, (model, proc) = cached_first(load, MODEL_ID, FALLBACK_ID)
+        self._model = model.to(self._device).eval()
+        self._proc = proc
         return self._model
 
     def embed(self, excerpts: list[np.ndarray], cfg: Preproc) -> np.ndarray:
