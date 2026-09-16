@@ -52,6 +52,19 @@ def specificity(pred) -> str:
     return "none"
 
 
+def tag_text(pred) -> str | None:
+    """What the debug genre tag should say.
+
+    The most specific thing the prediction supports -- "Pink", or "Vibrant",
+    or "Dark". That is the tag's whole purpose: rekordbox's colour swatch can
+    only show a colour, so a prediction that got as far as the hue or the tone
+    is invisible without this.
+    """
+    if pred.colour:
+        return pred.colour.name
+    return pred.values.get("hue") or pred.values.get("tone")
+
+
 def labelled(root: Path, cfg: dict) -> dict[str, Label]:
     """Labels the user stands behind -- the only thing worth training on."""
     return store.current(store.labels_db(root), source="user")
@@ -186,10 +199,12 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
               f"unconfirmed label")
     random.seed(args.seed)
     batch = sorted(random.sample(pool, min(args.count, len(pool))))
-    # One name for the round: the playlist, the label rows, the predictions and
-    # the run all carry it, which is what makes them joinable afterwards.
+    # One name for the round, generated once and passed everywhere: the
+    # playlist file, the rekordbox playlist, the round row, the label rows and
+    # the predictions all carry it. Two names generated at two points in the
+    # run drift apart by however long the embedding takes.
     out = Path(args.output) if args.output else (
-        Path("out") / f"batch-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
+        Path("out") / f"vibecheck-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
     name = out.stem
     print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks "
           f"as {name}")
@@ -240,9 +255,10 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         rated += stars is not None
         if label and not args.dry_run:
             store.log_label(con, ids[rel], label, "model", round_id=rid)
-            # debug only, and the colour alone: the rating has its own field
-            if write_tags and tags.read(root / rel) != label.colour:
-                tags.write(root / rel, label.colour)
+        # debug only, and never the rating: that has a field of its own
+        text = tag_text(p)
+        if write_tags and not args.dry_run and tags.read(root / rel) != text:
+            tags.write(root / rel, text)
         shown = f"{label.colour or '?'}{' ' + '*' * stars if stars else ''}"
         entries.append((rel, f"{shown:14} | {Path(rel).name}"))
 
@@ -270,7 +286,7 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
             src, dst, root,
             [(rel, specificity(p),
               Label(p.colour.name if p.colour else None, p.stars))
-             for rel, p in zip(paths, preds)])
+             for rel, p in zip(paths, preds)], name=name)
         print(f"\nwrote {dst}")
         print(f"   {st['coloured']} colours set, {st['rated']} ratings set"
               + (f", {st['not_in_xml']} not found in the export"
@@ -278,8 +294,8 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         if st.get("backup"):
             print(f"   previous export kept at {Path(st['backup']).name}")
         if args.in_place:
-            print("   refresh the rekordbox xml node in rekordbox's sidebar; "
-                  "the batch appears as a playlist")
+            print(f"   refresh the rekordbox xml node in rekordbox's sidebar; "
+                  f"the batch appears as the playlist {name}")
         else:
             print("   point rekordbox at this file, or use --in-place to "
                   "update the one it already watches")
@@ -294,7 +310,8 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
     for k, v in sorted(counts.items(), key=lambda kv: -kv[1]):
         print(f"   {k:7} {v}")
     print(f"   stars   {rated} (independent of the colour)")
-    print("\ncorrect them in your DJ software, then: vibecheck sync " + str(out))
+    print("\ncorrect them in your DJ software, export it again, then:"
+          "\n   vibecheck sync")
 
 
 def cmd_discard(root: Path, cfg: dict, args) -> None:
@@ -440,28 +457,53 @@ def cmd_clear(root: Path, cfg: dict, args) -> None:
 
 
 def cmd_sync(root: Path, cfg: dict, args) -> None:
+    """Read your corrections back.
+
+    Two kinds of evidence, and they need different treatment:
+
+    A value that **differs** from what the database holds is unambiguous --
+    only you could have changed it -- so it is taken whatever the scope.
+
+    A value that **matches** a prediction is ambiguous: you reviewed it and
+    agreed, or you have not looked yet. Adopting those without evidence of
+    review is what once imported 8,595 retired labels. The evidence is the open
+    round: the database knows which tracks are out in a batch you have not
+    finished, so no playlist has to be named for the common case.
+
+    A colour on a track the database has no record of is the third case --
+    another tool's work, or an older scheme. Ignored unless it is in the
+    reviewed scope, or you ask for it with --all.
+    """
     con = store.labels_db(root)
     ids = store.track_ids(con)
     last_user = store.current(con, source="user")
     last_any = store.current(con)
-
     canon = store.path_index(con)
-    unconfirmed = {p for p in last_any if p not in last_user}
+
+    # Tracks out in a round you have not finished: the reviewed scope, unless
+    # you name a playlist or say --all.
+    reviewed = {p for (p,) in con.execute("""
+        SELECT t.path FROM predictions p JOIN tracks t ON t.id = p.track_id
+        JOIN rounds r ON r.id = p.round_id WHERE r.closed IS NULL""")}
+    if args.input:
+        reviewed = {canon.get(store.norm(x), x)
+                    for x in playlist.read(Path(args.input), root)}
 
     if args.tags:
-        src = args.input
-        if src is None:
-            batches = sorted(Path("out").glob("batch-*.m3u8"))
-            if batches:
-                src = str(batches[-1])
-                print(f"using most recent batch: {src}")
-            elif not args.all:
-                sys.exit("no batch playlist given and none found; pass one, "
-                         "or --all to read every tag in the collection.")
-        raw = playlist.read(Path(src), root) if src else sorted(ids)
-        rels = [canon.get(store.norm(r), r) for r in raw]
-        # genre tags carry the colour only; the rating has its own field
-        reading = {rel: Label(tags.read(root / rel), None) for rel in rels}
+        rels = sorted(reviewed) if (reviewed and not args.all) else sorted(ids)
+        # A genre tag is only a label if it names one of the eight. Anything
+        # else is the debug tag showing a hue or a tone, or a real genre the
+        # user set themselves -- neither is a colour, and adopting either
+        # would invent a ninth.
+        reading, foreign = {}, 0
+        for rel in rels:
+            tag = tags.read(root / rel)
+            if tag and tag not in palette.BY_NAME:
+                foreign += 1
+                continue
+            reading[rel] = Label(tag, None)
+        if foreign:
+            print(f"ignoring {foreign} genre tags that do not name a colour")
     else:
         xml = Path(args.rekordbox).expanduser()
         if not xml.exists():
@@ -483,36 +525,35 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
                 f"({_dt.datetime.fromtimestamp(newest_batch):%Y-%m-%d %H:%M}).\n"
                 "  It cannot contain your corrections. Export a fresh one from\n"
                 "  rekordbox first, or pass --stale-ok if you really mean it.")
-        scope = (None if args.all else
-                 {store.norm(r) for r in (
-                     [canon.get(store.norm(x), x)
-                      for x in playlist.read(Path(args.input), root)]
-                     if args.input else unconfirmed)})
-        if scope is not None and not scope:
-            print("nothing awaiting correction")
-            return
-        raw = rekordbox.read_labels(xml, root, only=scope)
+        # The whole export, always: a correction to a track that is not in any
+        # batch is still a correction, and scoping the read is how those got
+        # missed.
+        raw = rekordbox.read_labels(xml, root, only=None)
         reading = {canon.get(k, k): v for k, v in raw.items()}
-        print(f"reading {len(reading)} tracks from {xml.name}")
+        print(f"reading {xml.name}: {sum(1 for v in reading.values() if v)} "
+              f"tracks carry a colour or rating")
 
     of_round = store.round_of(con)
     touched: set[int] = set()
-    added = changed = confirmed = missing = 0
+    added = changed = confirmed = missing = unknown = 0
     for rel, now in reading.items():
         if rel not in ids:
             missing += 1
             continue
         prev = last_any.get(rel)
+        in_scope = args.all or rel in reviewed
         if not now and prev is None:
             continue          # blank before, blank now: not an event
         if now == prev:
-            if args.input and rel not in last_user:
-                # in a batch the user reviewed: an unchanged model label is
-                # now theirs
+            if in_scope and rel not in last_user:
+                # reviewed, and you left it alone: the model's guess is yours
                 store.log_label(con, ids[rel], now, "user",
                                 round_id=of_round.get(rel))
                 touched.add(of_round.get(rel))
                 confirmed += 1
+            continue
+        if prev is None and not in_scope:
+            unknown += 1      # a colour this app has no record of
             continue
         # Only the axes the previous statement actually made can be
         # contradicted. Rekordbox reports an unrated track as zero stars, so a
@@ -534,6 +575,9 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
     con.commit()
     print(f"new labels {added}, corrections {changed}, confirmed {confirmed}"
           + (f", not in index {missing}" if missing else ""))
+    if unknown:
+        print(f"ignored {unknown} tracks carrying a colour this app has no "
+              f"record of (--all to adopt them as yours)")
     print(f"labelled now: {len(labelled(root, cfg))}")
 
 
@@ -545,9 +589,10 @@ the loop
                                      ratings into the rekordbox xml
   ... refresh the rekordbox xml node in rekordbox, import the new playlist,
       correct what is wrong, then export the collection again ...
-  vibecheck sync                     read your corrections back and retrain
+  vibecheck sync                     read your corrections back
 
   Each round it learns from your corrections, so each round you correct less.
+  The model is refitted at the start of the next `label`, not by `sync`.
   It needs roughly 200 labels of your own before it is much use -- label a first
   batch by hand, or let it guess and correct everything.
 
@@ -557,8 +602,9 @@ examples
   vibecheck label 300 --include-unconfirmed
                                           reuse tracks from a batch you have
                                           not corrected yet
-  vibecheck discard out/batch-….m3u8      throw a batch away, free its tracks
-  vibecheck sync out/batch-….m3u8         sync one batch specifically
+  vibecheck discard out/vibecheck-….m3u8  throw a batch away, free its tracks
+  vibecheck sync                          read your corrections back
+  vibecheck sync out/vibecheck-….m3u8     name the batch you reviewed
   vibecheck sync --tags                   read genre tags instead of the export
   vibecheck clear --unknown               strip genre tags it has no record of
   vibecheck --root /Volumes/DJ/Music status
@@ -598,7 +644,10 @@ def main(argv=None) -> int:
     p.add_argument("count", nargs="?", type=int, default=300,
                    help="how many tracks (default: %(default)s)")
     p.add_argument("--output", default=None,
-                   help="playlist path (default: out/batch-<date>-<time>.m3u8)")
+                   help="playlist path (default: "
+                        "out/vibecheck-<date>-<time>.m3u8). The stem names the "
+                        "round everywhere: this file, the rekordbox playlist, "
+                        "and the database.")
     p.add_argument("--seed", type=int, default=None,
                    help="fix the random selection, for reproducibility")
     p.add_argument("--dry-run", action="store_true",
@@ -618,9 +667,9 @@ def main(argv=None) -> int:
     p.add_argument("--separate-file", dest="in_place", action="store_false",
                    help="write a new xml instead of updating in place")
     p.add_argument("--write-tags", action="store_true", default=None,
-                   help="also write the ID3 genre tag, showing how specific "
-                        "each prediction was (default: debug.write_genre_tags "
-                        "in config)")
+                   help="also write the prediction into the ID3 genre tag, for "
+                        "a tags-only workflow (default: "
+                        "debug.write_genre_tags in config, normally off)")
     p.add_argument("--no-write-tags", dest="write_tags", action="store_false",
                    help="do not touch genre tags")
 
@@ -629,15 +678,16 @@ def main(argv=None) -> int:
                                    "what you changed, and confirm what you "
                                    "left alone.")
     p.add_argument("input", nargs="?",
-                   help="playlist, to restrict which tracks are read")
+                   help="playlist naming the tracks you reviewed (default: "
+                        "whatever is out in an unfinished round)")
     p.add_argument("--rekordbox", metavar="XML",
                    default="~/Documents/rekordbox.xml",
                    help="rekordbox export to read (default: %(default)s)")
     p.add_argument("--tags", action="store_true",
                    help="read ID3 genre tags instead of the rekordbox export")
     p.add_argument("--all", action="store_true",
-                   help="read the whole collection, not just what is awaiting "
-                        "correction")
+                   help="treat every track in the export as reviewed, "
+                        "including colours this app has no record of")
     p.add_argument("--stale-ok", action="store_true",
                    help="read an export older than the current batch")
 

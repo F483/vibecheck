@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import store, tags
+from . import palette, store, tags
 
 
 @dataclass
@@ -115,6 +115,11 @@ def scan(root: Path, workers: int = 12,
                     continue
 
             if genre is None:
+                continue
+            if genre not in palette.BY_NAME:
+                # not one of the eight: a real genre, or the debug tag showing
+                # a hue or a tone. Adopting it would invent a ninth colour.
+                st.tags_differ += 1
                 continue
             if adopt_tags and rel not in answered:
                 # bootstrap: a tag on a track nothing has an opinion about is
