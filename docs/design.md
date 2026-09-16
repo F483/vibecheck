@@ -527,9 +527,22 @@ vibecheck sync  --input=<playlist>.m3u8
 vibecheck label --input=<playlist>.m3u8 --limit=100
 ```
 
-There is no separate "train" step in normal use: corrections are detected by
-comparing tags against the last recorded value, so `sync` is scan, detect and
-retrain together.
+There is no separate "train" step: the model is refitted at the start of the
+next `label`, from whatever labels exist then. `sync` only records.
+
+**What `sync` reads, as built.** Two kinds of evidence, treated differently:
+
+- A value that **differs** from what the database holds is unambiguous -- only
+  the user could have changed it -- so it is taken whatever the scope. Scoping
+  the read is how corrections to tracks outside the current batch got missed.
+- A value that **matches** a prediction is ambiguous: reviewed and agreed, or
+  not yet looked at. Adopting those without evidence of review is what once
+  imported 8,595 retired labels. The evidence is the open round -- the database
+  knows which tracks are out in a batch that has not been synced -- so the
+  common case needs no playlist argument.
+- A colour on a track the database has no record of is a third case: another
+  tool's work, or an older scheme. Ignored unless it is in the reviewed scope
+  or `--all` is given, and reported rather than silently skipped.
 
 What matters at this stage is only the shape:
 
@@ -834,6 +847,25 @@ find every table present, do nothing, and stamp the new version anyway, leaving
 a database that claims v3 while holding v2's columns. `tests/test_migrations.py`
 covers both, and adding a migration means adding a fixture database built by the
 previous build.
+
+**The genre tag is off by default.** **decided 2026-09-16** It was written to
+make partial predictions visible -- rekordbox's colour swatch can only show a
+colour, so there was no way to see that a track had been narrowed to a hue
+rather than named. Once the model names a colour on ~99 tracks in 100 there is
+nothing left for it to reveal, and it was writing to every file for nothing.
+The capability stays for anyone not using rekordbox: with
+`debug.write_genre_tags` on, the genre field is the whole channel and
+`sync --tags` reads corrections back out of it.
+
+**Model loading is cache-first, and offline once cached.** **decided
+2026-09-16** `from_pretrained` contacts the Hub on every call to check the
+revision even when the weights are local, so a tool that is otherwise entirely
+local needed an internet connection to start -- and printed a rate-limit
+warning each run. `local_files_only=True` stops the fetch but not a deferred
+check that follows it, so `HF_HUB_OFFLINE` is set too, and only when the model
+is genuinely cached, which leaves the first-run download working. Every load
+failure is now reported with its reason: "could not load CLAP" with no cause
+was not something anyone could debug.
 
 **Caution for other setups**: SQLite on cloud-synced storage (Dropbox, iCloud)
 can corrupt. Irrelevant on the reference internal SSD, but worth a warning for

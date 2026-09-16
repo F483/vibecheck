@@ -48,12 +48,18 @@ misleading_cost = 1.0
 rating_misleading_cost = 4.0
 
 [debug]
-# Also write the prediction into the ID3 genre tag. Rekordbox's colour and
-# rating fields are the real channel, so this is redundant -- but it makes the
-# app's reasoning visible while the tool is young: the tag shows how specific
-# the prediction was, where the colour swatch alone cannot. The tag holds the
-# colour name and nothing else -- the rating has a field of its own.
-write_genre_tags = true
+# Also write the prediction into the ID3 genre tag, as the colour name -- or
+# as the hue or tone alone, when that is as far as the model got.
+#
+# Off. It existed to make partial predictions visible, because rekordbox's
+# colour swatch can only show a colour and there was no way to see that a
+# track had been narrowed to "Vibrant" rather than named. Once the model names
+# a colour on ~99 tracks in 100 there is nothing left for it to reveal, and it
+# was writing to every file for nothing.
+#
+# Turn it on if you do not use rekordbox: with `sync --tags` the genre field
+# becomes the whole channel, in and out.
+write_genre_tags = false
 
 [audio]
 # Pinned, not defaulted: librosa and model preprocessing defaults drift between
