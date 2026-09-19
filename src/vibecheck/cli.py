@@ -22,7 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
-from . import embed, evaluate, index, palette, playlist, rekordbox, store, tags
+from . import embed, evaluate, index, palette, rekordbox, store, tags
+from . import playlist as playlist_mod
 from .config import DEFAULT
 from .predict import Model, axes_for, targets_for
 from .store import Label
@@ -181,6 +182,41 @@ def cmd_status(root: Path, cfg: dict, args) -> None:
 
 
 def cmd_label(root: Path, cfg: dict, args) -> None:
+    # Read corrections first, always. The model is fitted from whatever is in
+    # the database at this moment, so labelling before syncing silently trains
+    # on stale data and wastes the round. Doing it here rather than asking the
+    # user to remember the order is the whole reason `sync` is rarely typed.
+    write_tags = (args.write_tags if args.write_tags is not None
+                  else cfg.get("debug", {}).get("write_genre_tags", False))
+    # Read back through the same channel this writes to. With no rekordbox and
+    # no genre tags there is no channel at all, so there is nothing to read.
+    channel = "rekordbox" if args.rekordbox else ("tags" if write_tags else None)
+    syncing = bool(args.sync and not args.dry_run and channel)
+
+    steps, done = 4 + syncing, 0
+
+    def step(msg: str) -> None:
+        nonlocal done
+        done += 1
+        print(f"[{done}/{steps}] {msg}", flush=True)
+
+    if syncing:
+        step("reading your corrections")
+        try:
+            n = read_corrections(root, cfg, xml=args.rekordbox,
+                                 use_tags=channel == "tags")
+            report_corrections(n)
+        except FileNotFoundError:
+            print("      no rekordbox export found; skipping")
+        except StaleExport as e:
+            # Not fatal: a batch can legitimately be generated while an earlier
+            # one is still being corrected. But say so loudly, because the
+            # alternative reading is that the corrections were taken and were
+            # not.
+            print(f"      SKIPPED: {e}.")
+            print("      Export a fresh xml from rekordbox and run again if "
+                  "you meant to include corrections.")
+
     con = store.labels_db(root)
     ids = store.track_ids(con)
     confirmed = set(labelled(root, cfg))
@@ -206,16 +242,14 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
     out = Path(args.output) if args.output else (
         Path("out") / f"vibecheck-{dt.datetime.now():%Y%m%d-%H%M}.m3u8")
     name = out.stem
-    print(f"[1/4] selected {len(batch)} of {len(pool)} unlabelled tracks "
-          f"as {name}")
+    step(f"selected {len(batch)} of {len(pool)} unlabelled tracks as {name}")
 
-    print(f"[2/4] listening to the tracks that are new to it "
-          f"(about 3 seconds each)", flush=True)
+    step("listening to the tracks that are new to it (about 3 seconds each)")
     st = embed.embed_all(root, BACKEND, DEFAULT, batch, workers=1)
     print(f"      {st['done']} embedded, {st['cached']} already known"
           + (f", {st['failed']} failed" if st["failed"] else ""))
 
-    print("[3/4] training on what you have labelled so far", flush=True)
+    step("training on what you have labelled so far")
     model, info = train(root, cfg)
     print(f"      {info['tracks']} tracks, {info['labels']} distinct labels, "
           f"axes: {', '.join(info['axes'])}")
@@ -231,7 +265,7 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
     rid = None if args.dry_run else store.open_round(
         con, name, len(batch), BACKEND, encoder, info["tracks"])
 
-    print("[4/4] deciding what it can say about each track", flush=True)
+    step("deciding what it can say about each track")
     paths, X = embed.load(root, BACKEND, DEFAULT, batch)
     preds = model.predict(X)
 
@@ -244,8 +278,6 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         print(f"      note: {len(foreign)} of these already carry a genre tag "
               f"this app did not write; it will be replaced")
 
-    write_tags = (args.write_tags if args.write_tags is not None
-                  else cfg.get("debug", {}).get("write_genre_tags", False))
     entries, counts = [], {}
     rated = 0
     for rel, p in zip(paths, preds):
@@ -300,7 +332,7 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
             print("   point rekordbox at this file, or use --in-place to "
                   "update the one it already watches")
 
-    risky = playlist.write(out, root, entries)
+    risky = playlist_mod.write(out, root, entries)
     print(f"\nwrote {out}")
     if risky:
         print(f"   note: {len(risky)} path(s) contain '#', which Rekordbox "
@@ -335,7 +367,7 @@ def cmd_discard(root: Path, cfg: dict, args) -> None:
 
     if args.input:
         rels = [canon.get(store.norm(r), r)
-                for r in playlist.read(Path(args.input), root)]
+                for r in playlist_mod.read(Path(args.input), root)]
     else:
         rels = list(rows)
 
@@ -410,7 +442,7 @@ def cmd_clear(root: Path, cfg: dict, args) -> None:
     known = set(store.current(con))
 
     scope = ([canon.get(store.norm(r), r)
-              for r in playlist.read(Path(args.input), root)]
+              for r in playlist_mod.read(Path(args.input), root)]
              if args.input else sorted(ids))
 
     def wanted(rel: str) -> bool:
@@ -456,23 +488,29 @@ def cmd_clear(root: Path, cfg: dict, args) -> None:
     print("   labels are untouched: colour and rating live in rekordbox")
 
 
-def cmd_sync(root: Path, cfg: dict, args) -> None:
-    """Read your corrections back.
+class StaleExport(Exception):
+    """The rekordbox export predates the batch, so it cannot hold corrections."""
+
+
+def read_corrections(root: Path, cfg: dict, *, xml: str | None,
+                     use_tags: bool = False, playlist: str | None = None,
+                     adopt_all: bool = False, stale_ok: bool = False) -> dict:
+    """Read what the user changed, and record it. Returns counts.
 
     Two kinds of evidence, and they need different treatment:
 
     A value that **differs** from what the database holds is unambiguous --
-    only you could have changed it -- so it is taken whatever the scope.
+    only the user could have changed it -- so it is taken whatever the scope.
 
-    A value that **matches** a prediction is ambiguous: you reviewed it and
-    agreed, or you have not looked yet. Adopting those without evidence of
+    A value that **matches** a prediction is ambiguous: the user reviewed it
+    and agreed, or has not looked yet. Adopting those without evidence of
     review is what once imported 8,595 retired labels. The evidence is the open
-    round: the database knows which tracks are out in a batch you have not
-    finished, so no playlist has to be named for the common case.
+    round: the database knows which tracks are out in a batch that has not been
+    synced, so no playlist has to be named for the common case.
 
     A colour on a track the database has no record of is the third case --
     another tool's work, or an older scheme. Ignored unless it is in the
-    reviewed scope, or you ask for it with --all.
+    reviewed scope, or `adopt_all` is set.
     """
     con = store.labels_db(root)
     ids = store.track_ids(con)
@@ -480,17 +518,17 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
     last_any = store.current(con)
     canon = store.path_index(con)
 
-    # Tracks out in a round you have not finished: the reviewed scope, unless
-    # you name a playlist or say --all.
+    # Tracks out in a round that has not been read back: the reviewed scope,
+    # unless a playlist is named or adopt_all is set.
     reviewed = {p for (p,) in con.execute("""
         SELECT t.path FROM predictions p JOIN tracks t ON t.id = p.track_id
         JOIN rounds r ON r.id = p.round_id WHERE r.closed IS NULL""")}
-    if args.input:
+    if playlist:
         reviewed = {canon.get(store.norm(x), x)
-                    for x in playlist.read(Path(args.input), root)}
+                    for x in playlist_mod.read(Path(playlist), root)}
 
-    if args.tags:
-        rels = sorted(reviewed) if (reviewed and not args.all) else sorted(ids)
+    if use_tags:
+        rels = sorted(reviewed) if (reviewed and not adopt_all) else sorted(ids)
         # A genre tag is only a label if it names one of the eight. Anything
         # else is the debug tag showing a hue or a tone, or a real genre the
         # user set themselves -- neither is a colour, and adopting either
@@ -504,56 +542,51 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
             reading[rel] = Label(tag, None)
         if foreign:
             print(f"ignoring {foreign} genre tags that do not name a colour")
+        source_name = "genre tags"
     else:
-        xml = Path(args.rekordbox).expanduser()
-        if not xml.exists():
-            sys.exit(f"no rekordbox export at {xml}\n"
-                     "  export one after correcting (File > Export Collection "
-                     "in xml format),\n  or pass --tags to read genre tags "
-                     "instead.")
+        path = Path(xml).expanduser()
+        if not path.exists():
+            raise FileNotFoundError(path)
         # An export older than the batch cannot contain the corrections, and
         # reading it would adopt whatever the tracks looked like *before* the
         # batch was made -- silently, as though the user had confirmed it.
-        newest_batch = con.execute(
+        newest = con.execute(
             "SELECT MAX(ts) FROM labels WHERE source='model'").fetchone()[0]
-        if newest_batch and xml.stat().st_mtime < newest_batch and not args.stale_ok:
-            import datetime as _dt
-            sys.exit(
-                f"{xml.name} was exported "
-                f"{_dt.datetime.fromtimestamp(xml.stat().st_mtime):%Y-%m-%d %H:%M}"
+        if newest and path.stat().st_mtime < newest and not stale_ok:
+            raise StaleExport(
+                f"{path.name} was exported "
+                f"{dt.datetime.fromtimestamp(path.stat().st_mtime):%Y-%m-%d %H:%M}"
                 f", before the current batch was made "
-                f"({_dt.datetime.fromtimestamp(newest_batch):%Y-%m-%d %H:%M}).\n"
-                "  It cannot contain your corrections. Export a fresh one from\n"
-                "  rekordbox first, or pass --stale-ok if you really mean it.")
-        # The whole export, always: a correction to a track that is not in any
+                f"({dt.datetime.fromtimestamp(newest):%Y-%m-%d %H:%M})")
+        # The whole export, always: a correction to a track outside the current
         # batch is still a correction, and scoping the read is how those got
         # missed.
-        raw = rekordbox.read_labels(xml, root, only=None)
+        raw = rekordbox.read_labels(path, root, only=None)
         reading = {canon.get(k, k): v for k, v in raw.items()}
-        print(f"reading {xml.name}: {sum(1 for v in reading.values() if v)} "
-              f"tracks carry a colour or rating")
+        source_name = path.name
 
     of_round = store.round_of(con)
     touched: set[int] = set()
-    added = changed = confirmed = missing = unknown = 0
+    n = {"added": 0, "changed": 0, "confirmed": 0, "missing": 0, "unknown": 0,
+         "read": sum(1 for v in reading.values() if v), "source": source_name}
     for rel, now in reading.items():
         if rel not in ids:
-            missing += 1
+            n["missing"] += 1
             continue
         prev = last_any.get(rel)
-        in_scope = args.all or rel in reviewed
+        in_scope = adopt_all or rel in reviewed
         if not now and prev is None:
             continue          # blank before, blank now: not an event
         if now == prev:
             if in_scope and rel not in last_user:
-                # reviewed, and you left it alone: the model's guess is yours
+                # reviewed, and left alone: the model's guess is now theirs
                 store.log_label(con, ids[rel], now, "user",
                                 round_id=of_round.get(rel))
                 touched.add(of_round.get(rel))
-                confirmed += 1
+                n["confirmed"] += 1
             continue
         if prev is None and not in_scope:
-            unknown += 1      # a colour this app has no record of
+            n["unknown"] += 1      # a colour this app has no record of
             continue
         # Only the axes the previous statement actually made can be
         # contradicted. Rekordbox reports an unrated track as zero stars, so a
@@ -565,34 +598,59 @@ def cmd_sync(root: Path, cfg: dict, args) -> None:
         store.log_label(con, ids[rel], now, "user", round_id=of_round.get(rel))
         touched.add(of_round.get(rel))
         if prev is None:
-            added += 1
+            n["added"] += 1
         elif contradicts:
-            changed += 1
+            n["changed"] += 1
         else:
-            confirmed += 1
+            n["confirmed"] += 1
     for rid in touched - {None}:
         store.close_round(con, rid)
     con.commit()
-    print(f"new labels {added}, corrections {changed}, confirmed {confirmed}"
-          + (f", not in index {missing}" if missing else ""))
-    if unknown:
-        print(f"ignored {unknown} tracks carrying a colour this app has no "
-              f"record of (--all to adopt them as yours)")
+    return n
+
+
+def report_corrections(n: dict) -> None:
+    print(f"      {n['added']} new, {n['changed']} corrected, "
+          f"{n['confirmed']} confirmed"
+          + (f", {n['missing']} not in the collection" if n["missing"] else ""))
+    if n["unknown"]:
+        print(f"      ignored {n['unknown']} tracks carrying a colour this app "
+              f"has no record of (sync --all to adopt them)")
+
+
+def cmd_sync(root: Path, cfg: dict, args) -> None:
+    try:
+        n = read_corrections(root, cfg, xml=args.rekordbox, use_tags=args.tags,
+                             playlist=args.input, adopt_all=args.all,
+                             stale_ok=args.stale_ok)
+    except FileNotFoundError as e:
+        sys.exit(f"no rekordbox export at {e}\n"
+                 "  export one after correcting (File > Export Collection in "
+                 "xml format),\n  or pass --tags to read genre tags instead.")
+    except StaleExport as e:
+        sys.exit(f"{e}.\n  It cannot contain your corrections. Export a fresh "
+                 f"one from\n  rekordbox first, or pass --stale-ok if you "
+                 f"really mean it.")
+    print(f"read {n['source']}: {n['read']} tracks carry a colour or rating")
+    report_corrections(n)
     print(f"labelled now: {len(labelled(root, cfg))}")
 
 
 USAGE = """\
 the loop
   vibecheck scan                     find your tracks (once, and after adding music)
-  vibecheck label 300                pick 300 unlabelled tracks, label what it
-                                     can, and write the colours and star
-                                     ratings into the rekordbox xml
+  vibecheck label 100                read your corrections, learn from them,
+                                     then label 100 more and write the colours
+                                     and star ratings into the rekordbox xml
   ... refresh the rekordbox xml node in rekordbox, import the new playlist,
-      correct what is wrong, then export the collection again ...
-  vibecheck sync                     read your corrections back
+      correct what is wrong while you listen, export the collection again,
+      and run the same command again ...
 
-  Each round it learns from your corrections, so each round you correct less.
-  The model is refitted at the start of the next `label`, not by `sync`.
+  That is the whole loop: one command, repeated. Each round it learns from
+  everything you have corrected so far, so each round you correct less.
+
+  `vibecheck sync` does only the reading part, for when you have relabelled
+  something and do not want a new batch yet.
   It needs roughly 200 labels of your own before it is much use -- label a first
   batch by hand, or let it guess and correct everything.
 
@@ -672,6 +730,9 @@ def main(argv=None) -> int:
                         "debug.write_genre_tags in config, normally off)")
     p.add_argument("--no-write-tags", dest="write_tags", action="store_false",
                    help="do not touch genre tags")
+    p.add_argument("--no-sync", dest="sync", action="store_false", default=True,
+                   help="do not read your corrections first (they will not be "
+                        "learned from this round)")
 
     p = sub.add_parser("sync", help="read your corrections back and retrain",
                        description="Read the genre tags of a batch, record "

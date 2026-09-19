@@ -41,15 +41,13 @@ uv run vibecheck scan --adopt-tags   # ... or, if you already label in genre tag
 # label some tracks by hand first -- it needs about 200 to be useful
 uv run vibecheck status
 
-# then, each round:
-uv run vibecheck label 300   # picks 300 unlabelled tracks, labels what it can,
-                             # and writes the colours and star ratings straight
-                             # into the rekordbox xml
+# then, each round -- one command, repeated:
+uv run vibecheck label 100   # reads your corrections, learns from them, picks
+                             # 100 more unlabelled tracks, and writes the
+                             # colours and star ratings into the rekordbox xml
 #   ... refresh the rekordbox xml node in rekordbox's sidebar, import the new
 #       vibecheck-<date>-<time> playlist, correct what is wrong while you
-#       listen, then export your collection again ...
-uv run vibecheck sync        # reads your corrections back
-                             # (the model is refitted by the next `label`)
+#       listen, export your collection again, and run the same command ...
 ```
 
 It writes into **rekordbox's own colour tag and star rating**, not a text
@@ -65,7 +63,8 @@ corrections back out of it.
 Other things you may want:
 
 ```sh
-uv run vibecheck label 50 --dry-run        # see what it would say, change nothing
+uv run vibecheck sync                     # only read corrections back, no new batch
+uv run vibecheck label 50 --dry-run       # see what it would say, change nothing
 uv run vibecheck discard out/vibecheck-….m3u8   # throw a batch away, free its tracks
 uv run vibecheck sync --tags               # read genre tags instead of the export
 uv run vibecheck label 300 --include-unconfirmed   # reuse tracks from a batch
@@ -85,8 +84,11 @@ a new batch cannot overwrite corrections you have not synced. `discard` clears
 only tags still holding exactly what the app wrote — anything you have since
 edited is treated as a correction and kept.
 
-That loop is the whole product. Each round the model gets better, so each round
-you correct less.
+That loop is the whole product: one command, repeated. Each round it refits on
+everything you have corrected so far, so each round you correct less. There is
+no separate training step and no stored model -- the classifier is rebuilt from
+your labels at the start of every run, in about a second, on top of cached
+audio embeddings that never need recomputing.
 
 **What it writes:** the rekordbox XML it is pointed at, `<your
 collection>/.vibecheck/`, and the ID3 genre tag only if you turn

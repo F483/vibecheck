@@ -515,17 +515,29 @@ settled interface**. Flag names, subcommand split and defaults are deliberately
 unresolved until the architecture is proven; getting the core right comes first,
 and a wrong interface is cheap to change while a wrong core is not.
 
+As built, the loop is one command:
+
 ```sh
-# pick up new files and any label edits made in other software, then retrain
-vibecheck sync
-
-# label unlabelled tracks the model is confident about; report what it touched
-vibecheck label --limit=100 --output=<playlist>.m3u8
-
-# any run can be restricted to a playlist instead of the whole collection
-vibecheck sync  --input=<playlist>.m3u8
-vibecheck label --input=<playlist>.m3u8 --limit=100
+vibecheck label 100     # read corrections, refit, predict 100, write the xml
 ```
+
+`sync` remains for reading corrections without generating a batch -- relabelling
+old tracks, say. It is rarely typed.
+
+**Why `label` syncs first.** **decided 2026-09-19** The model is fitted from
+whatever is in the database at that moment, so labelling before syncing trains
+on stale data and wastes the round -- silently, since nothing about the output
+says which labels it used. Ordering the two commands correctly was the user's
+job and had no upside; now it is not. `--no-sync` opts out.
+
+Corrections are read back through the same channel the predictions were written
+to: the rekordbox export, or genre tags when rekordbox is not in use. With
+neither there is no channel, and the step is skipped rather than failing.
+
+An export older than the open batch is a warning, not an error: generating a
+new batch while an earlier one is still being corrected is legitimate. It says
+so loudly, because the alternative reading -- that the corrections were taken
+when they were not -- is the expensive mistake.
 
 There is no separate "train" step: the model is refitted at the start of the
 next `label`, from whatever labels exist then. `sync` only records.
