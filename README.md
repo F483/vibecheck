@@ -233,6 +233,7 @@ thresholds with the cost policy (17 → 55 exact colours per 100).
 
 ## Documentation
 
+- [docs/stats-1000.md](docs/stats-1000.md) — what 1,000 fresh labels and a month of DJing show
 - [docs/setup.md](docs/setup.md) — the working configuration, reproducibly
 - [docs/accuracy.md](docs/accuracy.md) — what accuracy to expect, and what limits it
 - [docs/ceiling.md](docs/ceiling.md) — label consistency, and why the model beats it
