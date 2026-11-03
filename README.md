@@ -36,15 +36,15 @@ it at.
 ```sh
 # point it at your collection (default: ~/Music/Collection)
 uv run vibecheck scan
-uv run vibecheck scan --adopt-tags   # ... or, if you already label in genre tags
 
 # label some tracks by hand first -- it needs about 200 to be useful
 uv run vibecheck status
 
 # then, each round -- one command, repeated:
 uv run vibecheck label 100   # reads your corrections, learns from them, picks
-                             # 100 more unlabelled tracks, and writes the
-                             # colours and star ratings into the rekordbox xml
+                             # 100 more unlabelled tracks, and writes their
+                             # colours, star ratings, key and energy into the
+                             # rekordbox xml
 #   ... refresh the rekordbox xml node in rekordbox's sidebar, import the new
 #       vibecheck-<date>-<time> playlist, correct what is wrong while you
 #       listen, export your collection again, and run the same command ...
@@ -52,13 +52,16 @@ uv run vibecheck label 100   # reads your corrections, learns from them, picks
 
 It writes into **rekordbox's own colour tag and star rating**, not a text
 field, by rewriting the XML rekordbox is pointed at (Preferences → Advanced →
-Database → rekordbox xml). Your previous
-export is kept as `rekordbox.xml.bak`.
+Database → rekordbox xml). Your previous export is kept as
+`rekordbox.xml.bak`. **Your music files are never touched**, and nothing changes
+in rekordbox until you import the playlist.
 
-The ID3 genre tag is left alone. If you do not use Rekordbox, set
-`debug.write_genre_tags` in config and the genre field becomes the channel
-instead: predictions are written there, and `vibecheck sync --tags` reads your
-corrections back out of it.
+Each batch also gets a **key** and an **energy level** (1–10), worked out from
+the audio by fixed methods rather than learned: the key goes into rekordbox's
+own key field in alphanumeric notation (`8A` is A minor), and
+`<key> - Energy <n>` goes at the start of the comment, keeping anything else
+there such as `/* tags */`. Both can be switched off in config. How they work
+and how accurate they are: [docs/key-energy.md](docs/key-energy.md).
 
 Other things you may want:
 
@@ -66,23 +69,18 @@ Other things you may want:
 uv run vibecheck sync                     # only read corrections back, no new batch
 uv run vibecheck label 50 --dry-run       # see what it would say, change nothing
 uv run vibecheck discard out/vibecheck-….m3u8   # throw a batch away, free its tracks
-uv run vibecheck sync --tags               # read genre tags instead of the export
 uv run vibecheck label 300 --include-unconfirmed   # reuse tracks from a batch
                                                    # you have not corrected yet
 
-uv run vibecheck clear --unknown          # housekeeping: strip genre tags this
-                                          # app has no record of
+uv run vibecheck analyse --all --dry-run  # key and energy for the whole
+                                          # collection: what would change
+uv run vibecheck analyse --all            # ... and write it, with a playlist
+                                          # of only the tracks that changed
 ```
 
-`clear` takes `--unknown`, `--unconfirmed`, `--confirmed` or `--all`, shows
-what it would do, and only acts with `--apply`. Whatever it removes is written
-to `.vibecheck/cleared-<date>.csv` first, because a tag the database never knew
-about has no other record anywhere.
-
 A batch in progress is excluded from the next one, so batches never overlap and
-a new batch cannot overwrite corrections you have not synced. `discard` clears
-only tags still holding exactly what the app wrote — anything you have since
-edited is treated as a correction and kept.
+a new batch cannot overwrite corrections you have not synced. `discard` forgets
+a batch's unconfirmed labels; `sync` first if you have corrected some of it.
 
 That loop is the whole product: one command, repeated. Each round it refits on
 everything you have corrected so far, so each round you correct less. There is
@@ -90,16 +88,15 @@ no separate training step and no stored model -- the classifier is rebuilt from
 your labels at the start of every run, in about a second, on top of cached
 audio embeddings that never need recomputing.
 
-**What it writes:** the rekordbox XML it is pointed at, `<your
-collection>/.vibecheck/`, and the ID3 genre tag only if you turn
-`debug.write_genre_tags` on. Playlists
-land in `out/`. Track identity is a hash of the audio only, so writing a label
+**What it writes:** the rekordbox XML it is pointed at and `<your
+collection>/.vibecheck/`. Nothing else. Playlists land in `out/`. Track identity is a hash of the audio only, so writing a label
 never changes what a track *is* and never invalidates its cached analysis.
 
 **Configuration** lives in `<your collection>/.vibecheck/config.toml` — copy
 [the default](src/vibecheck/default_config.toml) to start. It holds two dials:
 `misleading_cost`, how bad it is to be given a wrong colour, and
-`rating_misleading_cost`, the same for stars. The palette is not configurable —
+`rating_misleading_cost`, the same for stars; and whether key and energy are
+written (`write_tonality`, `write_comment`). The palette is not configurable —
 eight colours and six star ratings is Rekordbox's UI, not a preference.
 
 ## Status
@@ -195,7 +192,8 @@ audio        48 kHz, 24 windows × 10 s, mean and standard deviation pooled
 classifier   standardise → logistic regression, C = 0.001 (chosen by CV)
 decision     expected-cost policy over colour / hue / tone / abstain
 storage      .vibecheck/ in the collection root: labels.db, cache.db
-labels in    rekordbox XML export (colour tag + star rating), or ID3 genre
+labels in    rekordbox XML export (colour tag + star rating)
+key, energy  fixed methods, no learning: docs/key-energy.md
 ```
 
 Full detail, including every parameter that matters and why:
@@ -233,6 +231,7 @@ thresholds with the cost policy (17 → 55 exact colours per 100).
 
 ## Documentation
 
+- [docs/key-energy.md](docs/key-energy.md) — key and energy: method, accuracy, credits
 - [docs/stats-1000.md](docs/stats-1000.md) — what 1,000 fresh labels and a month of DJing show
 - [docs/setup.md](docs/setup.md) — the working configuration, reproducibly
 - [docs/accuracy.md](docs/accuracy.md) — what accuracy to expect, and what limits it

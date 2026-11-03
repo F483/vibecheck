@@ -2,7 +2,7 @@
 
 CUDA where there is an NVIDIA card, Metal on Apple silicon, CPU otherwise.
 Nothing else in the codebase is platform-specific: decoding goes through
-ffmpeg, tags through mutagen, storage through SQLite, all of which are portable.
+ffmpeg, storage through SQLite, both of which are portable.
 """
 
 from __future__ import annotations

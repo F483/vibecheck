@@ -3,14 +3,14 @@ name = "vibecheck"
 version = "0.1.0"
 description = "Learns your music labelling from audio and applies it to new tracks"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "F483", email = "fabian.barkhau@gmail.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
     "librosa>=1.0.0",
-    "muq>=0.1.0",
-    "mutagen>=1.48.1",
     "numpy>=2.5.3",
     "onnxruntime>=1.29.0",
     "onnxscript>=0.7.1",

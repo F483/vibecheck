@@ -21,7 +21,7 @@ class Backend(Protocol):
     def preproc(self, base: Preproc) -> Preproc:
         """The config this backend needs.
 
-        Models disagree about sample rate (MERT wants 24 kHz, CLAP 48 kHz), and
+        Models disagree about sample rate (CLAP wants 48 kHz, others 16-24), and
         the rate changes the numbers, so it must reach the cache key rather than
         being applied silently at decode time.
         """
@@ -35,10 +35,6 @@ def get(name: str) -> Backend:
         from .mfcc import MFCC
 
         return MFCC()
-    if name == "mert":
-        from .mert import MERT
-
-        return MERT()
     if name == "clap":
         from .clap import CLAP
 
@@ -47,10 +43,6 @@ def get(name: str) -> Backend:
         from .clapw import CLAPWindows
 
         return CLAPWindows()
-    if name == "muq":
-        from .muq import MuQ
-
-        return MuQ()
     if name == "whisper":
         from .whisper import Whisper
 

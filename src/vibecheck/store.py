@@ -183,6 +183,16 @@ def cache_db(root: Path) -> sqlite3.Connection:
           ts      INTEGER NOT NULL,
           PRIMARY KEY (hash, backend, version, preproc)
         );
+        -- key and energy (keyenergy.py), by audio and by method version
+        CREATE TABLE IF NOT EXISTS analysis (
+          hash    TEXT NOT NULL,
+          version TEXT NOT NULL,
+          key     TEXT NOT NULL,
+          energy  INTEGER NOT NULL,
+          detail  TEXT NOT NULL,
+          ts      INTEGER NOT NULL,
+          PRIMARY KEY (hash, version)
+        );
     """)
     return con
 

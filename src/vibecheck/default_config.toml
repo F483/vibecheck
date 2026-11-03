@@ -47,19 +47,19 @@ misleading_cost = 1.0
 #   4  -> rates 10%,           81% right
 rating_misleading_cost = 4.0
 
-[debug]
-# Also write the prediction into the ID3 genre tag, as the colour name -- or
-# as the hue or tone alone, when that is as far as the model got.
-#
-# Off. It existed to make partial predictions visible, because rekordbox's
-# colour swatch can only show a colour and there was no way to see that a
-# track had been narrowed to "Vibrant" rather than named. Once the model names
-# a colour on ~99 tracks in 100 there is nothing left for it to reveal, and it
-# was writing to every file for nothing.
-#
-# Turn it on if you do not use rekordbox: with `sync --tags` the genre field
-# becomes the whole channel, in and out.
-write_genre_tags = false
+[rekordbox]
+# Key and energy are worked out from the audio for every track a round labels
+# (and by `vibecheck analyse`), and written into the rekordbox xml with the
+# colours and ratings. Nothing changes in rekordbox until you import.
+
+# The key, alphanumeric ("8A" is A minor, "8B" C major), into rekordbox's own
+# key field, so its key column and filters show it.
+write_tonality = true
+
+# "<key> - Energy <n>" at the start of the comment, replacing any earlier
+# "<key> - Energy <n>" there. Everything else in the comment, /* tags */
+# included, is kept.
+write_comment = true
 
 [audio]
 # Pinned, not defaulted: librosa and model preprocessing defaults drift between

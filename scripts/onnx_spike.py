@@ -83,4 +83,4 @@ def main(name: str) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "mert"))
+    raise SystemExit(main(sys.argv[1] if len(sys.argv) > 1 else "clapw"))

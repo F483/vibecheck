@@ -16,9 +16,11 @@ model committed to come first.
 from __future__ import annotations
 
 import datetime as dt
+import re
 import urllib.parse
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from typing import NamedTuple
 
 from . import palette, store
 from .store import Label
@@ -62,32 +64,84 @@ def read_labels(xml_in: Path, collection: Path,
     return out
 
 
+class Entry(NamedTuple):
+    """One track's worth of writing. None anywhere means "leave that alone"."""
+    rel: str
+    level: str = "none"            # how far the colour got; orders the playlist
+    label: Label | None = None     # colour and rating
+    key: str | None = None         # alphanumeric, "8A"
+    energy: int | None = None      # 1..10
+
+
+# A leading "<key> - Energy <n>", whoever wrote it. Replaced, never read: the
+# values in it are not this app's and are never used for anything.
+_KEY_ENERGY = re.compile(r"^\s*\d{1,2}[AB]\s*-\s*Energy\s*\d{1,2}\b\s*")
+
+
+def comment_with(old: str | None, key: str, energy: int) -> str:
+    """The comment with its key-energy prefix replaced, everything else kept.
+
+    "5A - Energy 7 /* Atmo / Rytm */" -> "8A - Energy 6 /* Atmo / Rytm */".
+    """
+    rest = _KEY_ENERGY.sub("", old or "", count=1).strip()
+    head = f"{key} - Energy {energy}"
+    return f"{head} {rest}" if rest else head
+
+
 def write(xml_in: Path, xml_out: Path, collection: Path,
-          predictions: list[tuple[str, str, Label]],
-          name: str | None = None) -> dict:
-    """predictions: (relative path, how specific it was, what to write)."""
+          entries: list[Entry], name: str | None = None, *,
+          tonality: bool = True, comment: bool = True,
+          changed_only: bool = False) -> dict:
+    """Apply entries and add one playlist holding them.
+
+    `tonality` and `comment` say whether key and energy reach those fields.
+    `changed_only` keeps the playlist to tracks something was actually changed
+    on, which is what a whole-collection pass wants and a labelling round,
+    where every track is to be reviewed, does not.
+    """
     tree = ET.parse(xml_in)
     root_el = tree.getroot()
     by_path = _locations(root_el, collection)
 
     groups: dict[str, list[str]] = {}
-    stats = {"coloured": 0, "rated": 0, "not_in_xml": 0}
+    stats = {"coloured": 0, "rated": 0, "keyed": 0, "commented": 0,
+             "not_in_xml": 0, "unchanged": 0}
 
-    for rel, level, label in predictions:
-        el = by_path.get(store.norm(rel))
+    def put(el, attr, value, counter) -> bool:
+        if el.get(attr) == value:
+            return False
+        el.set(attr, value)
+        stats[counter] += 1
+        return True
+
+    for e in entries:
+        el = by_path.get(store.norm(e.rel))
         if el is None:
             stats["not_in_xml"] += 1
             continue
-        groups.setdefault(level, []).append(el.get("TrackID"))
-        if label.colour:
-            el.set("Colour", palette.BY_NAME[label.colour].rgb)
-            stats["coloured"] += 1
-        if label.stars:
-            el.set("Rating", palette.rating_from_stars(label.stars))
-            stats["rated"] += 1
+        changed = False
+        if e.label and e.label.colour:
+            changed |= put(el, "Colour", palette.BY_NAME[e.label.colour].rgb,
+                           "coloured")
+        if e.label and e.label.stars:
+            changed |= put(el, "Rating", palette.rating_from_stars(e.label.stars),
+                           "rated")
+        if e.key and tonality:
+            changed |= put(el, "Tonality", e.key, "keyed")
+        if e.key and e.energy is not None and comment:
+            changed |= put(el, "Comments",
+                           comment_with(el.get("Comments"), e.key, e.energy),
+                           "commented")
+        if changed_only and not changed:
+            stats["unchanged"] += 1
+            continue
+        groups.setdefault(e.level, []).append(el.get("TrackID"))
 
     keys = [k for level in ("colour", "hue", "tone", "none")
             for k in groups.get(level, [])]
+    stats["playlists"] = {k: len(v) for k, v in groups.items()}
+    if changed_only and not keys:
+        return stats              # nothing to import: leave the file alone
     playlists = root_el.find("PLAYLISTS/NODE")
     node = ET.SubElement(playlists, "NODE",
                          {"Name": name or f"vibecheck-{dt.datetime.now():%Y%m%d-%H%M}",
@@ -102,5 +156,4 @@ def write(xml_in: Path, xml_out: Path, collection: Path,
         backup.write_bytes(xml_in.read_bytes())
         stats["backup"] = str(backup)
     tree.write(xml_out, encoding="UTF-8", xml_declaration=True)
-    stats["playlists"] = {k: len(v) for k, v in groups.items()}
     return stats
