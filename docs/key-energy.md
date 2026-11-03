@@ -1,89 +1,107 @@
 # Key and energy
 
-Every track a `label` round picks also gets a **key** and an **energy level**,
-written into the rekordbox xml with its colour and rating: the key into
-rekordbox's own key field, and `<key> - Energy <n>` at the start of the
-comment. `vibecheck analyse` does the same for chosen tracks, or all of them.
+Every track in a `label` round also gets a **musical key** and an **energy
+level**, written into rekordbox next to its colour and rating:
 
-Unlike colour and rating, neither is learned from you. Both are fixed
-functions of the audio: the same file always gets the same answer, on any
-machine, until the method's version changes. That is what makes them
+| rekordbox field | example | |
+|---|---|---|
+| Key | `8A` | A minor, in alphanumeric notation |
+| Comments | `8A - Energy 6 /* your tags */` | only the `<key> - Energy <n>` prefix is replaced; the rest is kept |
+
+Neither is learned from you. Both are fixed functions of the audio: the same
+file gets the same answer on any machine, every time. That is what keeps them
 consistent across a collection and across years.
 
-Code: [src/vibecheck/keyenergy.py](../src/vibecheck/keyenergy.py).
+**At a glance**
+
+| | |
+|---|---|
+| key, exact | **78%** on 567 human-labelled tracks |
+| key, mixable | **90%**: exact, a fifth away, or the relative key |
+| energy, stable | **99%** unchanged after re-encoding at 128 kbps, 100% within one step |
+| speed | ~40 s per 100-track round on an M1 Pro, cached after that |
+| learning from your data | none |
+
+Code: [src/vibecheck/keyenergy.py](../src/vibecheck/keyenergy.py) ·
+templates: [src/vibecheck/key_profiles.json](../src/vibecheck/key_profiles.json)
 
 ---
 
 ## Key
 
-**Method.** Three steps, all from the published literature:
+![Key accuracy on GiantSteps: this method 78% exact and 90% mixable, on par with the best Essentia profile and well above the classic templates](img/key-energy/key-accuracy.png)
 
-1. **A pitch profile of the track** -- how much of each of the twelve notes it
-   contains -- from 24 ten-second windows spread through it, 100 Hz to 5 kHz.
-   Only spectral *peaks* count, so drums and noise add almost nothing, and
-   every frame counts equally. The track's tuning is estimated first, so a
-   record pitched a little off still lands on the right notes. (Harmonic
-   pitch class profile: Gómez 2006, after Fujishima 1999.)
-2. **Score all 24 keys with templates** (Krumhansl & Schmuckler 1990): the
-   profile, in log, is rotated so the candidate tonic comes first and weighed
-   by the mode's template, one weight per interval above the tonic.
-3. **A fixed preference for minor**, because dance music is mostly in minor
-   keys -- a prior over keys, as in Temperley 2002.
+### How it works
 
-The two templates and the minor preference -- 25 numbers -- are fitted to
-human-annotated electronic tracks by multinomial logistic regression, so that
-the annotated key scores highest, rather than by averaging profiles. On the
-training set alone that is worth about four points of accuracy.
+1. **Listen for notes.** From 24 ten-second windows spread through the track,
+   build a *pitch profile*: how much of each of the twelve notes it contains,
+   100 Hz – 5 kHz. Only spectral peaks count, so drums and noise add almost
+   nothing. The track's tuning is estimated first, so a record pitched slightly
+   off still lands on the right notes.
+   *(Harmonic pitch class profile: Fujishima 1999, Gómez 2006.)*
+2. **Score all 24 keys.** Rotate the profile so each candidate tonic comes
+   first and weigh it against a template for major and one for minor.
+   *(Krumhansl & Schmuckler 1990.)*
+3. **Lean towards minor.** Dance music is mostly in minor keys, so minor gets
+   a fixed head start. *(Key priors: Temperley 2002.)*
 
-Written in alphanumeric notation: `8A` is A minor, `8B` its relative C major;
-moving one number is a fifth.
+The two templates and the minor lean -- 25 numbers in total -- are fitted to
+human-annotated electronic music by logistic regression, so the annotated key
+scores highest. What they learned is textbook harmony:
 
-**Accuracy**, against keys annotated by people, on a test set the method never
-saw while being built:
+![Learned template weights: minor keys favour tonic, fifth, minor third and minor seventh; major keys favour tonic, fifth and major third](img/key-energy/key-templates.png)
 
-[GiantSteps Key Dataset](https://zenodo.org/record/1095691): 600 two-minute
-previews of electronic tracks across ten genres, keys annotated by people. 567
-have a clear major or minor key; the rest (no key, modal, "other") are left
-out, and where annotators gave two keys either counts.
+Keys are written in **alphanumeric notation**: `8A` is A minor, `8B` its
+relative, C major. One number up or down is a fifth, so neighbours on the
+wheel mix harmonically.
 
-| | exact | MIREX weighted | mix-compatible |
+### How it was measured
+
+- **Trained** on the [Beatport EDM Key Dataset](https://zenodo.org/record/1101082):
+  1,486 tracks. Every choice -- features, minor lean, regularisation -- was
+  made by cross-validation on this set alone.
+- **Tested once** on the [GiantSteps Key Dataset](https://zenodo.org/record/1095691):
+  600 two-minute previews across ten genres, no overlap with training, never
+  tuned on. 567 have a clear major or minor key; the rest are left out, and
+  where annotators gave two keys, either counts.
+
+| GiantSteps, 567 tracks | exact | MIREX weighted | mixable |
 |---|--:|--:|--:|
 | **this method** | **78.1%** | **83.8%** | **89.9%** |
-| on minor-key tracks (n=447) | 81.2% | | |
-| on major-key tracks (n=120) | 66.7% | | |
-| classic Krumhansl templates (in Essentia), for reference | 66.0% | 74.0% | 79.4% |
+| · minor-key tracks (447) | 81.2% | | |
+| · major-key tracks (120) | 66.7% | | |
+| Essentia, bgate profile | 78.5% | 84.1% | 89.8% |
+| Essentia, edma profile | 77.1% | 82.7% | 86.4% |
+| Essentia, classic Krumhansl | 66.0% | 74.0% | 79.4% |
 
 - **exact**: the right key.
 - **MIREX weighted**: the standard research score -- 1 for exact, 0.5 a fifth
   away, 0.3 the relative key, 0.2 the parallel key.
-- **mix-compatible**: exact, a fifth away or the relative key -- a neighbour
-  on the alphanumeric wheel, so it still mixes harmonically.
+- **mixable**: exact, a fifth away, or the relative key.
 
-That is on par with the best open-source key detector measured the same way
-on the same tracks (Essentia with its EDM profiles: 77.1-78.5% exact), and
-above the 74% reported in research for this dataset (Korzeniowski & Widmer
-2017, under a slightly different protocol).
+So it is on par with the best open-source key detector run the same way on
+the same tracks, and above the 74% reported in research for this dataset
+(Korzeniowski & Widmer 2017, under a slightly different protocol). On the
+training set it scores 58% cross-validated -- that set is deliberately hard,
+full of tracks even the annotators disagreed on.
 
-The templates were fitted on a *different* dataset -- the Beatport EDM Key
-Dataset, 1,486 tracks, no overlap -- and every choice (features, the minor
-preference, regularisation) was made by cross-validation on that set alone.
-The test set was only measured, never tuned on. On the training set itself,
-cross-validated, it scores 58% exact: that set is deliberately hard, with many
-tracks whose key even annotators disagreed on.
+### Where it is weak
 
-Speed: about 2.5 tracks a second on an M1 Pro, so ~40 s for a 100-track
-batch, and roughly 1.5 hours for 14,000 tracks once. Cached after that.
+- **Little harmony, little key.** Drum tracks and much techno have no strong
+  tonal centre; any detector is close to guessing on them.
+- **Major is harder than minor** (67% vs 81%): the minor lean pulls borderline
+  tracks towards minor. That trade is right more often on dance music.
 
-**Where it is weak.** Tracks with little harmonic content -- drum tracks,
-much techno -- have no strong key, and any key detector is close to guessing
-on them. Major keys are harder than minor ones because the minor preference
-pulls borderline cases towards minor; that trade was chosen because it is
-right more often on dance music.
+---
 
 ## Energy
 
-**Method.** Three standard audio descriptors (MPEG-7, 2002), each taken as
-the median over the same 24 windows:
+![Energy levels on 2,600 reference tracks: 6 is 47%, 5 and 7 together 43%, 8 and below 4 rare](img/key-energy/energy-scale.png)
+
+### How it works
+
+Three standard audio descriptors (MPEG-7, 2002), each the median over the same
+24 windows:
 
 | descriptor | measures |
 |---|---|
@@ -91,56 +109,61 @@ the median over the same 24 windows:
 | brightness | spectral centroid: how much of the sound is high-frequency |
 | noisiness | spectral flatness: noise and distortion against clean tones |
 
-Each is put in units of its spread across a reference set of tracks, the three
-are added, and the sum is placed on 1–10 so that a typical club track is **6**
-and one standard deviation is **one step**: 7 and 8 are more intense than
-most, 3–5 calmer, 1–2 and 9–10 rare.
+Each is expressed in standard deviations from a reference set, the three are
+added, and the sum is placed on 1–10 so a typical club track is **6** and one
+standard deviation is **one step**:
 
-The reference set is about 2,600 tracks (a sample of the reference collection
-plus the GiantSteps set). Only audio statistics come from it -- no ratings,
-labels or anyone's judgement of energy went into the scale. The constants are
-in `keyenergy.py`, produced by
-[scripts/fit_energy_scale.py](../scripts/fit_energy_scale.py), and never
-change unless the method's version does.
+| level | share | meaning |
+|---|--:|---|
+| 8+ | ~1% | rare, peak intensity |
+| 7 | 24% | a lift |
+| 6 | 47% | ordinary |
+| 5 | 19% | calmer than most |
+| 1–4 | ~9% | noticeably calm |
 
-**What can and cannot be claimed.** There is no ground truth for energy: it is
-a perceptual judgement and no public set of human energy ratings is available
-for this use. So the claim is consistency, which can be checked:
+The reference set is about 2,600 tracks: a sample of the reference collection
+plus GiantSteps. Only audio statistics come from it -- no ratings, labels or
+anyone's judgement of energy. The constants live in `keyenergy.py` and change
+only with the method's version.
+
+### What can be claimed
+
+There is no ground truth for energy: it is a perceptual judgement, and no
+public set of human energy ratings exists for this use. So the claim is
+**consistency**, which can be checked:
 
 1. **Same track, different encoding.** 100 random tracks re-encoded at
-   128 kbps: the key stayed the same on all 100, the energy on 99, and the
-   other was one step off.
-2. **Determinism.** The same audio gives the same key and energy on every
-   run; the method has no randomness and no state.
-3. **Genres come out in a sensible order** (GiantSteps, mean energy):
+   128 kbps: same key on all 100, same energy on 99, the last one step off.
+2. **Determinism.** No randomness, no state: the same audio always gives the
+   same answer.
+3. **Genres fall in a sensible order.**
 
-   | genre | mean energy |
-   |---|--:|
-   | Electronica / Downtempo | 5.4 |
-   | Techno | 5.8 |
-   | Tech House, Deep House | 5.9 |
-   | House | 6.3 |
-   | Progressive House | 6.5 |
-   | Dubstep, Trance | 6.6 |
-   | Drum & Bass, Electro House | 6.8 |
+![Energy by genre on GiantSteps: downtempo lowest at 5.4, techno 5.8, house 5.9 to 6.3, trance and dubstep 6.6, drum and bass and electro house highest at 6.8](img/key-energy/energy-genres.png)
 
-   Not a measure of accuracy -- every genre spans calm and intense tracks --
-   but the scale runs the way people would expect.
+Not a measure of accuracy -- every genre has calm and intense tracks -- but the
+scale runs the way people would expect.
 
-On the reference set the levels fall: 1-2 about 1%, 3 2%, 4 5%, 5 19%, 6 47%,
-7 24%, 8 1%, 9-10 almost never. So 6 is ordinary, 7 is a lift, 8 is rare, and
-4 or below is a noticeably calm track.
+---
 
-## What it writes
+## Settings
 
-| field | written | setting |
+Under `[rekordbox]` in `.vibecheck/config.toml`:
+
+| setting | default | writes |
 |---|---|---|
-| rekordbox key (`Tonality`) | `8A` | `write_tonality = true` |
-| comment | `8A - Energy 6`, replacing an earlier `<key> - Energy <n>` at the start; anything else in the comment, `/* tags */` included, is kept | `write_comment = true` |
+| `write_tonality` | `true` | the key into rekordbox's Key field |
+| `write_comment` | `true` | `<key> - Energy <n>` at the start of the comment |
 
-Both settings live under `[rekordbox]` in `.vibecheck/config.toml`. Nothing is
-written to the music files, and nothing changes in rekordbox until a playlist
-is imported.
+Commands:
+
+```sh
+uv run vibecheck label 100                      # colour, rating, key and energy
+uv run vibecheck analyse <playlist> [--dry-run] # key and energy only, for chosen tracks
+uv run vibecheck analyse --all --dry-run        # ... or the whole collection
+```
+
+Nothing is written to the music files, and nothing changes in rekordbox until a
+playlist is imported.
 
 ## Reproducing it
 
@@ -155,10 +178,13 @@ uv run python scripts/fit_energy_scale.py --collection ~/Music/Collection \
 # consistency checks
 uv run python scripts/check_key_energy.py --collection ~/Music/Collection \
     --genres ~/tmp/giantsteps-key
+
+# the charts on this page
+uv run --with matplotlib python scripts/plot_key_energy.py ~/tmp/giantsteps-key docs/img/key-energy
 ```
 
-The datasets are not part of this repository; download them from their
-sources below.
+The datasets are not part of this repository; download them from the sources
+below.
 
 ## Credits and licences
 
@@ -167,6 +193,8 @@ sources below.
   Faraldo et al., licensed CC BY-SA 4.0.
 - **Test set**: the [GiantSteps Key Dataset](https://zenodo.org/record/1095691)
   (Knees et al. 2015), used for measurement only.
+- **Comparison**: [Essentia](https://essentia.upf.edu/) key extractor, run
+  locally for measurement only; none of its code is used.
 - **Methods**: Krumhansl & Schmuckler key-finding (1990); Fujishima pitch
   class profiles (1999); Temperley key priors (2002); Gómez harmonic pitch
   class profiles (2006); MPEG-7 audio descriptors (2002). All implemented here
