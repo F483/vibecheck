@@ -1,0 +1,10 @@
+[package]
+name = "vibecheck"
+description = "Learns how you label music, from the audio: the engine, no interface"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vibecheck"
+path = "src/main.rs"

@@ -1,0 +1,13 @@
+[package]
+name = "vibecheck_ext"
+description = "The core as a Godot extension"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+vibecheck = { path = "../core" }
+godot = { version = "0.5.5", features = ["api-4-5"] }

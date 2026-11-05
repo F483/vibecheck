@@ -30,3 +30,7 @@ backup/
 
 # build artefacts
 dist/
+
+# rust / godot build output
+target/
+.godot/

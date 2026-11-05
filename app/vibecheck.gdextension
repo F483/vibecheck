@@ -1,0 +1,12 @@
+[configuration]
+entry_symbol = "gdext_rust_init"
+compatibility_minimum = 4.5
+reloadable = true
+
+[libraries]
+macos.debug = "res://../target/debug/libvibecheck_ext.dylib"
+macos.release = "res://../target/release/libvibecheck_ext.dylib"
+windows.debug.x86_64 = "res://../target/debug/vibecheck_ext.dll"
+windows.release.x86_64 = "res://../target/release/vibecheck_ext.dll"
+linux.debug.x86_64 = "res://../target/debug/libvibecheck_ext.so"
+linux.release.x86_64 = "res://../target/release/libvibecheck_ext.so"
