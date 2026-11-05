@@ -8,3 +8,23 @@ license.workspace = true
 [[bin]]
 name = "vibecheck"
 path = "src/main.rs"
+
+[dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
+hex = "0.4.3"
+nalgebra = { version = "0.35.0", default-features = false, features = ["std"] }
+ndarray = "0.17.2"
+ort = "2.0.0-rc.15"
+percent-encoding = "2.3.2"
+quick-xml = "0.42.0"
+realfft = "3.5.1"
+rusqlite = { version = "0.41.1", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sha2 = "0.11.1"
+symphonia = { version = "0.6.1", default-features = false, features = ["mpa"] }
+toml = "1.2.0"
+unicode-normalization = "0.1.26"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ort = { version = "2.0.0-rc.15", features = ["coreml"] }

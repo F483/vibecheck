@@ -1,0 +1,41 @@
+{
+  "about": "Key templates for keyenergy.py: per mode, one weight per interval above the tonic, applied to the log pitch profile; and the preference for minor keys. Fitted by multinomial logistic regression on human-annotated tracks.",
+  "source": "Beatport EDM Key Dataset, Angel Faraldo et al., https://zenodo.org/record/1101082",
+  "license": "Statistics derived from a dataset licensed CC BY-SA 4.0, credited here.",
+  "fitted_by": "scripts/fit_key_profiles.py",
+  "algo": "ke1",
+  "tracks": {
+    "major": 402,
+    "minor": 902
+  },
+  "regularisation": 0.001,
+  "minor_bias": 4.337129,
+  "major": [
+    2.970263,
+    -1.473117,
+    0.253488,
+    -1.49761,
+    1.603655,
+    -0.371686,
+    -1.278785,
+    2.237478,
+    -1.445589,
+    -0.200077,
+    -1.062539,
+    -0.324599
+  ],
+  "minor": [
+    3.140219,
+    -1.301526,
+    -0.260705,
+    0.702875,
+    -0.454154,
+    -0.365293,
+    -1.061849,
+    2.672508,
+    -0.737646,
+    -1.197832,
+    0.584875,
+    -1.132353
+  ]
+}
