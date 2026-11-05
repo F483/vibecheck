@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "Learns your music labelling from audio and applies it to new tracks"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE"]
 authors = [
     { name = "F483", email = "fabian.barkhau@gmail.com" }
 ]
