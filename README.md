@@ -43,8 +43,8 @@ uv run vibecheck status
 # then, each round -- one command, repeated:
 uv run vibecheck label 100   # reads your corrections, learns from them, picks
                              # 100 more unlabelled tracks, and writes their
-                             # colours, star ratings, key and energy into the
-                             # rekordbox xml
+                             # colours, star ratings, key, energy and cue
+                             # points into the rekordbox xml
 #   ... refresh the rekordbox xml node in rekordbox's sidebar, import the new
 #       vibecheck-<date>-<time> playlist, correct what is wrong while you
 #       listen, export your collection again, and run the same command ...
@@ -63,6 +63,13 @@ own key field in alphanumeric notation (`8A` is A minor), and
 there such as `/* tags */`. Both can be switched off in config. How they work
 and how accurate they are: [docs/key-energy.md](docs/key-energy.md).
 
+Each batch also gets **cue points**, on tracks that have no cues or only
+generated ones (named "Cue 1", "Cue 2", ...) — a track with any cue you set
+yourself is never touched. Where a track changes is learned from your own cues;
+where the cues go around each change is plain settings: one cue at each change
+by default, or e.g. a pair 16 and 8 bars ahead with loops on A and G. How it
+works and how often it matches hand-set cues: [docs/cues.md](docs/cues.md).
+
 Other things you may want:
 
 ```sh
@@ -76,6 +83,9 @@ uv run vibecheck analyse --all --dry-run  # key and energy for the whole
                                           # collection: what would change
 uv run vibecheck analyse --all            # ... and write it, with a playlist
                                           # of only the tracks that changed
+uv run vibecheck cues                     # cue points for every track it has
+                                          # labelled that has none of yours
+uv run vibecheck cues --train             # learn cue placement from your cues now
 ```
 
 A batch in progress is excluded from the next one, so batches never overlap and
@@ -84,19 +94,23 @@ a batch's unconfirmed labels; `sync` first if you have corrected some of it.
 
 That loop is the whole product: one command, repeated. Each round it refits on
 everything you have corrected so far, so each round you correct less. There is
-no separate training step and no stored model -- the classifier is rebuilt from
-your labels at the start of every run, in about a second, on top of cached
-audio embeddings that never need recomputing.
+no separate training step and no stored model for colours -- the classifier is
+rebuilt from your labels at the start of every run, in about a second, on top of
+cached audio embeddings that never need recomputing. Cue points are the
+exception: a small network that ships trained, and is trained again on your own
+cues (a few minutes) whenever 50 more of them have accumulated.
 
 **What it writes:** the rekordbox XML it is pointed at and `<your
 collection>/.vibecheck/`. Nothing else. Playlists land in `out/`. Track identity is a hash of the audio only, so writing a label
 never changes what a track *is* and never invalidates its cached analysis.
 
-**Configuration** lives in `<your collection>/.vibecheck/config.toml` — copy
-[the default](src/vibecheck/default_config.toml) to start. It holds two dials:
+**Configuration** lives in `<your collection>/.vibecheck/config.toml`, which
+only needs what differs from [the default](src/vibecheck/default_config.toml).
+It holds two dials:
 `misleading_cost`, how bad it is to be given a wrong colour, and
 `rating_misleading_cost`, the same for stars; and whether key and energy are
-written (`write_tonality`, `write_comment`). The palette is not configurable —
+written (`write_tonality`, `write_comment`); and how cue points are placed
+(`[cues]`: `lead`, `loops`, `memory`). The palette is not configurable —
 eight colours and six star ratings is Rekordbox's UI, not a preference.
 
 ## Status
@@ -194,6 +208,7 @@ decision     expected-cost policy over colour / hue / tone / abstain
 storage      .vibecheck/ in the collection root: labels.db, cache.db
 labels in    rekordbox XML export (colour tag + star rating)
 key, energy  fixed methods, no learning: docs/key-energy.md
+cue points   learned transition points + placement settings: docs/cues.md
 ```
 
 Full detail, including every parameter that matters and why:
@@ -232,6 +247,7 @@ thresholds with the cost policy (17 → 55 exact colours per 100).
 ## Documentation
 
 - [docs/key-energy.md](docs/key-energy.md) — key and energy: method, accuracy, credits
+- [docs/cues.md](docs/cues.md) — cue points: method, accuracy, settings
 - [docs/stats-1000.md](docs/stats-1000.md) — what 1,000 fresh labels and a month of DJing show
 - [docs/setup.md](docs/setup.md) — the working configuration, reproducibly
 - [docs/accuracy.md](docs/accuracy.md) — what accuracy to expect, and what limits it

@@ -14,6 +14,7 @@ overwritten today is a chart that cannot be drawn next month.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import sqlite3
@@ -393,3 +394,19 @@ def log_fit(con: sqlite3.Connection, round_id: int | None, backend: str,
           s.correct, s.cost_left) for s in scores],
     )
     return fit
+
+
+def log_cue_write(con: sqlite3.Connection, track_id: int, round_id: int | None,
+                  model: str, transitions: list[int], hot: list[float]) -> None:
+    con.execute(
+        "INSERT INTO cue_writes (track_id, round_id, model, transitions, hot, ts) "
+        "VALUES (?,?,?,?,?,?)",
+        (track_id, round_id, model, json.dumps(transitions), json.dumps(hot),
+         int(time.time())))
+
+
+def cues_written(con: sqlite3.Connection) -> dict[str, list[float]]:
+    """path -> hot cue starts this app last wrote there."""
+    return {p: json.loads(h) for p, h in con.execute("""
+        SELECT t.path, w.hot FROM cue_writes w JOIN tracks t ON t.id = w.track_id
+        WHERE w.id = (SELECT MAX(id) FROM cue_writes WHERE track_id = w.track_id)""")}

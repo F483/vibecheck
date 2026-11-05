@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import NamedTuple
 
-from . import palette, store
+from . import cues as cues_mod, palette, store
 from .store import Label
 
 
@@ -64,6 +64,25 @@ def read_labels(xml_in: Path, collection: Path,
     return out
 
 
+def read_marks(xml_in: Path, collection: Path,
+               only: set[str] | None = None) -> dict[str, "cues_mod.Marks"]:
+    """Each track's beat grid, length and cues, as rekordbox has them."""
+    out = {}
+    for t in ET.parse(xml_in).getroot().findall(".//COLLECTION/TRACK"):
+        loc = urllib.parse.unquote(t.get("Location", "").replace("file://localhost", ""))
+        try:
+            rel = store.norm(str(Path(loc).relative_to(collection)))
+        except ValueError:
+            continue
+        if only is not None and rel not in only:
+            continue
+        tempos = [(float(x.get("Inizio")), float(x.get("Bpm")), int(x.get("Battito")))
+                  for x in t.findall("TEMPO")]
+        out[rel] = cues_mod.Marks(tempos, float(t.get("TotalTime") or 0),
+                                  [dict(p.attrib) for p in t.findall("POSITION_MARK")])
+    return out
+
+
 class Entry(NamedTuple):
     """One track's worth of writing. None anywhere means "leave that alone"."""
     rel: str
@@ -71,6 +90,7 @@ class Entry(NamedTuple):
     label: Label | None = None     # colour and rating
     key: str | None = None         # alphanumeric, "8A"
     energy: int | None = None      # 1..10
+    cues: list[dict] | None = None  # every POSITION_MARK the track should have
 
 
 # A leading "<key> - Energy <n>", whoever wrote it. Replaced, never read: the
@@ -105,7 +125,7 @@ def write(xml_in: Path, xml_out: Path, collection: Path,
 
     groups: dict[str, list[str]] = {}
     stats = {"coloured": 0, "rated": 0, "keyed": 0, "commented": 0,
-             "not_in_xml": 0, "unchanged": 0}
+             "cued": 0, "not_in_xml": 0, "unchanged": 0}
 
     def put(el, attr, value, counter) -> bool:
         if el.get(attr) == value:
@@ -132,6 +152,17 @@ def write(xml_in: Path, xml_out: Path, collection: Path,
             changed |= put(el, "Comments",
                            comment_with(el.get("Comments"), e.key, e.energy),
                            "commented")
+        if e.cues is not None:
+            # Importing replaces all of a track's cues with the ones here, so
+            # this is the whole set, not an addition to it.
+            old = [dict(p.attrib) for p in el.findall("POSITION_MARK")]
+            if old != e.cues:
+                for p in el.findall("POSITION_MARK"):
+                    el.remove(p)
+                for m in e.cues:
+                    ET.SubElement(el, "POSITION_MARK", m)
+                stats["cued"] += 1
+                changed = True
         if changed_only and not changed:
             stats["unchanged"] += 1
             continue

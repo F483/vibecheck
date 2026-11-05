@@ -3,11 +3,12 @@
     vibecheck scan              find tracks, notice what moved
     vibecheck status            where things stand
     vibecheck label [N]         pick N unlabelled tracks, label what it can,
-                                add key and energy, write a playlist for you
+                                add key, energy and cues, write a playlist for you
                                 to correct
     vibecheck sync [playlist]   read your corrections back
     vibecheck discard [playlist]  throw a batch away and free its tracks
     vibecheck analyse ...       key and energy alone, for chosen tracks or all
+    vibecheck cues ...          cue points alone, for chosen tracks; --train
 
 The loop is: label -> correct in rekordbox -> export -> label again.
 """
@@ -23,7 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import embed, evaluate, index, keyenergy, palette, rekordbox, store
+from . import cues, embed, evaluate, index, keyenergy, palette, rekordbox, store
 from . import playlist as playlist_mod
 from .config import DEFAULT
 from .predict import Model, axes_for, targets_for
@@ -33,9 +34,14 @@ BACKEND = "clapw"
 
 
 def load_config(root: Path) -> dict:
+    """The defaults, with whatever <collection>/.vibecheck/config.toml sets on
+    top, setting by setting -- so a config file only needs what it changes."""
+    cfg = tomllib.loads(Path(__file__).with_name("default_config.toml").read_text())
     user = store.vibecheck_dir(root) / "config.toml"
-    src = user if user.exists() else Path(__file__).with_name("default_config.toml")
-    return tomllib.loads(src.read_text())
+    if user.exists():
+        for k, v in tomllib.loads(user.read_text()).items():
+            cfg[k] = {**cfg.get(k, {}), **v} if isinstance(v, dict) else v
+    return cfg
 
 
 def build_axes(cfg: dict) -> list:
@@ -57,6 +63,69 @@ def specificity(pred) -> str:
 def writes_key_energy(cfg: dict) -> bool:
     rk = cfg.get("rekordbox", {})
     return rk.get("write_tonality", True) or rk.get("write_comment", True)
+
+
+def writes_cues(cfg: dict) -> bool:
+    return bool(cfg.get("cues", {}).get("write", True))
+
+
+def retrain_cues(root: Path, cfg: dict, marks: dict[str, cues.Marks],
+                 force: bool = False) -> bool:
+    """Learn cue placement again from your own cues, if there are enough new
+    ones (or if forced). Returns whether it did."""
+    c = cfg.get("cues", {})
+    written = store.cues_written(store.labels_db(root))
+    own = cues.yours(marks, written, list(c.get("lead", [0])))
+    model = cues.Model.load(root)
+    known = model.n_tracks if model else 0
+    if not force and len(own) < known + int(c.get("retrain_after", 50)):
+        return False
+    print(f"      learning from your cues on {len(own)} tracks (the model in use "
+          f"knew {known}); a few minutes per network", flush=True)
+    F, st = cues.features_all(root, {r: marks[r] for r in own})
+    data = []
+    for r, f in F.items():
+        T = [t for t in own[r] if t < len(f)]
+        if len(T) >= 3:
+            data.append((f, T))
+    if len(data) < 30:
+        print(f"      only {len(data)} usable tracks; keeping the model in use")
+        return False
+    model = cues.fit(data, source="yours")
+    model.save(store.vibecheck_dir(root) / cues.MODEL_FILE)
+    print(f"      saved, trained on {len(data)} tracks")
+    return True
+
+
+def plan_cues(root: Path, cfg: dict, rels: list[str],
+              marks: dict[str, cues.Marks]) -> tuple[dict, dict]:
+    """rel -> (POSITION_MARKs, transition bars) for tracks that may get cues:
+    none yet, or only generated ones."""
+    c = cfg.get("cues", {})
+    ok = {r: marks[r] for r in rels
+          if r in marks and marks[r].tempos and cues.writable(marks[r])}
+    model = cues.Model.load(root)
+    if model is None:
+        sys.exit("no cue model: run `vibecheck cues --train` once, or set "
+                 "write = false under [cues] in the config")
+    F, st = cues.features_all(root, ok)
+    st["skipped"] = sum(1 for r in rels if r in marks and r not in ok)
+    st["model"] = f"{cues.version()}/{model.source}-{model.n_tracks}"
+    out = {}
+    for r, f in F.items():
+        T = model.transitions(f)
+        down = cues.downbeats(ok[r].tempos, ok[r].duration + 2.0)
+        out[r] = (cues.place(T, down, list(c.get("lead", [0])),
+                             dict(c.get("loops", {})), bool(c.get("memory", True))), T)
+    return out, st
+
+
+def log_cues(root: Path, plan: dict, model: str, round_id: int | None) -> None:
+    con = store.labels_db(root)
+    ids = store.track_ids(con)
+    for rel, (marks, T) in plan.items():
+        store.log_cue_write(con, ids[rel], round_id, model, T, cues.hot_starts(marks))
+    con.commit()
 
 
 def labelled(root: Path, cfg: dict) -> dict[str, Label]:
@@ -174,8 +243,9 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
     # user to remember the order is the whole reason `sync` is rarely typed.
     syncing = bool(args.sync and not args.dry_run and args.rekordbox)
     with_ke = writes_key_energy(cfg)
+    with_cues = writes_cues(cfg) and bool(args.rekordbox) and not args.dry_run
 
-    steps, done = 4 + syncing + with_ke, 0
+    steps, done = 4 + syncing + with_ke + with_cues, 0
 
     def step(msg: str) -> None:
         nonlocal done
@@ -237,6 +307,21 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
         print(f"      {st['done']} analysed, {st['cached']} already known"
               + (f", {st['failed']} failed" if st["failed"] else ""))
 
+    plan: dict = {}
+    if with_cues:
+        step("placing cue points")
+        src = Path(args.rekordbox).expanduser()
+        if not src.exists():
+            print("      no rekordbox export found; skipping")
+        else:
+            marks = rekordbox.read_marks(src, root)
+            retrain_cues(root, cfg, marks)
+            plan, cst = plan_cues(root, cfg, batch, marks)
+            print(f"      {len(plan)} tracks get cues"
+                  + (f", {cst['skipped']} keep the cues they have"
+                     if cst["skipped"] else "")
+                  + (f", {cst['failed']} failed" if cst["failed"] else ""))
+
     step("training on what you have labelled so far")
     model, info = train(root, cfg)
     print(f"      {info['tracks']} tracks, {info['labels']} distinct labels, "
@@ -296,14 +381,18 @@ def cmd_label(root: Path, cfg: dict, args) -> None:
             [rekordbox.Entry(rel, specificity(p),
                              Label(p.colour.name if p.colour else None, p.stars),
                              ke[rel].key if rel in ke else None,
-                             ke[rel].energy if rel in ke else None)
+                             ke[rel].energy if rel in ke else None,
+                             plan[rel][0] if rel in plan else None)
              for rel, p in zip(paths, preds)], name=name,
             tonality=rk.get("write_tonality", True),
             comment=rk.get("write_comment", True))
         print(f"\nwrote {dst}")
+        if plan:
+            log_cues(root, plan, cst["model"], rid)
         print(f"   {st['coloured']} colours set, {st['rated']} ratings set"
               + (f", {st['keyed']} keys, {st['commented']} energy comments"
                  if with_ke else "")
+              + (f", cues on {st['cued']} tracks" if plan else "")
               + (f", {st['not_in_xml']} not found in the export"
                  if st["not_in_xml"] else ""))
         if st.get("backup"):
@@ -461,6 +550,65 @@ def cmd_analyse(root: Path, cfg: dict, args) -> None:
         print("nothing to change; the export was left alone")
 
 
+def cmd_cues(root: Path, cfg: dict, args) -> None:
+    """Cue points outside a labelling round, and learning them again.
+
+    Writes only on tracks with no cues or generated ones, and a playlist of
+    only the tracks it changed, so importing that playlist is the whole change.
+    """
+    src = Path(args.rekordbox).expanduser()
+    if not src.exists():
+        sys.exit(f"no rekordbox export at {src}\n"
+                 "  export one from rekordbox (File > Export Collection in xml "
+                 "format).")
+    print(f"reading {src}", flush=True)
+    marks = rekordbox.read_marks(src, root)
+    if args.train:
+        retrain_cues(root, cfg, marks, force=True)
+        return
+
+    con = store.labels_db(root)
+    canon = store.path_index(con)
+    live = sorted(p for (p,) in con.execute(
+        "SELECT path FROM tracks WHERE missing_at IS NULL"))
+    if args.input:
+        want = {canon.get(store.norm(r), r)
+                for r in playlist_mod.read(Path(args.input), root)}
+        rels = [p for p in live if p in want]
+    elif args.all:
+        rels = live
+    else:
+        # every track this app has labelled: the ones you are working through
+        have = set(store.current(con))
+        rels = [p for p in live if p in have]
+
+    print(f"cue points for {len(rels)} tracks", flush=True)
+    plan, st = plan_cues(root, cfg, rels, marks)
+    print(f"   {len(plan)} placed, {st['cached']} from the cache"
+          + (f", {st['skipped']} keep the cues they have" if st["skipped"] else "")
+          + (f", {st['failed']} failed" if st["failed"] else ""))
+    if not plan:
+        print("nothing to change; the export was left alone")
+        return
+    exported = dt.datetime.fromtimestamp(src.stat().st_mtime)
+    name = f"vibecheck-cues-{dt.datetime.now():%Y%m%d-%H%M}"
+    entries = [rekordbox.Entry(rel, cues=m) for rel, (m, _) in plan.items()]
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = Path(tmp) / "dry.xml" if args.dry_run else src
+        wst = rekordbox.write(src, dst, root, entries, name=name, changed_only=True)
+    if args.dry_run:
+        print(f"would set cues on {wst['cued']} tracks\n(dry run -- nothing written)")
+        return
+    log_cues(root, plan, st["model"], None)
+    print(f"\ncues set on {wst['cued']} tracks; wrote {src}, previous kept as "
+          f"{src.name}.bak\n   refresh the rekordbox xml node, then import the "
+          f"playlist {name}.\n   Importing applies every field this export holds "
+          f"for those tracks,\n   so it should be fresh "
+          f"(this one was exported {exported:%Y-%m-%d %H:%M}).")
+
+
 class StaleExport(Exception):
     """The rekordbox export predates the batch, so it cannot hold corrections."""
 
@@ -597,8 +745,8 @@ the loop
   vibecheck scan                     find your tracks (once, and after adding music)
   vibecheck label 100                read your corrections, learn from them,
                                      then label 100 more and write the colours,
-                                     star ratings, key and energy into the
-                                     rekordbox xml
+                                     star ratings, key, energy and cue points
+                                     into the rekordbox xml
   ... refresh the rekordbox xml node in rekordbox, import the new playlist,
       correct what is wrong while you listen, export the collection again,
       and run the same command again ...
@@ -623,6 +771,9 @@ examples
   vibecheck analyse --all --dry-run       key and energy for everything: what
                                           would change
   vibecheck analyse out/vibecheck-….m3u8  key and energy for one playlist
+  vibecheck cues                          cue points for every track it has
+                                          labelled that has none of yours
+  vibecheck cues --train                  learn cue placement from your cues now
   vibecheck --root /Volumes/DJ/Music status
                                           work on a different collection
 
@@ -650,7 +801,8 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("label", help="label a batch of unlabelled tracks",
                        description="Pick unlabelled tracks, say what it can "
-                                   "about each, add key and energy, and write "
+                                   "about each, add key, energy and cue points, "
+                                   "and write "
                                    "them and a playlist into the rekordbox xml "
                                    "for you to correct.")
     p.add_argument("count", nargs="?", type=int, default=300,
@@ -730,6 +882,24 @@ def main(argv=None) -> int:
     p.add_argument("--no-rekordbox", dest="rekordbox", action="store_const",
                    const=None, help="only work it out and report")
 
+    p = sub.add_parser("cues", help="cue points alone, for chosen tracks",
+                       description="Place cue points and write them into the "
+                                   "rekordbox xml, with a playlist of only the "
+                                   "tracks that changed. Only tracks with no "
+                                   "cues, or generated ones, are touched. "
+                                   "`label` already does this for every batch.")
+    p.add_argument("input", nargs="?", help="playlist of tracks (m3u8) "
+                   "(default: every track this app has labelled)")
+    p.add_argument("--all", action="store_true",
+                   help="every track in the collection")
+    p.add_argument("--train", action="store_true",
+                   help="learn cue placement from your own cues now, and stop")
+    p.add_argument("--dry-run", action="store_true",
+                   help="work it out and report, write nothing")
+    p.add_argument("--rekordbox", metavar="XML",
+                   default="~/Documents/rekordbox.xml",
+                   help="rekordbox export to read and write (default: %(default)s)")
+
     args = ap.parse_args(argv)
     if not args.cmd:
         ap.print_help()
@@ -737,7 +907,7 @@ def main(argv=None) -> int:
     root = Path(args.root).resolve()
     cfg = load_config(root)
     return {"scan": cmd_scan, "status": cmd_status, "label": cmd_label,
-            "discard": cmd_discard, "analyse": cmd_analyse,
+            "discard": cmd_discard, "analyse": cmd_analyse, "cues": cmd_cues,
             "migrate": cmd_migrate, "sync": cmd_sync}[args.cmd](root, cfg, args) or 0
 
 

@@ -61,6 +61,32 @@ write_tonality = true
 # included, is kept.
 write_comment = true
 
+[cues]
+# Cue points, written with every labelling round and by `vibecheck cues` --
+# only on tracks with no cues, or with cues another tool generated ("Cue 1",
+# "Cue 2", ...). A track with any cue you set yourself is never touched.
+write = true
+
+# How many bars ahead of each transition point to cue. Four transition points
+# per track: the mix-in, two between, the mix-out.
+#
+#   [0]      one cue AT each change, hot cues A-D
+#   [16, 8]  a pair 16 and 8 bars before each change, to start the next track
+#            a phrase or two ahead: A/B the mix-in, C-F between, G/H the mix-out
+lead = [0]
+
+# Hot-cue slots that are loops instead of plain cues, and their length in bars,
+# e.g. { A = 16, G = 16 }: room to wait at the mix-in and at the mix-out.
+loops = {}
+
+# A memory cue on every hot cue, and one on the first downbeat.
+memory = true
+
+# Learn again from your own cues once you have this many more than the model in
+# use was trained on. Cues you moved count; cues left where they were written
+# do not -- that would be learning from its own guesses.
+retrain_after = 50
+
 [audio]
 # Pinned, not defaulted: librosa and model preprocessing defaults drift between
 # versions, and these values are part of the cache key.
