@@ -87,7 +87,22 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
 }
 
+/// Rust ignores SIGPIPE, so printing into a closed pipe (`vibecheck status | head`)
+/// panics. Restore the default: exit quietly like any other command line tool.
+fn default_sigpipe() {
+    #[cfg(unix)]
+    {
+        unsafe extern "C" {
+            fn signal(sig: i32, handler: usize) -> usize;
+        }
+        const SIGPIPE: i32 = 13; // Linux, macOS and the BSDs
+        const SIG_DFL: usize = 0;
+        unsafe { signal(SIGPIPE, SIG_DFL) };
+    }
+}
+
 fn main() -> ExitCode {
+    default_sigpipe();
     let args = match Args::parse(std::env::args().skip(1).collect()) {
         Ok(a) => a,
         Err(e) => {
