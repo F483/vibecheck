@@ -23,9 +23,12 @@ cargo build --release
 ./target/release/vibecheck label 100
 ```
 
-It needs the audio model as an ONNX file, made once from the prototype by
+It needs the audio model as an ONNX file (145 MB, weights in half
+precision), made once from the prototype by
 `prototype/scripts/export_clap_onnx.py`, at
 `~/Library/Application Support/vibecheck/models/clap_audio.onnx` on macOS.
+`scripts/bundle.sh` puts the program and the model in one folder to share or
+back up.
 No Python, ffmpeg or torch at runtime. Not yet ported: learning cue
 placement from your own cues (it uses the model shipped with it).
 

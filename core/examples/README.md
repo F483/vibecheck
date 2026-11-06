@@ -11,5 +11,10 @@ Each compares the Rust core with the Python prototype on the collection at
 | `xml_check …` | rekordbox xml writes against the prototype's (`xml_make.py`, `xml_compare.py`) | 14,580 tracks identical |
 | `cue_check <json>` | cue network and features (`cue_dump.py`) | network 4e-6; transitions 39/40 on the same features |
 | `cue_quality N` | cue transitions against your own hand-set cues | 87.7% (prototype features 90.0%) |
+| `precision_check <fp32> <fp16> N <out.jsonl>` | half against full precision model, same audio | 500 tracks: cosine ≥ 0.9999995, decisions 499/500 (one tie) |
+| `model_check N` | a candidate model (`VIBECHECK_MODELS=<dir>`) against the cached vectors | |
+
+Timings: `bench <tracks.json>` (the same tracks as the prototype's bench),
+`load_time` (loading the audio model).
 
     cargo run --release --example ke_check 60

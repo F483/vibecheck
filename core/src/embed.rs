@@ -73,17 +73,30 @@ pub fn model_path() -> Res<PathBuf> {
 
 pub struct Embedder {
     session: Session,
-    _env: ort::environment::Environment,
+}
+
+/// ONNX Runtime allows one environment per process; every model shares it.
+fn environment() -> Res<&'static ort::environment::Environment> {
+    static ENV: std::sync::OnceLock<ort::environment::Environment> = std::sync::OnceLock::new();
+    if let Some(e) = ENV.get() {
+        return Ok(e);
+    }
+    let e = ort::init().build().map_err(|e| e.to_string())?;
+    Ok(ENV.get_or_init(|| e))
 }
 
 impl Embedder {
     pub fn load() -> Res<Embedder> {
-        let path = model_path()?;
+        Embedder::load_from(&model_path()?)
+    }
+
+    /// A specific model file, e.g. to compare two.
+    pub fn load_from(path: &Path) -> Res<Embedder> {
         let threads = std::env::var("VIBECHECK_THREADS")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get().min(8)).unwrap_or(4));
-        let env = ort::init().build().map_err(|e| e.to_string())?;
+        let env = environment()?;
         #[allow(unused_mut)]
         let mut eps = vec![];
         // Apple's GPU and Neural Engine through CoreML, unless told not to
@@ -105,12 +118,12 @@ impl Embedder {
                     .build(),
             );
         }
-        let session = Session::builder(&env)
+        let session = Session::builder(env)
             .and_then(|b| b.with_intra_threads(threads).map_err(|e| e.into()))
             .and_then(|b| b.with_execution_providers(eps).map_err(|e| e.into()))
-            .and_then(|mut b| b.commit_from_file(&path))
+            .and_then(|mut b| b.commit_from_file(path))
             .map_err(|e| format!("loading {}: {e}", path.display()))?;
-        Ok(Embedder { session, _env: env })
+        Ok(Embedder { session })
     }
 
     /// One unit vector per window.
