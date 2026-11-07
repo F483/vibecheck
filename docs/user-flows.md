@@ -83,6 +83,8 @@ only adds the consistency check.
 2. **Consistency check** (only if labels exist). Import them all at level 2.
    Find near-identical tracks with different labels, and labels the model
    rejects. Show them as "which is right?" cards; every answer becomes level 3.
+   Labels that pass the check stay at level 2: the model that agrees with them
+   was trained on them, so passing is not the same as the user confirming.
 3. **Calibration.** At least 100 tracks, with 300 as the goal, chosen to cover
    the sound of the collection and labelled blind in the app. Skipping is
    allowed. This gives the model a clean base before the first round, which is
@@ -118,8 +120,8 @@ about 500, more labels change little.
 - **Skipping is allowed.** A user who skips corrects more in the first rounds
   instead. Suggestions stay off until 100 labels by hand either way, so
   skipping never brings back the anchoring problem.
-- **Existing labels count.** With a library, labels that pass the consistency
-  check count toward the 100.
+- **Only decisions count.** With a library, answers to the consistency check's
+  cards count toward the 100; labels that merely pass the check don't.
 
 The screen always says what the user is doing, why, and what skipping costs:
 
@@ -235,4 +237,4 @@ What this suggests for the flow:
 
 ## Open questions
 
-- [ ] Existing labels that pass the consistency check: do they move up to level 3, or stay at 2?
+- [ ] Revisit with data from real libraries: should labels that pass the consistency check move up to level 3, or should level 2's weight rise to about 0.4–0.5? For now they stay at level 2, weight about 0.3.
