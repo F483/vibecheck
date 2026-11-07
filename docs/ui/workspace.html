@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vibecheck UI: Studio workspace</title>
+<!-- Standalone copy of the design canvas board https://claude.ai/artifact/VGEERe7xK3zbRnQ2Etn7FS (project/Main.dc.html).
+     Regenerate after every canvas change: keep the <helmet> contents as <head>, drop support.js, the x-dc wrapper and its script.
+     Why each part looks the way it does: docs/ui/decisions.md -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;family=IBM+Plex+Mono:wght@400;500;600&amp;display=swap">
+<style>
+body{margin:0;background:#1c1d20}
+a{color:#c8f13c}a:hover{color:#e0ff7a}
+.scr{position:absolute;width:560px;height:400px;box-sizing:border-box;background:#2a2b2f;border:1px solid #3a3b40;border-radius:6px;overflow:hidden;display:flex;color:#e8e8ea;font-family:'Inter',sans-serif}
+.rail{width:64px;flex:none;background:#222327;border-right:1px solid #3a3b40;display:flex;flex-direction:column;align-items:center;gap:4px;padding:10px 0;font:600 9px 'IBM Plex Mono',monospace;letter-spacing:.04em;text-transform:uppercase;color:#a0a1a8}
+.logo{width:32px;height:32px;border-radius:6px;background:#c8f13c;color:#1c1d20;display:flex;align-items:center;justify-content:center;font:800 15px 'Inter',sans-serif;margin-bottom:8px}
+.ri{width:52px;height:40px;border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.ri b{font:700 13px 'Inter',sans-serif;color:#e8e8ea}
+.ron{background:#3a3b40;color:#c8f13c}
+.ron b{color:#c8f13c}
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.head{height:40px;flex:none;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid #3a3b40;font:600 13px 'Inter',sans-serif}
+.body{flex:1;min-height:0;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+.lbl{font:600 10px 'IBM Plex Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:#a0a1a8}
+.mono{font-family:'IBM Plex Mono',monospace}
+.btn{font:600 12px 'Inter',sans-serif;color:#e8e8ea;background:#3a3b40;border:0;border-radius:4px;padding:6px 10px;min-height:32px}
+.btnp{font:700 12px 'Inter',sans-serif;color:#1c1d20;background:#c8f13c;border:0;border-radius:4px;padding:6px 12px;min-height:32px}
+.kbd{font:600 10px 'IBM Plex Mono',monospace;color:#1c1d20;background:#d6d7db;border-radius:3px;padding:1px 5px}
+.kbdd{font:600 10px 'IBM Plex Mono',monospace;color:#c8f13c;background:#1c1d20;border-radius:3px;padding:1px 5px}
+.field{display:flex;align-items:center;gap:10px;background:#222327;border:1px solid #3a3b40;border-radius:4px;padding:6px 6px 6px 10px;font-size:12px}
+.track{height:6px;border-radius:1px;background:#3a3b40;overflow:hidden}
+.ring{display:inline-block;flex:none;width:12px;height:12px;border-radius:50%;-webkit-mask:radial-gradient(circle,transparent 3px,#000 4px);mask:radial-gradient(circle,transparent 3px,#000 4px)}
+.r4{background:conic-gradient(#c8f13c 0 100%)}
+.r3{background:conic-gradient(#c8f13c 0 75%,#4a4b50 0)}
+.r2{background:conic-gradient(#e0b04a 0 50%,#4a4b50 0)}
+.r1{background:conic-gradient(#a0a1a8 0 25%,#4a4b50 0)}
+.dot{display:inline-block;flex:none;width:8px;height:16px;border-radius:2px}
+.tr{display:flex;align-items:center;gap:8px;font-size:12px;height:24px;padding:0 6px;border-bottom:1px solid #34353a;white-space:nowrap;overflow:hidden}
+.tag{font:600 9px 'IBM Plex Mono',monospace;letter-spacing:.04em;text-transform:uppercase;padding:2px 5px;border-radius:2px;flex:none}
+.t-cal{background:#3d4320;color:#c8f13c}
+.t-con{background:#4a2c1c;color:#ffb07a}
+.t-uns{background:#1c3e3b;color:#6ff0e2}
+.t-re{background:#3a3b40;color:#d6d7db}
+.t-old{background:#463a1c;color:#e0b04a}
+.q{width:136px;height:64px;flex:none;box-sizing:border-box;background:#34353a;border-radius:4px;padding:7px 9px;display:flex;flex-direction:column;justify-content:space-between;font-size:12px;font-weight:600}
+.qc{width:184px;flex-direction:row;align-items:center;justify-content:flex-start;gap:8px;padding:7px}
+.cov{width:48px;height:48px;flex:none;border-radius:3px}
+.qt{min-width:0;display:flex;flex-direction:column;gap:2px}
+.qn{font-size:12px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qa{font-size:11px;font-weight:400;color:#a0a1a8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cap{position:absolute;font:600 15px 'Inter',sans-serif;color:#d6d7db}
+.cap span{font:500 12px 'IBM Plex Mono',monospace;color:#a0a1a8;margin-right:6px}
+.key{display:flex;align-items:center;gap:8px;height:44px;box-sizing:border-box;border-radius:4px;background:#34353a;padding:0 10px;font-size:13px;font-weight:600}
+.keys{display:flex;align-items:center;gap:6px;height:32px;box-sizing:border-box;border-radius:4px;background:#34353a;padding:0 8px;font-size:12px;font-weight:600}
+.lab{position:absolute;font-size:13px;line-height:16px;color:#a0a1a8;text-align:center;font-family:'IBM Plex Mono',monospace}
+.ghost{background:#34353a;border-radius:3px}
+.trow{display:flex;align-items:center;gap:12px;height:24px;flex:none;padding:0 8px;font-size:12px;border-bottom:1px solid #34353a;white-space:nowrap}
+.th{font:600 10px 'IBM Plex Mono',monospace;letter-spacing:.06em;text-transform:uppercase;color:#a0a1a8;border-bottom:1px solid #4a4b50}
+.grp{display:flex;align-items:center;gap:6px;height:22px;flex:none;padding:0 8px;font-size:11px;font-weight:700;background:#26272b;margin-top:2px}
+.sel{background:#3d4320;outline:1px solid #c8f13c}
+.new{background:#3d4320}
+.ticked{background:#2f3036}
+.c-ck{width:16px;display:flex;align-items:center}
+.c-ck input{margin:0;accent-color:#c8f13c}
+.c-col{width:84px;display:flex;align-items:center;gap:6px}
+.c-trk{flex:1;min-width:0;overflow:hidden}
+.c-art{width:160px;color:#a0a1a8}
+.c-en{width:104px;display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',monospace}
+.ebar{width:64px;height:4px;background:#3a3b40;display:flex}
+.ebar span{background:#d6d7db}
+.c-st{width:72px;font-family:'IBM Plex Mono',monospace}
+.c-bpm{width:44px;font-family:'IBM Plex Mono',monospace;text-align:right}
+.c-key{width:40px;font-family:'IBM Plex Mono',monospace}
+.c-pl{width:40px;font-family:'IBM Plex Mono',monospace;text-align:right}
+.c-lp{width:88px;font-family:'IBM Plex Mono',monospace;color:#a0a1a8}
+.c-ad{width:64px;font-family:'IBM Plex Mono',monospace;color:#a0a1a8}
+.c-fl{width:110px;font:600 10px 'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:.04em}
+.chip{font-size:11px;padding:4px 9px;border-radius:3px;background:#3a3b40;display:flex;align-items:center;gap:5px}
+.chon{background:#c8f13c;color:#1c1d20;font-weight:700}
+</style>
+</head>
+<body>
+<div style="position: relative; width: 2768px; height: 2096px; background: #1c1d20; font-family: 'Inter', sans-serif">
+
+<div style="position: absolute; left: 40px; top: 1112px; width: 2008px; height: 920px; box-sizing: border-box; border: 1px dashed #45464c; border-radius: 10px; background: #202124"></div>
+
+<svg width="119" height="8" viewBox="0 0 119 8" preserveAspectRatio="none" style="position: absolute; left: 624px; top: 428px; width: 119px; height: 8px; overflow: visible; fill: none; stroke: #74757c; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-1" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#74757c" stroke="none" style="stroke: none; fill: #74757c; fill: context-stroke"/></marker></defs><path d="M 0 4 L 115 4" marker-end="url(#dc-arrow-head-filled-1)"></path></svg>
+<svg width="120" height="352" viewBox="0 0 120 352" preserveAspectRatio="none" style="position: absolute; left: 2024px; top: 733px; width: 120px; height: 352px; overflow: visible; fill: none; stroke: #74757c; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-2" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#74757c" stroke="none" style="stroke: none; fill: #74757c; fill: context-stroke"/></marker></defs><path d="M 0 4 L 48 4 L 48 347 L 114 347" marker-end="url(#dc-arrow-head-filled-2)"></path></svg>
+<svg width="8" height="119" viewBox="0 0 8 119" preserveAspectRatio="none" style="position: absolute; left: 2420px; top: 632px; width: 8px; height: 119px; overflow: visible; fill: none; stroke: #74757c; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-3" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#74757c" stroke="none" style="stroke: none; fill: #74757c; fill: context-stroke"/></marker></defs><path d="M 4 119 L 4 4" marker-end="url(#dc-arrow-head-filled-3)"></path></svg>
+<svg width="8" height="119" viewBox="0 0 8 119" preserveAspectRatio="none" style="position: absolute; left: 2420px; top: 912px; width: 8px; height: 119px; overflow: visible; fill: none; stroke: #74757c; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-5" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#74757c" stroke="none" style="stroke: none; fill: #74757c; fill: context-stroke"/></marker></defs><path d="M 4 119 L 4 4" marker-end="url(#dc-arrow-head-filled-5)"></path></svg>
+<svg width="120" height="8" viewBox="0 0 120 8" preserveAspectRatio="none" style="position: absolute; left: 2024px; top: 340px; width: 120px; height: 8px; overflow: visible; fill: none; stroke: #74757c; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round"><defs><marker id="dc-arrow-head-filled-4" orient="auto" markerWidth="5" markerHeight="5" refX="2" refY="2" overflow="visible"><path d="M0 0 L4 2 L0 4 Z" fill="#74757c" stroke="none" style="stroke: none; fill: #74757c; fill: context-stroke"/></marker></defs><path d="M 120 4 L 6 4" marker-end="url(#dc-arrow-head-filled-4)"></path></svg>
+
+<div style="position: absolute; left: 64px; top: 56px; font-size: 44px; font-weight: 800; color: #e8e8ea; letter-spacing: -0.02em">vibecheck · Studio workspace</div>
+<div style="position: absolute; left: 64px; top: 120px; width: 2000px; font-size: 18px; color: #a0a1a8">The queue on top feeds the player in the centre; each answer drops into the reviewed table below. Sort by colour, energy, rating or BPM and click a row to relisten and fix it. The collection uses the same flat table for the whole library. Export any time. One rekordbox.xml goes both ways: the app writes the batch playlist into it, and syncs on its own when rekordbox exports the collection over it.</div>
+
+<div class="cap" style="left: 64px; top: 200px"><span>01</span>Settings, first run: the rest unlocks once set</div>
+<div class="cap" style="left: 744px; top: 200px"><span>02</span>Review workspace: queue → player → reviewed table</div>
+<div class="cap" style="left: 2144px; top: 1000px"><span>03</span>Export done, over the workspace</div>
+<div class="cap" style="left: 2144px; top: 200px"><span>04</span>Sync summary, over the workspace</div>
+<div class="cap" style="left: 64px; top: 1136px">Stats</div>
+<div class="cap" style="left: 744px; top: 1136px">Collection: the same table, the whole library</div>
+<div style="position: absolute; left: 64px; top: 1992px; font: 500 13px 'IBM Plex Mono', monospace; color: #8a8b92">Always one click away, from the rail of every screen</div>
+
+<div class="lab" style="left: 644px; top: 404px; width: 80px">calibrate</div>
+<div class="lab" style="left: 2078px; top: 880px; width: 60px; text-align: left">export</div>
+<div class="lab" style="left: 2436px; top: 960px; width: 200px; text-align: left">OK, then in rekordbox</div>
+<div class="lab" style="left: 2436px; top: 664px; width: 260px; text-align: left">rekordbox.xml changed:<br>app syncs on its own</div>
+<div class="lab" style="left: 2052px; top: 316px; width: 64px">confirm</div>
+
+<div style="position: absolute; left: 2144px; top: 752px; width: 560px; height: 160px; box-sizing: border-box; border: 2px dashed #55565c; border-radius: 6px; padding: 24px; display: flex; flex-direction: column; justify-content: center; gap: 8px; color: #e8e8ea"><span style="font-size: 22px; font-weight: 700">rekordbox, outside the app</span><span style="font-size: 15px; color: #a0a1a8; line-height: 22px">Refresh the rekordbox xml node, import the batch playlist, play your sets, fix what is wrong while playing, then File › Export Collection in xml format over the same file.</span></div>
+
+<!-- 1 Settings, first run -->
+<div class="scr" style="left: 64px; top: 232px; height: 760px">
+<div class="rail"><span class="logo">v</span><span class="ri" style="opacity: .3"><b>R</b>review</span><span class="ri" style="opacity: .3"><b>C</b>library</span><span class="ri" style="opacity: .3"><b>S</b>stats</span><span class="ri ron"><b>,</b>settings</span></div>
+<div class="main">
+<div class="head">Settings</div>
+<div class="body" style="gap: 10px">
+<span style="font-size: 12px; line-height: 17px; color: #a0a1a8">Choose your music and rekordbox.xml first; review, library and stats unlock once both are set. Everything here can be changed later from the same page.</span>
+<span style="font-size: 13px; font-weight: 700; margin-top: 4px">Library</span>
+<div class="field"><span class="lbl" style="width: 72px">Music</span><span class="mono" style="flex: 1">~/Music/Collection</span><button class="btn">Change</button></div>
+<div class="field"><span class="lbl" style="width: 72px">rekordbox</span><span class="mono" style="flex: 1">~/Documents/rekordbox.xml</span><button class="btn">Change</button></div>
+<span style="font-size: 11px; line-height: 15px; color: #a0a1a8">One file both ways: export the collection here from rekordbox; vibecheck writes its playlists into it.</span>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px">
+<div style="background: #222327; border-radius: 4px; padding: 8px"><div class="lbl">Tracks</div><div class="mono" style="font-size: 18px; font-weight: 600">4,812</div></div>
+<div style="background: #222327; border-radius: 4px; padding: 8px"><div class="lbl">Labelled</div><div class="mono" style="font-size: 18px; font-weight: 600">2,140</div></div>
+<div style="background: #222327; border-radius: 4px; padding: 8px"><div class="lbl">Conflicts</div><div class="mono" style="font-size: 18px; font-weight: 600; color: #e0b04a">37</div></div>
+</div>
+<div style="display: flex; justify-content: space-between; font-size: 12px"><span>Listening to a first sample</span><span class="mono" style="color: #a0a1a8">212 / 300 · ~8 min</span></div>
+<div class="track"><div style="width: 70%; height: 100%; background: #c8f13c"></div></div>
+<div style="height: 1px; background: #3a3b40; margin: 4px 0"></div>
+<div style="display: flex; flex-direction: column; gap: 6px"><span style="font-size: 13px; font-weight: 700">Calibration</span><div style="display: flex; align-items: center; gap: 10px; font-size: 12px"><span>Start mixing in batches and corrections after</span><span class="mono" style="margin-left: auto; font-weight: 600">100 labels</span></div><div style="position: relative; height: 16px"><div style="position: absolute; left: 0; right: 0; top: 6px; height: 4px; background: #3a3b40"></div><div style="position: absolute; left: -2px; top: 0; width: 16px; height: 16px; border-radius: 50%; background: #c8f13c"></div></div><div class="mono" style="display: flex; justify-content: space-between; font-size: 10px; color: #a0a1a8"><span>100</span><span>200</span><span>300</span></div><span style="font-size: 11px; line-height: 16px; color: #a0a1a8">Below this the queue brings only calibration tracks and conflicts, all blind. Past it, batch tracks and corrections mix in more and more.</span></div>
+<div class="tr" style="height: 32px"><span style="flex: 1">Show the model's guess in the player after calibration</span><span class="chip chon">On</span></div>
+<div class="tr" style="height: 32px"><span style="flex: 1">Re-ask old tracks blind</span><span class="mono" style="color: #a0a1a8">rises as the library fills in</span></div>
+<div class="tr" style="height: 32px"><span style="flex: 1">Warn when the collection export is older than</span><span class="mono" style="color: #a0a1a8">7 days</span></div>
+<div style="display: flex; align-items: center; gap: 8px; margin-top: auto"><span style="font-size: 11px; line-height: 15px; color: #a0a1a8">The 37 conflicts go first, then at least 100 tracks blind.</span><button class="btnp" style="margin-left: auto">Start reviewing <span class="kbdd">ENTER</span></button></div>
+</div>
+</div>
+</div>
+
+<!-- 2 Review workspace -->
+<div class="scr" style="left: 744px; top: 232px; width: 1280px; height: 800px">
+<div class="rail"><span class="logo">v</span><span class="ri ron"><b>R</b>review</span><span class="ri"><b>C</b>library</span><span class="ri"><b>S</b>stats</span><span class="ri"><b>,</b>settings</span></div>
+<div class="main">
+
+<div style="padding: 12px 16px; border-bottom: 1px solid #3a3b40; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; align-items: center; gap: 8px"><span class="lbl">Queue</span><span class="mono" style="font-size: 12px">53</span><span style="font-size: 11px; color: #a0a1a8">ordered by what teaches the model most</span></div>
+<div style="display: flex; gap: 8px">
+<div class="q qc" style="outline: 1px dashed #c8f13c"><div class="cov" style="background: linear-gradient(135deg, #1d4e6b, #0c1d2b)"></div><div class="qt"><span class="tag t-cal" style="align-self: flex-start">next</span><span class="qn">Low Tide</span><span class="qa">Harbour Lights</span></div></div>
+<div class="q qc"><div class="cov" style="background: linear-gradient(135deg, #6b3a1d, #1c1d20)"></div><div class="qt"><span class="tag t-con" style="align-self: flex-start">conflict</span><span class="qn">Undertow (Dub)</span><span class="qa">Deep Field</span></div></div>
+<div class="q qc"><div class="cov" style="background: linear-gradient(135deg, #3ddc5a, #1c3e3b)"></div><div class="qt"><span class="tag t-cal" style="align-self: flex-start">calibration</span><span class="qn">Glasshouse</span><span class="qa">Pale Signal</span></div></div>
+<div class="q qc"><div class="cov" style="background: radial-gradient(circle at 30% 30%, #f4e04d, #8a3ad1)"></div><div class="qt"><span class="tag t-uns" style="align-self: flex-start">unsure</span><span class="qn">Paper Moon</span><span class="qa">Mirrorball</span></div></div>
+<div class="q" style="width: 72px; align-items: center; justify-content: center; background: #2a2b2f; border: 1px dashed #4a4b50; color: #a0a1a8">+49</div>
+<span style="align-self: center; font-size: 16px; color: #a0a1a8; margin-left: auto">←</span>
+<div class="q" style="width: 300px; background: #222327; border: 1px solid #6a5420; font-weight: 400; padding: 6px 9px"><div style="display: flex; align-items: center; gap: 6px"><span class="lbl">rekordbox</span><span style="width: 6px; height: 6px; border-radius: 50%; background: #c8f13c"></span><span style="font-size: 11px; color: #a0a1a8">watching rekordbox.xml</span><button class="btn" style="margin-left: auto; min-height: 18px; padding: 1px 6px; font-size: 11px">Sync <span class="kbd">⌥S</span></button></div><div style="display: flex; align-items: center; gap: 6px; font-size: 12px"><span style="color: #e0b04a">collection exported 9 d ago</span><span class="mono" style="color: #c8f13c; margin-left: auto">+7 queued</span></div><div style="font-size: 10px; color: #e0b04a">⚠ old: export it again in rekordbox before Export</div></div>
+</div>
+</div>
+
+<div style="padding: 8px 16px; border-bottom: 1px solid #3a3b40; display: flex; align-items: center; gap: 12px; background: #222327"><span style="font-size: 13px; color: #a0a1a8">↓</span><span class="lbl">Model</span><span class="tag t-cal">early calibration</span><span style="font-size: 12px; color: #a0a1a8">learning your taste, guess hidden (blind)</span><div style="width: 160px; height: 4px; background: #3a3b40; display: flex"><div style="width: 47%; background: #c8f13c"></div></div><span class="mono" style="font-size: 12px">47 / 100 labels</span><span style="font-size: 12px; color: #a0a1a8; margin-left: auto">model guesses right</span><b class="mono" style="font-size: 14px; color: #c8f13c">40–70%</b><span style="font-size: 13px; color: #a0a1a8">↓</span></div>
+
+<div style="padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #3a3b40">
+<div style="display: flex; align-items: baseline; gap: 10px"><span class="tag t-re" style="align-self: center">relistening · from reviewed</span><span style="font-size: 22px; font-weight: 800">Sunday Brass</span><span style="font-size: 13px; color: #a0a1a8">Northbound · original mix</span><span class="mono" style="font-size: 12px; color: #a0a1a8; margin-left: auto">2:41 / 6:58</span></div>
+<svg width="1184" height="84" viewBox="0 0 528 72" preserveAspectRatio="none" role="img" aria-label="Waveform, playhead in the first drop" style="display: block; background: #222327; border-radius: 3px"><path d="M4 30V42M12 28V44M20 29V43M28 27V45M36 28V44M44 26V46M52 27V45M60 25V47M68 26V46M76 24V48M84 25V47M92 24V48M100 22V50M108 23V49M116 20V52M124 21V51M132 18V54M140 19V53M148 16V56M156 17V55M164 14V58M172 28V44M180 6V66M188 8V64M196 4V68M204 7V65M212 3V69M220 6V66M228 5V67M236 2V70" stroke="#c8f13c" stroke-width="4"/><path d="M244 7V65M252 4V68M260 6V66M268 3V69M276 5V67M284 8V64M292 26V46M300 24V48M308 27V45M316 22V50M324 25V47M332 23V49M340 26V46M348 24V48M356 5V67M364 7V65M372 3V69M380 6V66M388 2V70M396 5V67M404 4V68M412 7V65M420 3V69M428 6V66M436 4V68M444 5V67M452 8V64M460 6V66M468 20V52M476 22V50M484 24V48M492 25V47M500 27V45M508 28V44M516 29V43M524 30V42" stroke="#5a5b62" stroke-width="4"/><path d="M240 0V72" stroke="#ffffff" stroke-width="1"/><path d="M0 0V72M88 0V72M176 0V72M288 0V72M352 0V72M464 0V72" stroke="#1c1d20" stroke-width="1"/></svg>
+<div class="mono" style="position: relative; height: 14px; font-size: 10px; color: #a0a1a8"><span style="position: absolute; left: 4px">1 INTRO</span><span style="position: absolute; left: 201px">2 BUILD</span><span style="position: absolute; left: 398px">3 DROP</span><span style="position: absolute; left: 648px">4 BREAK</span><span style="position: absolute; left: 792px">5 DROP</span><span style="position: absolute; left: 1043px">6 OUTRO</span></div>
+<div style="display: flex; gap: 20px; align-items: flex-start">
+<div style="display: grid; grid-template-columns: repeat(4, 124px); gap: 6px">
+<div class="key"><span class="kbd">Q</span><span class="dot" style="background: #ff9f1c"></span>Orange</div>
+<div class="key"><span class="kbd">W</span><span class="dot" style="background: #f4e04d"></span>Yellow</div>
+<div class="key"><span class="kbd">E</span><span class="dot" style="background: #25e0d0"></span>Aqua</div>
+<div class="key"><span class="kbd">R</span><span class="dot" style="background: #ff2e88"></span>Pink</div>
+<div class="key"><span class="kbd">A</span><span class="dot" style="background: #e5332a"></span>Red</div>
+<div class="key"><span class="kbd">S</span><span class="dot" style="background: #3ddc5a"></span>Green</div>
+<div class="key" style="background: #3a66ff; color: #ffffff"><span class="kbdd" style="color: #8fa8ff">D</span>Blue</div>
+<div class="key"><span class="kbd">F</span><span class="dot" style="background: #8a3ad1"></span>Purple</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 4px"><span class="kbd" style="background: #c8f13c">1</span><span class="kbd" style="background: #c8f13c">2</span><span class="kbd" style="background: #c8f13c">3</span><span class="kbd" style="background: #c8f13c">4</span><span class="kbd">5</span><span style="font-size: 12px; color: #a0a1a8; margin-left: 6px">stars, hold ⇧</span></div>
+<div style="display: flex; gap: 6px; align-items: center; font-size: 11px; color: #a0a1a8"><span class="kbd">←</span><span class="kbd">→</span>section<span class="kbd">SPACE</span>play<span class="kbd">1</span>–<span class="kbd">6</span>jump<span class="kbd">U</span>undo</div>
+</div>
+<div style="margin-left: auto; display: flex; gap: 8px"><button class="btn" title="from the queue this slot reads: Skip track">Requeue <span class="kbd">⇧ENTER</span></button><button class="btnp">Next <span class="kbdd">ENTER</span></button></div>
+</div>
+</div>
+
+<div style="padding: 8px 16px; border-bottom: 1px solid #3a3b40; display: flex; align-items: center; gap: 10px; background: #222327"><span style="font-size: 13px; color: #a0a1a8">↓</span><span class="lbl">Reviewed</span><span class="mono" style="font-size: 12px">47</span><button class="btnp" style="margin-left: auto">Export → <span class="kbdd">X</span></button></div>
+
+<div style="flex: 1; min-height: 0; padding: 6px 16px 10px; display: flex; flex-direction: column; gap: 4px; overflow: hidden">
+<div class="trow th"><span style="width: 12px"></span><span class="c-col">Colour ▲</span><span class="c-trk">Track</span><span class="c-art">Artist</span><span class="c-en">Energy</span><span class="c-st">Rating</span><span class="c-bpm">BPM</span><span class="c-key">Key</span><span class="c-fl"></span></div>
+<div class="trow new"><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Pale Signal</span><span class="c-art">Shoreline</span><span class="c-en"><span class="ebar"><span style="width: 60%"></span></span>6</span><span class="c-st">★★★</span><span class="c-bpm">122</span><span class="c-key">8A</span><span class="c-fl" style="color: #c8f13c">just reviewed</span></div>
+<div class="trow"><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Salt Air</span><span class="c-art">Drift Line</span><span class="c-en"><span class="ebar"><span style="width: 50%"></span></span>5</span><span class="c-st">★★★★</span><span class="c-bpm">120</span><span class="c-key">5A</span><span class="c-fl"></span></div>
+<div class="trow"><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Glasswing</span><span class="c-art">Pale Signal</span><span class="c-en"><span class="ebar"><span style="width: 50%"></span></span>5</span><span class="c-st">★★★</span><span class="c-bpm">124</span><span class="c-key">10B</span><span class="c-fl"></span></div>
+<div class="trow sel"><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk"><b>Sunday Brass</b></span><span class="c-art">Northbound</span><span class="c-en"><span class="ebar"><span style="width: 80%"></span></span>8</span><span class="c-st">★★★★</span><span class="c-bpm">126</span><span class="c-key">11B</span><span class="c-fl" style="color: #c8f13c">▶ in the player</span></div>
+<div class="trow"><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk">Deep Field</span><span class="c-art">Undertow</span><span class="c-en"><span class="ebar"><span style="width: 40%"></span></span>4</span><span class="c-st">★★★★</span><span class="c-bpm">118</span><span class="c-key">4A</span><span class="c-fl" style="color: #a0a1a8">from library</span></div>
+<div class="trow"><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk">Northbound</span><span class="c-art">Night Swim</span><span class="c-en"><span class="ebar"><span style="width: 40%"></span></span>4</span><span class="c-st">★★★</span><span class="c-bpm">121</span><span class="c-key">9A</span><span class="c-fl"></span></div>
+<div class="trow"><span class="ring r1"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk">Undertow</span><span class="c-art">Deep Field</span><span class="c-en"><span class="ebar"><span style="width: 30%"></span></span>3</span><span class="c-st">★★★</span><span class="c-bpm">119</span><span class="c-key">4A</span><span class="c-fl"></span></div>
+<div class="trow"><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #8a3ad1"></span>Purple</span><span class="c-trk">Velvet Hour</span><span class="c-art">Mirrorball</span><span class="c-en"><span class="ebar"><span style="width: 70%"></span></span>7</span><span class="c-st">★★★</span><span class="c-bpm">124</span><span class="c-key">2A</span><span class="c-fl"></span></div>
+</div>
+</div>
+</div>
+
+<!-- 3 Export dialog -->
+<div class="scr" style="left: 2144px; top: 1032px">
+<div class="rail"><span class="logo">v</span><span class="ri ron"><b>R</b>review</span><span class="ri"><b>C</b>library</span><span class="ri"><b>S</b>stats</span><span class="ri"><b>,</b>settings</span></div>
+<div class="main" style="padding: 10px; gap: 8px">
+<div style="display: flex; gap: 6px"><div class="ghost" style="flex: 1; height: 36px"></div><div class="ghost" style="flex: 1; height: 36px"></div><div class="ghost" style="flex: 1; height: 36px"></div><div class="ghost" style="flex: 1; height: 36px"></div></div>
+<div class="ghost" style="height: 140px"></div>
+<div style="display: flex; flex-direction: column; gap: 4px; flex: 1"><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div></div>
+</div>
+<div style="position: absolute; left: 0; top: 0; width: 560px; height: 400px; background: rgba(14, 14, 16, 0.72)"></div>
+<div style="position: absolute; left: 48px; top: 24px; width: 464px; height: 352px; box-sizing: border-box; background: #2a2b2f; border: 1px solid #55565c; border-radius: 6px; padding: 18px; display: flex; flex-direction: column; gap: 9px">
+<span class="lbl">Exported → rekordbox</span>
+<span style="font-size: 18px; font-weight: 800">47 tracks · vibecheck-2026-11-07</span>
+<span class="mono" style="font-size: 11px; color: #a0a1a8">written into ~/Documents/rekordbox.xml · old one kept as .bak</span>
+<span class="lbl" style="margin-top: 4px">Now in rekordbox</span>
+<div style="display: flex; gap: 8px; font-size: 12px; line-height: 17px"><span class="mono" style="color: #c8f13c">1</span><span>Refresh the <b>rekordbox xml</b> node in the sidebar.</span></div>
+<div style="display: flex; gap: 8px; font-size: 12px; line-height: 17px"><span class="mono" style="color: #c8f13c">2</span><span>Right-click <b>vibecheck-2026-11-07</b> › Import Playlist.</span></div>
+<div style="display: flex; gap: 8px; font-size: 12px; line-height: 17px"><span class="mono" style="color: #c8f13c">3</span><span>Play, fix what is wrong, then File › Export Collection in xml format over the same file. vibecheck syncs on its own.</span></div>
+<span style="font-size: 11px; color: #a0a1a8; line-height: 15px">First time only: Preferences › Advanced › Database › rekordbox xml, choose this file.</span>
+<div style="display: flex; margin-top: auto"><button class="btnp" style="margin-left: auto">OK <span class="kbdd">ENTER</span></button></div>
+</div>
+</div>
+
+<!-- 4 Sync overlay -->
+<div class="scr" style="left: 2144px; top: 232px">
+<div class="rail"><span class="logo">v</span><span class="ri ron"><b>R</b>review</span><span class="ri"><b>C</b>library</span><span class="ri"><b>S</b>stats</span><span class="ri"><b>,</b>settings</span></div>
+<div class="main" style="padding: 10px; gap: 8px">
+<div style="display: flex; gap: 6px"><div class="ghost" style="flex: 1; height: 36px"></div><div class="ghost" style="flex: 1; height: 36px"></div><div class="ghost" style="flex: 1; height: 36px"></div><div class="ghost" style="flex: 1; height: 36px"></div></div>
+<div class="ghost" style="height: 140px"></div>
+<div style="display: flex; flex-direction: column; gap: 4px; flex: 1"><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div><div class="ghost" style="height: 14px"></div></div>
+</div>
+<div style="position: absolute; left: 0; top: 0; width: 560px; height: 400px; background: rgba(14, 14, 16, 0.72)"></div>
+<div style="position: absolute; left: 80px; top: 40px; width: 400px; height: 320px; box-sizing: border-box; background: #2a2b2f; border: 1px solid #55565c; border-radius: 6px; padding: 18px; display: flex; flex-direction: column; gap: 10px">
+<span class="lbl">rekordbox.xml changed · synced</span>
+<span style="font-size: 18px; font-weight: 800">Batch 2026-11-07</span>
+<div class="tr" style="height: 32px"><span class="ring r4"></span><span class="mono" style="font-size: 18px; font-weight: 600; width: 32px">30</span><span style="flex: 1">played</span><span class="mono" style="color: #a0a1a8">counts most</span></div>
+<div class="tr" style="height: 32px"><span class="ring r3"></span><span class="mono" style="font-size: 18px; font-weight: 600; width: 32px">12</span><span style="flex: 1">corrected</span><span class="mono" style="color: #a0a1a8">set by hand</span></div>
+<div class="tr" style="height: 32px"><span class="ring r1"></span><span class="mono" style="font-size: 18px; font-weight: 600; width: 32px; color: #a0a1a8">58</span><span style="flex: 1">untouched</span><span class="mono" style="color: #a0a1a8">counts a little</span></div>
+<span style="font-size: 12px; color: #a0a1a8; line-height: 17px">7 tracks went to the front of your queue: 2 conflicts, 3 old labels, 2 unsure.</span>
+<div style="display: flex; margin-top: auto"><button class="btnp" style="margin-left: auto">Back to review <span class="kbdd">ENTER</span></button></div>
+</div>
+</div>
+
+<!-- Stats -->
+<div class="scr" style="left: 64px; top: 1168px">
+<div class="rail"><span class="logo">v</span><span class="ri"><b>R</b>review</span><span class="ri"><b>C</b>library</span><span class="ri ron"><b>S</b>stats</span><span class="ri"><b>,</b>settings</span></div>
+<div class="main">
+<div class="head">Stats<span class="mono" style="margin-left: auto; font-size: 11px; color: #a0a1a8">1,042 labels</span></div>
+<div class="body" style="gap: 10px">
+<div style="display: flex; gap: 16px">
+<div><div class="lbl">Colour right</div><div class="mono" style="font-size: 24px; font-weight: 600; color: #c8f13c">65–71%</div></div>
+<div><div class="lbl">Stars right</div><div class="mono" style="font-size: 24px; font-weight: 600">72–78%</div></div>
+<div><div class="lbl">Past self</div><div class="mono" style="font-size: 24px; font-weight: 600">84%</div></div>
+</div>
+<div class="lbl">Mixed up most</div>
+<div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; font-size: 12px">
+<div style="display: flex; align-items: center; gap: 6px; background: #222327; padding: 6px 8px; border-radius: 3px"><span class="dot" style="background: #25e0d0"></span><span class="dot" style="background: #3a66ff"></span>Aqua ↔ Blue<span class="mono" style="margin-left: auto; color: #a0a1a8">9%</span></div>
+<div style="display: flex; align-items: center; gap: 6px; background: #222327; padding: 6px 8px; border-radius: 3px"><span class="dot" style="background: #ff9f1c"></span><span class="dot" style="background: #f4e04d"></span>Orange ↔ Yellow<span class="mono" style="margin-left: auto; color: #a0a1a8">7%</span></div>
+<div style="display: flex; align-items: center; gap: 6px; background: #222327; padding: 6px 8px; border-radius: 3px"><span class="dot" style="background: #8a3ad1"></span><span class="dot" style="background: #3a66ff"></span>Purple ↔ Blue<span class="mono" style="margin-left: auto; color: #a0a1a8">6%</span></div>
+<div style="display: flex; align-items: center; gap: 6px; background: #222327; padding: 6px 8px; border-radius: 3px"><span class="dot" style="background: #ff2e88"></span><span class="dot" style="background: #e5332a"></span>Pink ↔ Red<span class="mono" style="margin-left: auto; color: #a0a1a8">4%</span></div>
+</div>
+<div class="lbl">Colour right vs labels</div>
+<svg width="468" height="70" viewBox="0 0 468 70" role="img" aria-label="Colour accuracy climbs from 56% at 100 labels to 69% at 800" style="display: block; background: #222327; border-radius: 3px"><path d="M8 62H460" stroke="#3a3b40"/><polyline points="12,58 75,40 138,31 201,28 264,22 327,22 390,20 453,19" fill="none" stroke="#c8f13c" stroke-width="2"/><path d="M138 4V62" stroke="#a0a1a8" stroke-dasharray="3 3"/><text x="144" y="14" font-size="10" fill="#a0a1a8" font-family="IBM Plex Mono">goal 300</text></svg>
+<div style="display: flex; height: 8px; gap: 2px"><div style="flex: 38; background: #c8f13c"></div><div style="flex: 31; background: #8fae2a"></div><div style="flex: 19; background: #e0b04a"></div><div style="flex: 12; background: #4a4b50"></div></div>
+<span style="font-size: 11px; color: #a0a1a8">Trust: played · by hand · existing · untouched</span>
+</div>
+</div>
+</div>
+
+<!-- Collection -->
+<div class="scr" style="left: 744px; top: 1168px; width: 1280px; height: 800px">
+<div class="rail"><span class="logo">v</span><span class="ri"><b>R</b>review</span><span class="ri ron"><b>C</b>library</span><span class="ri"><b>S</b>stats</span><span class="ri"><b>,</b>settings</span></div>
+<div class="main">
+<div class="head"><label style="flex: 1; display: flex; align-items: center; gap: 8px"><span class="kbd">/</span><input aria-label="Search tracks" placeholder="Search 4,812 tracks" style="flex: 1; background: none; border: 0; color: #e8e8ea; font: 13px 'Inter', sans-serif"></label><button class="btn">Columns</button></div>
+<div id="player" style="flex: none; background: #26272b; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; border-bottom: 1px solid #3a3b40">
+<div style="display: flex; align-items: baseline; gap: 10px"><span class="tag t-re" style="align-self: center">relistening · from library</span><span style="font-size: 22px; font-weight: 800">Night Swim</span><span style="font-size: 13px; color: #a0a1a8">Northbound · extended mix</span><span class="mono" style="font-size: 12px; color: #a0a1a8; margin-left: auto">1:12 / 7:20</span></div>
+<svg width="1184" height="84" viewBox="0 0 528 72" preserveAspectRatio="none" role="img" aria-label="Waveform of Night Swim" style="display: block; background: #222327; border-radius: 3px"><path d="M4 30V42M12 28V44M20 29V43M28 27V45M36 28V44M44 26V46M52 27V45M60 25V47M68 26V46M76 24V48M84 25V47M92 24V48M100 22V50M108 23V49M116 20V52M124 21V51M132 18V54M140 19V53M148 16V56M156 17V55M164 14V58M172 28V44M180 6V66M188 8V64M196 4V68M204 7V65M212 3V69M220 6V66M228 5V67M236 2V70" stroke="#c8f13c" stroke-width="4"/><path d="M244 7V65M252 4V68M260 6V66M268 3V69M276 5V67M284 8V64M292 26V46M300 24V48M308 27V45M316 22V50M324 25V47M332 23V49M340 26V46M348 24V48M356 5V67M364 7V65M372 3V69M380 6V66M388 2V70M396 5V67M404 4V68M412 7V65M420 3V69M428 6V66M436 4V68M444 5V67M452 8V64M460 6V66M468 20V52M476 22V50M484 24V48M492 25V47M500 27V45M508 28V44M516 29V43M524 30V42" stroke="#5a5b62" stroke-width="4"/><path d="M240 0V72" stroke="#ffffff" stroke-width="1"/><path d="M0 0V72M88 0V72M176 0V72M288 0V72M352 0V72M464 0V72" stroke="#1c1d20" stroke-width="1"/></svg>
+<div class="mono" style="position: relative; height: 14px; font-size: 10px; color: #a0a1a8"><span style="position: absolute; left: 4px">1 INTRO</span><span style="position: absolute; left: 201px">2 BUILD</span><span style="position: absolute; left: 398px">3 DROP</span><span style="position: absolute; left: 648px">4 BREAK</span><span style="position: absolute; left: 792px">5 DROP</span><span style="position: absolute; left: 1043px">6 OUTRO</span></div>
+<div style="display: flex; gap: 20px; align-items: flex-start">
+<div style="display: grid; grid-template-columns: repeat(4, 124px); gap: 6px">
+<div class="key"><span class="kbd">Q</span><span class="dot" style="background: #ff9f1c"></span>Orange</div>
+<div class="key"><span class="kbd">W</span><span class="dot" style="background: #f4e04d"></span>Yellow</div>
+<div class="key" style="background: #25e0d0; color: #1c1d20"><span class="kbdd">E</span>Aqua</div>
+<div class="key"><span class="kbd">R</span><span class="dot" style="background: #ff2e88"></span>Pink</div>
+<div class="key"><span class="kbd">A</span><span class="dot" style="background: #e5332a"></span>Red</div>
+<div class="key"><span class="kbd">S</span><span class="dot" style="background: #3ddc5a"></span>Green</div>
+<div class="key"><span class="kbd">D</span><span class="dot" style="background: #3a66ff"></span>Blue</div>
+<div class="key"><span class="kbd">F</span><span class="dot" style="background: #8a3ad1"></span>Purple</div>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px">
+<div style="display: flex; align-items: center; gap: 4px"><span class="kbd" style="background: #c8f13c">1</span><span class="kbd" style="background: #c8f13c">2</span><span class="kbd" style="background: #c8f13c">3</span><span class="kbd">4</span><span class="kbd">5</span><span style="font-size: 12px; color: #a0a1a8; margin-left: 6px">stars, hold ⇧</span></div>
+<div style="display: flex; gap: 6px; align-items: center; font-size: 11px; color: #a0a1a8"><span class="kbd">←</span><span class="kbd">→</span>section<span class="kbd">SPACE</span>play<span class="kbd">1</span>–<span class="kbd">6</span>jump<span class="kbd">U</span>undo</div>
+</div>
+<div style="margin-left: auto; display: flex; gap: 8px"><span style="align-self: center; font-size: 11px; color: #a0a1a8">Next saves and adds to the next Export · <span class="kbd">ESC</span> stop</span><button class="btn">Skip <span class="kbd">⇧ENTER</span></button><button class="btnp">Next <span class="kbdd">ENTER</span></button></div>
+</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 16px; border-bottom: 1px solid #3a3b40">
+<span class="chip chon">All</span><span class="chip">Played</span><span class="chip">Pending 58</span><span class="chip">Thin trust</span>
+<span style="width: 1px; height: 20px; background: #4a4b50; margin: 0 4px"></span>
+<span class="chip"><span class="dot" style="background: #ff9f1c; height: 10px"></span><span class="dot" style="background: #f4e04d; height: 10px"></span><span class="dot" style="background: #25e0d0; height: 10px"></span><span class="dot" style="background: #ff2e88; height: 10px"></span><span class="dot" style="background: #e5332a; height: 10px"></span><span class="dot" style="background: #3ddc5a; height: 10px"></span><span class="dot" style="background: #3a66ff; height: 10px"></span><span class="dot" style="background: #8a3ad1; height: 10px"></span>all colours</span>
+<span class="chip">Energy 1–10</span><span class="chip">Rating any</span><span class="chip">BPM any</span><span class="chip">Batch any</span>
+<span class="mono" style="margin-left: auto; font-size: 11px; color: #a0a1a8">4,812 tracks</span>
+</div>
+<div style="display: flex; align-items: center; gap: 10px; padding: 6px 16px; background: #2f3036; border-bottom: 1px solid #3a3b40; font-size: 12px"><span class="mono">2 selected</span><button class="btnp" style="min-height: 26px; padding: 3px 10px">Add to review queue <span class="kbdd">⌥Q</span></button><button class="btn" style="min-height: 26px; padding: 3px 10px">Clear</button><span style="margin-left: auto; display: flex; gap: 6px; align-items: center; font-size: 11px; color: #a0a1a8"><span class="kbd">⌥C</span>colour<span class="kbd">⌥E</span>energy<span class="kbd">⌥R</span>rating<span class="kbd">⌥B</span>bpm<span class="kbd">↑↓</span>move<span class="kbd">X</span>select<span class="kbd">ENTER</span>relisten</span></div>
+<div style="flex: 1; min-height: 0; padding: 4px 16px; display: flex; flex-direction: column; gap: 2px; overflow: hidden">
+<div class="trow th"><span class="c-ck"></span><span style="width: 12px"></span><span class="c-col">Colour ▲</span><span class="c-trk">Track</span><span class="c-art">Artist</span><span class="c-en">Energy</span><span class="c-st">Rating</span><span class="c-bpm">BPM</span><span class="c-key">Key</span><span class="c-pl">Plays</span><span class="c-lp">Last played</span><span class="c-ad">Added</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Hot Wire"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #ff9f1c"></span>Orange</span><span class="c-trk">Hot Wire</span><span class="c-art">Copper Sun</span><span class="c-en"><span class="ebar"><span style="width: 90%"></span></span>9</span><span class="c-st">★★★★★</span><span class="c-bpm">128</span><span class="c-key">7A</span><span class="c-pl">23</span><span class="c-lp">2026-11-01</span><span class="c-ad">2024-03</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Brass Step"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #ff9f1c"></span>Orange</span><span class="c-trk">Brass Step</span><span class="c-art">Ember</span><span class="c-en"><span class="ebar"><span style="width: 80%"></span></span>8</span><span class="c-st">★★★★</span><span class="c-bpm">126</span><span class="c-key">8B</span><span class="c-pl">11</span><span class="c-lp">2026-10-24</span><span class="c-ad">2025-01</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Ember"></label><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #ff9f1c"></span>Orange</span><span class="c-trk">Ember</span><span class="c-art">Brass Step</span><span class="c-en"><span class="ebar"><span style="width: 70%"></span></span>7</span><span class="c-st">★★★</span><span class="c-bpm">124</span><span class="c-key">3A</span><span class="c-pl">0</span><span class="c-lp">never</span><span class="c-ad">2026-09</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Flash"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #f4e04d"></span>Yellow</span><span class="c-trk">Flash</span><span class="c-art">Lemon Grove</span><span class="c-en"><span class="ebar"><span style="width: 80%"></span></span>8</span><span class="c-st">★★★★</span><span class="c-bpm">127</span><span class="c-key">12B</span><span class="c-pl">6</span><span class="c-lp">2026-08-30</span><span class="c-ad">2023-11</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Bright Day"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #f4e04d"></span>Yellow</span><span class="c-trk">Bright Day</span><span class="c-art">Salt Air</span><span class="c-en"><span class="ebar"><span style="width: 70%"></span></span>7</span><span class="c-st">★★★★★</span><span class="c-bpm">124</span><span class="c-key">1B</span><span class="c-pl">31</span><span class="c-lp">2026-11-01</span><span class="c-ad">2022-06</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Pale Signal"></label><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Pale Signal</span><span class="c-art">Shoreline</span><span class="c-en"><span class="ebar"><span style="width: 60%"></span></span>6</span><span class="c-st">★★★</span><span class="c-bpm">122</span><span class="c-key">8A</span><span class="c-pl">0</span><span class="c-lp">never</span><span class="c-ad">2026-10</span></div>
+<div class="trow ticked"><label class="c-ck"><input type="checkbox" checked aria-label="Select Glasswing"></label><span class="ring r2"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Glasswing</span><span class="c-art">Pale Signal</span><span class="c-en"><span class="ebar"><span style="width: 50%"></span></span>5</span><span class="c-st">★★★</span><span class="c-bpm">124</span><span class="c-key">10B</span><span class="c-pl">2</span><span class="c-lp">2025-02-14</span><span class="c-ad">2019-07</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Salt Air"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Salt Air</span><span class="c-art">Drift Line</span><span class="c-en"><span class="ebar"><span style="width: 50%"></span></span>5</span><span class="c-st">★★★★</span><span class="c-bpm">120</span><span class="c-key">5A</span><span class="c-pl">14</span><span class="c-lp">2026-10-24</span><span class="c-ad">2024-08</span></div>
+<div class="trow ticked"><label class="c-ck"><input type="checkbox" checked aria-label="Select Shoreline"></label><span class="ring r2"></span><span class="c-col"><span class="dot" style="background: #25e0d0"></span>Aqua</span><span class="c-trk">Shoreline</span><span class="c-art">Glasswing</span><span class="c-en"><span class="ebar"><span style="width: 20%"></span></span>2</span><span class="c-st">★★</span><span class="c-bpm">118</span><span class="c-key">6A</span><span class="c-pl">0</span><span class="c-lp">never</span><span class="c-ad">2018-04</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Sunday Brass"></label><span class="ring r3"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk">Sunday Brass</span><span class="c-art">Northbound</span><span class="c-en"><span class="ebar"><span style="width: 80%"></span></span>8</span><span class="c-st">★★★★</span><span class="c-bpm">126</span><span class="c-key">11B</span><span class="c-pl">0</span><span class="c-lp">never</span><span class="c-ad">2026-10</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Deep Field"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk">Deep Field</span><span class="c-art">Undertow</span><span class="c-en"><span class="ebar"><span style="width: 40%"></span></span>4</span><span class="c-st">★★★★</span><span class="c-bpm">118</span><span class="c-key">4A</span><span class="c-pl">19</span><span class="c-lp">2026-10-31</span><span class="c-ad">2021-05</span></div>
+<div class="trow sel"><label class="c-ck"><input type="checkbox" aria-label="Select Night Swim"></label><span class="ring r4"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk"><b>Night Swim</b></span><span class="c-art">Northbound</span><span class="c-en"><span class="ebar"><span style="width: 30%"></span></span>3</span><span class="c-st">★★★</span><span class="c-bpm">121</span><span class="c-key">9A</span><span class="c-pl">8</span><span class="c-lp">2026-09-12</span><span class="c-ad">2023-02</span></div>
+<div class="trow"><label class="c-ck"><input type="checkbox" aria-label="Select Undertow"></label><span class="ring r1"></span><span class="c-col"><span class="dot" style="background: #3a66ff"></span>Blue</span><span class="c-trk">Undertow</span><span class="c-art">Deep Field</span><span class="c-en"><span class="ebar"><span style="width: 30%"></span></span>3</span><span class="c-st">★★★</span><span class="c-bpm">119</span><span class="c-key">4A</span><span class="c-pl">0</span><span class="c-lp">never</span><span class="c-ad">2026-11</span></div>
+</div>
+</div>
+</div>
+
+</div>
+</body>
+</html>
