@@ -19,6 +19,10 @@ review happens; it becomes the output, plus a later source of signal
 describe the round-trip version and will be reworked around this direction;
 the research section near the end supports it.
 
+Labels set in the app are still provisional. Playing a track in a set is the
+final check: the label it has after that, kept or edited, counts highest (see
+trust levels).
+
 ## The problem
 
 The current loop treats "unchanged" as "confirmed". A user who doesn't review
@@ -46,8 +50,8 @@ rule; they only see a small indicator per track.
 
 | level | what the user did | training weight | notes |
 |---|---|---|---|
-| 4: set by hand | labelled it in the app, or changed our colour or rating in rekordbox | 1.0 | the strongest signal there is |
-| 3: played and kept | play count went up since we wrote the label, and it is unchanged | about 0.7 | they heard it, likely in a set, and let it stand; editing its cues counts too |
+| 4: played | played it after we wrote the label (its play count went up), then kept it or edited it | 1.0 | the strongest signal: tested in a real set; the label left after playing is the final one, edited or not |
+| 3: set by hand | labelled it in the app, or changed our colour or rating in rekordbox, and not played since | about 0.7 | a considered first impression; moves to 4 once played. Editing its cues counts here too |
 | 2: existing label | it was there before vibecheck | about 0.3 until checked | a library's history can be wildly inconsistent |
 | 1: untouched | we wrote it and nothing happened since | 0 | never trained on; it stays pending |
 
@@ -74,10 +78,11 @@ only adds the consistency check.
    sample so calibration can begin within about 30 minutes.
 2. **Consistency check** (only if labels exist). Import them all at level 2.
    Find near-identical tracks with different labels, and labels the model
-   rejects. Show them as "which is right?" cards; every answer becomes level 4.
-3. **Calibration.** About 30 tracks chosen to cover the sound of the
-   collection, labelled in the app in about 5 minutes. This gives the model a
-   clean base before the first round, which is what the fresh start lacked.
+   rejects. Show them as "which is right?" cards; every answer becomes level 3.
+3. **Calibration.** At least 100 tracks, with 300 as the goal, chosen to cover
+   the sound of the collection and labelled blind in the app. Skipping is
+   allowed. This gives the model a clean base before the first round, which is
+   what the fresh start lacked. Details below.
 4. **Rounds.** Today's loop: write a playlist, play and correct in rekordbox,
    export, sync. Sync assigns levels instead of confirming. Untouched tracks
    stay pending, and the round stays open until they earn trust. "Confirm all
@@ -85,6 +90,45 @@ only adds the consistency check.
 5. **Review inbox.** Fills up from every sync: conflicts, old labels the model
    now disagrees with, and the tracks it is least sure about. These teach the
    model the most per minute spent.
+
+### Calibration: 100 to 300 labels
+
+A fresh start has no labels, and the first labels decide how good the first
+suggestions are. The learning curve on the author's collection
+(cross-validated accuracy against the number of labels trained on) shows
+colour still improving well past 100:
+
+| labels | 100 | 200 | 300 | 500 | 800 |
+|---|---:|---:|---:|---:|---:|
+| colour | 56% | 62% | 65% | 68% | 69% |
+| hue | 67% | 71% | 74% | 76% | 77% |
+| tone | 84% | 87% | 88% | 89% | 89% |
+
+So calibration suggests at least 100 labels and sets 300 as the goal; past
+about 500, more labels change little.
+
+- **Blind.** The card shows no suggestion, so the labels are the user's own.
+- **Time.** With a 10 s snippet, 100 tracks take roughly 20 to 30 minutes and
+  300 one to one and a half hours. Calibration pauses and resumes across
+  sessions.
+- **Skipping is allowed.** A user who skips corrects more in the first rounds
+  instead. Suggestions stay off until 100 labels by hand either way, so
+  skipping never brings back the anchoring problem.
+- **Existing labels count.** With a library, labels that pass the consistency
+  check count toward the 100.
+
+The screen always says what the user is doing, why, and what skipping costs:
+
+- **What:** "Label tracks so vibecheck learns how you hear colour and rating:
+  listen to a snippet, pick a colour and stars."
+- **Why:** "It learns only from you. The more you label now, the fewer
+  corrections later."
+- **Progress:** labels done with 100 and 300 marked, time left, and the
+  accuracy measured on the user's own labels, climbing as they go, once there
+  are enough labels to measure it.
+- **Skip:** a button that states the cost with the live number, e.g. "The
+  model is right about half the time now. Skipping means more corrections in
+  your first rounds. You can come back to this any time."
 
 ## What the UI needs
 
@@ -117,13 +161,14 @@ the same.
 | weighted training: each label's weight in the classifier's loss | `predict.rs` | small |
 | consistency check: near-identical vectors with different labels, and existing labels the model rejects under cross-validation | new | medium |
 | selection: mix in the tracks the model is least sure about, not only a random pick | `commands.rs` | small |
-| calibration pick: about 30 tracks spread across the sound of the collection | new, uses the vectors | small |
+| calibration pick: 100 to 300 tracks spread across the sound of the collection | new, uses the vectors | small |
 | vectors computed in the background, most useful tracks first | `embed.rs` | medium |
 
 The calibration pick needs vectors, and a whole library takes about 20 hours
 at 5 s per track. So the app starts with a random sample of a few hundred
-tracks (about 30 minutes) and calibrates from those while the rest continue in
-the background.
+tracks (about 30 minutes) and picks the first calibration tracks from those.
+The sample keeps growing in the background while the user labels, so later
+picks have more to choose from.
 
 Schema v5 would no longer match the Python prototype, which reads the same
 `labels.db`. Either the prototype learns v5, or from this point on a
@@ -162,7 +207,8 @@ Two research results matter directly:
 What this suggests for the flow:
 
 1. **Ask blind first.** Calibration and conflict cards show no suggestion.
-   Suggestions start only after about 30 labels by hand.
+   Suggestions start only after 100 labels by hand, also when calibration was
+   skipped.
 2. **Correcting costs one key.** One key per colour on the card, so changing a
    label is as fast as accepting it.
 3. **Re-ask old tracks now and then.** Occasionally re-ask a track labelled
@@ -182,8 +228,7 @@ What this suggests for the flow:
 ## Open questions
 
 - [ ] Untouched labels: weight 0, or a small weight such as 0.1?
-- [ ] "Played and kept": does one play count, or also a minimum time since the round?
-- [ ] Calibration size: 30 tracks, or fewer?
+- [ ] Level 4, "played": does one play count, or also a minimum time since the round?
 - [ ] Is the snippet player in the app part of the first version, or is rekordbox the only place to listen at first?
 - [ ] Existing labels that pass the consistency check: do they move up to level 3, or stay at 2?
 - [ ] Prototype compatibility after schema v5: teach the prototype v5, or freeze it?
@@ -192,3 +237,6 @@ What this suggests for the flow:
 - [ ] Blind re-asks of old tracks: how often, e.g. 1 in 20 cards?
 - [ ] Stars by comparison: only for conflicts, or everywhere?
 - [ ] Does the rekordbox playlist still matter as an inbox once review moves into the app?
+- [ ] Which plays count: does rekordbox's play count tell a set from a preview on headphones, and if not, is any play enough?
+- [ ] Existing labels on tracks played a lot: start above 0.3? We can't see when the label was set, only that the track was played.
+- [ ] Live accuracy on the calibration screen: from how many labels is it steady enough to show?
