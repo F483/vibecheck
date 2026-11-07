@@ -11,7 +11,9 @@ proposes trust levels plus one guided flow, so the app works well for both.
 
 In general, confirming and correcting should happen in the app, right after
 the model suggests, while the tracks are fresh. rekordbox then only receives
-finished results: labels the user has already seen and decided.
+finished results: labels the user has already seen and decided. Review has to
+be fast: listening, jumping around and confirming should never make the user
+stop and think.
 
 This changes the flow below. The rekordbox round trip is no longer where
 review happens; it becomes the output, plus a later source of signal
@@ -52,8 +54,8 @@ rule; they only see a small indicator per track.
 |---|---|---|---|
 | 4: played | played it after we wrote the label (its play count went up), then kept it or edited it | 1.0 | the strongest signal: tested in a real set; the label left after playing is the final one, edited or not |
 | 3: set by hand | labelled it in the app, or changed our colour or rating in rekordbox, and not played since | about 0.7 | a considered first impression; moves to 4 once played. Editing its cues counts here too |
-| 2: existing label | it was there before vibecheck | about 0.3 until checked | a library's history can be wildly inconsistent |
-| 1: untouched | we wrote it and nothing happened since | 0 | never trained on; it stays pending |
+| 2: existing label | it was there before vibecheck | about 0.3 until checked | a library's history can be wildly inconsistent; a track that has been played starts at 4 instead |
+| 1: untouched | we wrote it and nothing happened since | about 0.2 | usually more or less right, just not worth playing or correcting; kept small so the model doesn't learn its own guesses back |
 
 The weights are a starting point to tune, not measured values.
 
@@ -63,8 +65,10 @@ strongly disagrees with goes to the review queue, since the user's taste may
 have changed or it was a mistake. An old label the model agrees with is left
 alone.
 
-Plays only show up after rekordbox has the play count. Plays on CDJs count
-once rekordbox imports the USB history.
+One play is enough. Pre-listening in cue mode doesn't add to the play count,
+so a play means the track was chosen over the alternatives, mixed in and
+played out. Plays only show up after rekordbox has the play count. Plays on
+CDJs count once rekordbox imports the USB history.
 
 ## The flow
 
@@ -108,9 +112,9 @@ So calibration suggests at least 100 labels and sets 300 as the goal; past
 about 500, more labels change little.
 
 - **Blind.** The card shows no suggestion, so the labels are the user's own.
-- **Time.** With a 10 s snippet, 100 tracks take roughly 20 to 30 minutes and
-  300 one to one and a half hours. Calibration pauses and resumes across
-  sessions.
+- **Time.** At about 15 s per track, clicking through a few parts of each,
+  100 tracks take roughly 25 minutes and 300 about an hour and a quarter.
+  Calibration pauses and resumes across sessions.
 - **Skipping is allowed.** A user who skips corrects more in the first rounds
   instead. Suggestions stay off until 100 labels by hand either way, so
   skipping never brings back the anchoring problem.
@@ -120,27 +124,29 @@ about 500, more labels change little.
 The screen always says what the user is doing, why, and what skipping costs:
 
 - **What:** "Label tracks so vibecheck learns how you hear colour and rating:
-  listen to a snippet, pick a colour and stars."
+  listen around the track, pick a colour and stars."
 - **Why:** "It learns only from you. The more you label now, the fewer
   corrections later."
 - **Progress:** labels done with 100 and 300 marked, time left, and the
-  accuracy measured on the user's own labels, climbing as they go, once there
-  are enough labels to measure it.
+  accuracy measured on the user's own labels, shown from the first label as a
+  range that narrows as labels come in, e.g. "40–70%, 30 labels".
 - **Skip:** a button that states the cost with the live number, e.g. "The
   model is right about half the time now. Skipping means more corrections in
   your first rounds. You can come back to this any time."
 
 ## What the UI needs
 
-Five screens, plus one indicator that shows up everywhere:
+Seven screens, plus one indicator that shows up everywhere:
 
 | screen | what it does | why it matters |
 |---|---|---|
 | setup | choose the music folder and the rekordbox xml; shows vectors being computed in the background | the first two minutes decide whether people stay |
-| card review | one track at a time: play a 10 s snippet, pick colour and stars on a grid, next; fully keyboard driven | used for calibration, conflicts and the review queue; the most eye-catching part to animate |
-| sync summary | after each sync: e.g. "12 corrected · 30 played and kept · 58 untouched, still pending" | makes the trust rule visible without explaining it |
+| card review | one track at a time: the whole track on a waveform, click or use keys to jump between the intro, the drop and other parts, a few seconds each; pick colour and stars on a grid, next; fully keyboard driven | used for calibration, conflicts and the review queue; the most eye-catching part to animate |
+| sync summary | after each sync: e.g. "12 corrected · 30 played · 58 untouched" | makes the trust rule visible without explaining it |
 | review inbox | conflicts, old labels the model now disagrees with, tracks it is least sure about; a count badge | gives a reason to come back between rounds |
 | collection | every track with its labels and a trust ring coloured by level | shows progress and where trust is thin |
+| outlier pass | the reviewed batch sorted or grouped by colour or rating, skimmed a few times; tracks the model thinks stand out in their group are marked | catches what the first pass missed, without stopping to think |
+| stats | accuracy per colour and for stars, which colours get mixed up, accuracy against the number of labels, agreement with your past self, tracks per trust level | full transparency: what the model has learnt and where it is weak |
 
 The trust ring is the one new idea the user has to learn, so it appears the
 same way on every screen.
@@ -170,9 +176,13 @@ tracks (about 30 minutes) and picks the first calibration tracks from those.
 The sample keeps growing in the background while the user labels, so later
 picks have more to choose from.
 
-Schema v5 would no longer match the Python prototype, which reads the same
-`labels.db`. Either the prototype learns v5, or from this point on a
-collection uses one or the other.
+The Python prototype is frozen at schema v4: it stays as it is, and work
+continues in the Rust core and the Godot app. From v5 on, a collection uses
+the Rust version.
+
+Migrating an existing collection to v5: every label the user has set starts
+at level 3, since each was listened to or relabelled; tracks that have been
+played move up to 4. Rounds that are still open and unreviewed stay pending.
 
 ## What similar products and research show
 
@@ -186,7 +196,7 @@ and none of them treat silence as approval.
 | [Apple Photos, People](https://support.apple.com/en-la/guide/photos/phtad9d981ab/9.0/mac/14.0) | "Is this X?", Yes or No; users complain that batch confirms mix lookalikes and that there was no undo ([discussion](https://discussions.apple.com/thread/255900660), [blog](https://twocentsonapple.blogspot.com/2018/01/on-photos-face-tagging-and.html)) | no casual "confirm all"; every decision can be undone |
 | [Cyanite](https://cyanite.ai/music-tagging/) (music tagging) | tags genre, mood and energy from audio, similarity search for DJs; no sign of learning from an individual user | per-user learning is what sets vibecheck apart |
 
-Two research results matter directly:
+One research result matters directly:
 
 - **Suggestions get over-accepted.** In
   [Bias in the Loop](https://hdsr.mitpress.mit.edu/pub/nrcn4h7d) (Beck et al.,
@@ -197,12 +207,6 @@ Two research results matter directly:
   shifted the labels people gave without making them faster. This is the
   problem vibecheck had at the start: showing the model's guess anchors even
   careful users.
-- **Comparing is easier than scoring on a fixed scale.** Comparative judgments
-  tend to be more valid and need no stable internal scale
-  ([review](https://www.psychologicalscience.org/journals/perspectives/1745691610393521/),
-  [dialog study](https://arxiv.org/pdf/2005.10716)); the evidence on
-  consistency specifically is mixed. This matters for stars, which drift over
-  the years.
 
 What this suggests for the flow:
 
@@ -211,32 +215,24 @@ What this suggests for the flow:
    skipped.
 2. **Correcting costs one key.** One key per colour on the card, so changing a
    label is as fast as accepting it.
-3. **Re-ask old tracks now and then.** Occasionally re-ask a track labelled
-   months ago, without showing the old answer. It measures how consistent the
-   user is with themselves and catches taste drift, e.g. "you agree with your
-   past self 84% of the time".
-4. **Stars by comparison** where scores conflict: "which of these two do you
-   rate higher?".
+3. **Re-ask old tracks now and then.** Re-ask a track labelled months ago,
+   without showing the old answer. It measures how consistent the user is
+   with themselves and catches taste drift, e.g. "you agree with your past
+   self 84% of the time". None at first, while the user is getting the
+   library into shape; rising to about 1 in 20 cards once most of the
+   collection is at level 3 or higher.
+4. **An outlier pass after review.** Sort or group the batch by colour or
+   rating and skim it a few times; the app marks tracks that stand out in
+   their group. This is how review already works in rekordbox, and it keeps
+   the flow fast.
 5. **Show examples.** Next to each colour, 2–3 of the user's most trusted
    tracks with that colour as a reference. Standard practice in labelling
    guidelines, not from the sources above.
 6. **Undo everything**, and no bulk confirm without friction.
-7. **For corrections made later in rekordbox:** removing a track from the
-   round's playlist could mean "reviewed", so the playlist works as an inbox.
-   With review moving into the app, this becomes a secondary path.
+7. **Batches still go to rekordbox as a playlist,** which makes importing each
+   processed batch easy. For corrections made later in rekordbox, removing a
+   track from it could also mean "reviewed", but that is a secondary path.
 
 ## Open questions
 
-- [ ] Untouched labels: weight 0, or a small weight such as 0.1?
-- [ ] Level 4, "played": does one play count, or also a minimum time since the round?
-- [ ] Is the snippet player in the app part of the first version, or is rekordbox the only place to listen at first?
 - [ ] Existing labels that pass the consistency check: do they move up to level 3, or stay at 2?
-- [ ] Prototype compatibility after schema v5: teach the prototype v5, or freeze it?
-- [ ] Your own collection: re-level its current labels from the round history, or start everyone at level 4?
-- [ ] Review in the app: how long a snippet per track, and from where in the track (the drop, the first chorus, a random point)?
-- [ ] Blind re-asks of old tracks: how often, e.g. 1 in 20 cards?
-- [ ] Stars by comparison: only for conflicts, or everywhere?
-- [ ] Does the rekordbox playlist still matter as an inbox once review moves into the app?
-- [ ] Which plays count: does rekordbox's play count tell a set from a preview on headphones, and if not, is any play enough?
-- [ ] Existing labels on tracks played a lot: start above 0.3? We can't see when the label was set, only that the track was played.
-- [ ] Live accuracy on the calibration screen: from how many labels is it steady enough to show?

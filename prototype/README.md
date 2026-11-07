@@ -1,5 +1,10 @@
 # Vibe Check
 
+> **Frozen.** This Python prototype stays as it is; development continues in
+> the Rust core and Godot app at the [repository root](../README.md). It works
+> on a collection until that collection moves to database schema v5, which
+> only the Rust version reads.
+
 Learns how *you* label music, from the audio, and applies it to the rest of
 your collection.
 
