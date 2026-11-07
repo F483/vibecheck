@@ -7,6 +7,18 @@ track left unchanged after a round counts as confirmed. That works for someone
 who reviews every track carefully, but not for a new user who skims. This doc
 proposes trust levels plus one guided flow, so the app works well for both.
 
+## Direction
+
+In general, confirming and correcting should happen in the app, right after
+the model suggests, while the tracks are fresh. rekordbox then only receives
+finished results: labels the user has already seen and decided.
+
+This changes the flow below. The rekordbox round trip is no longer where
+review happens; it becomes the output, plus a later source of signal
+(corrections made while playing, play counts). Sections further down still
+describe the round-trip version and will be reworked around this direction;
+the research section near the end supports it.
+
 ## The problem
 
 The current loop treats "unchanged" as "confirmed". A user who doesn't review
@@ -117,6 +129,56 @@ Schema v5 would no longer match the Python prototype, which reads the same
 `labels.db`. Either the prototype learns v5, or from this point on a
 collection uses one or the other.
 
+## What similar products and research show
+
+The products closest to vibecheck all make review an explicit, cheap action,
+and none of them treat silence as approval.
+
+| product | how it learns from the user | lesson for vibecheck |
+|---|---|---|
+| [Copilot Money](https://help.copilot.money/en/articles/8182433-copilot-intelligence-for-spending) (budgeting) | new transactions land in a "To Review" inbox; only reviewed ones teach each user's own model; suggestions start after 30 reviewed ([quick start](https://help.copilot.money/en/articles/11157550-quick-start-guide)) | an explicit review inbox, inbox zero as the goal, a calibration threshold before suggestions |
+| [Prodigy](https://explosion.ai/blog/prodigy-annotation-tool-active-learning) (labelling training data) | one decision at a time, accept or reject with one key or a swipe; the model picks what it is least sure about ([text classification](https://future.prodi.gy/features/text-classification)) | the card review screen: one track, one key per answer, uncertain tracks first |
+| [Apple Photos, People](https://support.apple.com/en-la/guide/photos/phtad9d981ab/9.0/mac/14.0) | "Is this X?", Yes or No; users complain that batch confirms mix lookalikes and that there was no undo ([discussion](https://discussions.apple.com/thread/255900660), [blog](https://twocentsonapple.blogspot.com/2018/01/on-photos-face-tagging-and.html)) | no casual "confirm all"; every decision can be undone |
+| [Cyanite](https://cyanite.ai/music-tagging/) (music tagging) | tags genre, mood and energy from audio, similarity search for DJs; no sign of learning from an individual user | per-user learning is what sets vibecheck apart |
+
+Two research results matter directly:
+
+- **Suggestions get over-accepted.** In
+  [Bias in the Loop](https://hdsr.mitpress.mit.edu/pub/nrcn4h7d) (Beck et al.,
+  2,784 participants), people who favour automation accepted more wrong
+  suggestions, and making corrections harder to enter lowered the correction
+  rate ([arXiv](https://arxiv.org/html/2509.08514v1)). In a
+  [crowdworker study](https://web3.arxiv.org/pdf/2507.15821), AI suggestions
+  shifted the labels people gave without making them faster. This is the
+  problem vibecheck had at the start: showing the model's guess anchors even
+  careful users.
+- **Comparing is easier than scoring on a fixed scale.** Comparative judgments
+  tend to be more valid and need no stable internal scale
+  ([review](https://www.psychologicalscience.org/journals/perspectives/1745691610393521/),
+  [dialog study](https://arxiv.org/pdf/2005.10716)); the evidence on
+  consistency specifically is mixed. This matters for stars, which drift over
+  the years.
+
+What this suggests for the flow:
+
+1. **Ask blind first.** Calibration and conflict cards show no suggestion.
+   Suggestions start only after about 30 labels by hand.
+2. **Correcting costs one key.** One key per colour on the card, so changing a
+   label is as fast as accepting it.
+3. **Re-ask old tracks now and then.** Occasionally re-ask a track labelled
+   months ago, without showing the old answer. It measures how consistent the
+   user is with themselves and catches taste drift, e.g. "you agree with your
+   past self 84% of the time".
+4. **Stars by comparison** where scores conflict: "which of these two do you
+   rate higher?".
+5. **Show examples.** Next to each colour, 2–3 of the user's most trusted
+   tracks with that colour as a reference. Standard practice in labelling
+   guidelines, not from the sources above.
+6. **Undo everything**, and no bulk confirm without friction.
+7. **For corrections made later in rekordbox:** removing a track from the
+   round's playlist could mean "reviewed", so the playlist works as an inbox.
+   With review moving into the app, this becomes a secondary path.
+
 ## Open questions
 
 - [ ] Untouched labels: weight 0, or a small weight such as 0.1?
@@ -126,3 +188,7 @@ collection uses one or the other.
 - [ ] Existing labels that pass the consistency check: do they move up to level 3, or stay at 2?
 - [ ] Prototype compatibility after schema v5: teach the prototype v5, or freeze it?
 - [ ] Your own collection: re-level its current labels from the round history, or start everyone at level 4?
+- [ ] Review in the app: how long a snippet per track, and from where in the track (the drop, the first chorus, a random point)?
+- [ ] Blind re-asks of old tracks: how often, e.g. 1 in 20 cards?
+- [ ] Stars by comparison: only for conflicts, or everywhere?
+- [ ] Does the rekordbox playlist still matter as an inbox once review moves into the app?
