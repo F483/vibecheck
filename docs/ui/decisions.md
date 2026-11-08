@@ -14,6 +14,13 @@ its script.
 
 ![Studio workspace](workspace.png)
 
+**Built in Godot** in `app/`, with mock data and not yet connected to the
+core. `app/main.gd` holds the rail, the dialogs and key routing. Each screen is
+in `app/ui/`, along with the shared `player.gd` and `table.gd`, and `ui.gd`
+holds the palette and widgets. All of it is built in code: no `.tscn` per
+screen and no imported assets. Screenshot any screen with
+`godot --path app -- --shot=out.png --screen=library --dialog=export`.
+
 ## Direction
 
 - Of three directions (A Rack, B Studio, C Paper), **B Studio** was chosen:
