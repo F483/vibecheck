@@ -55,7 +55,7 @@ func refresh() -> void:
 	var tiles := UI.row(6)
 	for t: Array in [["Tracks", _n(total), UI.TEXT], ["Labelled by you", _n(state.labels), UI.TEXT],
 			["Conflicts", _n(conflicts), UI.AMBER]]:
-		var p := UI.panel(UI.DARK, 4, 8, 8)
+		var p := UI.panel(UI.PANEL, 4, 8, 8)
 		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		p.add_child(UI.col(2, [UI.caps(t[0]), UI.text(t[1], 18, t[2], "mono")]))
 		tiles.add_child(p)
@@ -151,7 +151,7 @@ func _toggle(t: String, key: String, example := "") -> void:
 
 
 func _path(label: String, key: String, folder: bool) -> Control:
-	var p := UI.panel(UI.DARK, 4, 10, 6)
+	var p := UI.panel(UI.PANEL, 4, 10, 6)
 	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
 	s.border_color = UI.LINE
 	s.set_border_width_all(1)

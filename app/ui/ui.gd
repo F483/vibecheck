@@ -33,6 +33,7 @@ const TAGS := {
 	"unsure": [Color("#1c3e3b"), Color("#6ff0e2")],
 	"re-ask": [Color("#3a3b40"), Color("#d6d7db")],
 	"old label": [Color("#463a1c"), Color("#e0b04a")],
+	"from rekordbox": [Color("#24304a"), Color("#9fb8ff")],
 }
 
 static var _fonts := {}
@@ -226,6 +227,16 @@ static func chip(t: String, on: bool, cb: Callable = Callable()) -> PanelContain
 	return p
 
 
+## 14194 -> "14,194"
+static func thousands(n: int) -> String:
+	var s := str(absi(n))
+	var out := ""
+	while s.length() > 3:
+		out = "," + s.right(3) + out
+		s = s.left(s.length() - 3)
+	return ("-" if n < 0 else "") + s + out
+
+
 ## The track's cover, or a gradient in its own colour when the file has none.
 static func cover(t: Dictionary, side: float, art: Texture2D = null) -> TextureRect:
 	var r := TextureRect.new()
@@ -251,7 +262,7 @@ static func cover_texture(t: Dictionary, art: Texture2D = null) -> Texture2D:
 	return tex
 
 
-## How far a label is trusted, 1 untouched .. 4 played: a ring filled in quarters.
+## How far a label is trusted, 1 guessed .. 4 played: a ring filled in quarters.
 class Ring extends Control:
 	var level := 1
 

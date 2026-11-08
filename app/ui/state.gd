@@ -48,8 +48,10 @@ var _main := Lane.new()
 var _waves := Lane.new()
 var _stats := Lane.new()
 var _bg := Lane.new()
+var _ask := Lane.new()  # the model's guesses for dropped tracks: not behind background listening
 var _answered := {}
 var _skipped: Array[Dictionary] = []
+var _front := {}  # paths you put at the front of the queue: kept there when it is rebuilt
 var _covers := {}
 var _seen_mtime := 0
 var _exporting := false
@@ -79,7 +81,7 @@ func _init() -> void:
 ## workers are joined and what holds textures let go, so nothing leaks at exit.
 func stop() -> void:
 	ClassDB.class_call_static("Vibecheck", "stop")
-	for l: Lane in [_main, _waves, _stats, _bg]:
+	for l: Lane in [_main, _waves, _stats, _bg, _ask]:
 		l.stop()
 	_covers.clear()
 	queue.clear()
@@ -211,6 +213,7 @@ func refresh_queue(count_new := false) -> void:
 		skip.append(t.path)
 	if not head.is_empty():
 		skip.append(head.path)
+	skip.append_array(_front.keys())
 	var before := {}
 	for t in queue:
 		before[t.path] = true
@@ -225,10 +228,13 @@ func refresh_queue(count_new := false) -> void:
 		var out: Array[Dictionary] = []
 		if not now_head.is_empty():
 			out.append(now_head)
+		for t in queue:
+			if _front.has(t.path) and t != now_head and not _answered.has(t.path):
+				out.append(t)
 		var fresh := 0
 		for it: Dictionary in q.items:
 			var t: Dictionary = by_path.get(it.path, {})
-			if t.is_empty() or t == now_head or _answered.has(t.path):
+			if t.is_empty() or t == now_head or _answered.has(t.path) or _front.has(t.path):
 				continue
 			t.tag = it.tag
 			t.guess = _ui_of.get(int(it.guess), -1)
@@ -242,7 +248,11 @@ func refresh_queue(count_new := false) -> void:
 		queue = out
 		if count_new:
 			queued_by_sync = fresh
+		var first := not loaded
 		loaded = true
+		if first:
+			# only now is it known whether it is still calibrating
+			_guess(reviewed)
 		changed.emit(), "Choosing what to ask…" if not loaded else "")
 
 
@@ -273,11 +283,13 @@ func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, 
 	if reviewed.has(t):
 		reviewed.erase(t)
 	reviewed.push_front(t)
+	t.erase("dropped")
 	if not mine:
 		labels += 1
 	_answered[t.path] = true
 	queue.erase(t)
 	_skipped.erase(t)
+	_front.erase(t.path)
 	if not t.embedded:
 		_listen_to([t])
 	_decided += 1
@@ -289,21 +301,105 @@ func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, 
 ## The track in the player goes to the end of the queue, asked again later.
 func skip(t: Dictionary) -> void:
 	queue.erase(t)
+	_front.erase(t.path)
 	if not _skipped.has(t):
 		_skipped.append(t)
 	queue.append(t)
 	changed.emit()
 
 
+## From the library: asked again, blind, right after the track in the player.
 func add_to_queue(ts: Array) -> void:
-	var at := mini(1, queue.size())
-	for t: Dictionary in ts:
-		if queue.has(t):
+	_to_front(ts, 1, "re-ask")
+
+
+## Files dropped on the app, from rekordbox or Finder. On the queue: to its front in the order
+## dropped, the first straight into the player. On the table: rows there, in the next Export as
+## they are; one with no colour gets the model's guess. Returns {tracks, missing}: missing are
+## the names that aren't in the collection.
+func add_dropped(paths: PackedStringArray, to_table: bool) -> Dictionary:
+	var out: String = ClassDB.class_call_static("Vibecheck", "call", "dropped",
+		JSON.stringify({"root": settings.music, "xml": settings.xml, "paths": Array(paths)}))
+	var r: Variant = JSON.parse_string(out)
+	if not r is Dictionary or r.has("error"):
+		failed.emit(str(r.error) if r is Dictionary else "reading the dropped files failed")
+		return {"tracks": [], "missing": PackedStringArray()}
+	var ts: Array = []
+	var missing := PackedStringArray()
+	for i in paths.size():
+		if paths[i] == "":
 			continue
-		t.tag = "re-ask"
+		var t: Dictionary = by_path.get(r.ok[i], {}) if r.ok[i] != null else {}
+		if t.is_empty():
+			missing.append(paths[i].get_file())
+		else:
+			ts.append(t)
+	if ts.is_empty():
+		pass
+	elif to_table:
+		for t: Dictionary in ts:
+			# stepped through in the player until confirmed
+			t.dropped = true
+			t.batch = true
+			if not reviewed.has(t):
+				reviewed.push_front(t)
+		_call(_main, "add_to_batch", {"paths": ts.map(func(t: Dictionary) -> String: return t.path)}, func(_r: Variant) -> void: pass)
+		_guess(ts)
+		changed.emit()
+	else:
+		_to_front(ts, 0, "from rekordbox")
+	return {"tracks": ts, "missing": missing}
+
+
+## Rows in the list with no colour (dropped there) get the model's guess for colour and stars,
+## saved as its label (guessed). Not while calibrating, nor with the guess turned off. Tracks it
+## hasn't listened to are listened to first, a few seconds each.
+func _guess(ts: Array) -> void:
+	if calibrating() or not settings.show_guess:
+		return
+	var paths: Array = ts.filter(func(t: Dictionary) -> bool: return t.batch and t.colour < 0) \
+		.map(func(t: Dictionary) -> String: return t.path)
+	if paths.is_empty():
+		return
+	_call(_ask, "guess", {"paths": paths}, func(gs: Variant) -> void:
+		if gs == null:
+			return
+		for g: Dictionary in gs:
+			var t: Dictionary = by_path.get(g.path, {})
+			var c: int = _ui_of.get(int(g.colour), -1)
+			if t.is_empty() or t.colour >= 0 or c < 0:
+				continue
+			t.colour = c
+			t.rating = maxi(int(g.stars), 0)
+			t.source = "model"
+			t.trust = 1
+			t.batch = true
+			t.embedded = true
+			t.labelled_ts = int(Time.get_unix_time_from_system())
+			t.labelled = Time.get_date_string_from_system()
+			if not reviewed.has(t):
+				reviewed.push_front(t)
+		changed.emit(), "Guessing %d dropped track%s…" % [paths.size(), "" if paths.size() == 1 else "s"])
+
+
+func _to_front(ts: Array, at: int, tag: String) -> void:
+	at = mini(at, queue.size())
+	var add: Array[Dictionary] = []
+	for t: Dictionary in ts:
+		if add.has(t):
+			continue
+		var i := queue.find(t)
+		if i >= 0:
+			queue.remove_at(i)
+			if i < at:
+				at -= 1
+		_skipped.erase(t)
 		_answered.erase(t.path)
-		queue.insert(at, t)
-		at += 1
+		_front[t.path] = true
+		t.tag = tag
+		add.append(t)
+	for j in add.size():
+		queue.insert(at + j, add[j])
 	changed.emit()
 
 

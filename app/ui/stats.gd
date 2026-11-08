@@ -61,7 +61,7 @@ func refresh() -> void:
 			["Stars right", _pct(now.stars) if now.stars_n > 0 else "—", "on %d held-back labels" % now.stars_n],
 			["Past self", "%d%%" % roundi(100.0 * st.agreed / again) if again > 0 else "—", "same colour on %d tracks asked twice" % again],
 			["Labels", str(int(st.labels)), "yours, that it has listened to"]]:
-		var p := UI.panel(UI.DARK, 4, 12, 10)
+		var p := UI.panel(UI.PANEL, 4, 12, 10)
 		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		p.add_child(UI.col(2, [UI.caps(t[0]), UI.text(t[1], 22, UI.LIME, "mono"), UI.text(t[2], 10, UI.MUTED)]))
 		tiles.add_child(p)
@@ -74,7 +74,7 @@ func refresh() -> void:
 	for m: Array in now.confused:
 		var a: Dictionary = UI.COLOURS[_ui(int(m[0]))]
 		var b: Dictionary = UI.COLOURS[_ui(int(m[1]))]
-		var p := UI.panel(UI.DARK, 4, 10, 6)
+		var p := UI.panel(UI.PANEL, 4, 10, 6)
 		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		p.add_child(UI.row(6, [UI.rect(a.c, 8, 16), UI.rect(b.c, 8, 16), UI.text("%s taken for %s" % [a.name, b.name], 12),
 			UI.spacer(), UI.text("%d%%" % roundi(100.0 * m[2] / maxf(now.colour_n, 1)), 11, UI.MUTED, "mono")]))
@@ -93,7 +93,7 @@ func refresh() -> void:
 		if t.trust > 0:
 			counts[int(t.trust) - 1] += 1
 	var bar := UI.row(2)
-	var names := ["untouched guess", "existing", "by hand", "played"]
+	var names := ["guessed", "existing", "confirmed", "played"]
 	var colours := [Color("#4a4b50"), UI.AMBER, Color("#8fb02a"), UI.LIME]
 	for i in [3, 2, 1, 0]:
 		var r := UI.rect(colours[i], 0, 10)
@@ -131,7 +131,7 @@ class LearningCurve extends Control:
 
 	func _draw() -> void:
 		var f := ThemeDB.fallback_font
-		draw_rect(Rect2(Vector2.ZERO, size), Color("#222327"))
+		draw_rect(Rect2(Vector2.ZERO, size), UI.BG)
 		for v in [40, 50, 60, 70, 80]:
 			draw_line(Vector2(30, _y(v)), Vector2(size.x - 10, _y(v)), Color("#2f3036"))
 			draw_string(f, Vector2(4, _y(v) + 4), "%d%%" % v, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("#a0a1a8"))

@@ -22,19 +22,19 @@ func _init(s, a) -> void:
 	app = a
 	add_theme_constant_override("separation", 0)
 	_queue = UI.col(8)
-	var q := UI.section(UI.PANEL)
+	var q := UI.section(UI.DARK)
 	q.add_child(_queue)
 	add_child(q)
 	_model = UI.row(12)
-	var m := UI.section(UI.DARK, 16, 8)
+	var m := UI.section(UI.PANEL, 16, 8)
 	m.add_child(_model)
 	add_child(m)
-	player = Player.new(UI.PANEL, state)
+	player = Player.new(UI.DARK, state)
 	player.next.connect(_on_next)
 	player.skip.connect(_on_skip)
 	add_child(player)
 	_reviewed = UI.row(10)
-	var r := UI.section(UI.DARK, 16, 8)
+	var r := UI.section(UI.PANEL, 16, 8)
 	r.add_child(_reviewed)
 	add_child(r)
 	table = Table.new(["now", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key"])
@@ -56,14 +56,18 @@ func refresh() -> void:
 	# a new queue: load its head, unless you are relistening to a reviewed track
 	if not relisten and (state.queue.is_empty() or state.queue[0] != player.track):
 		_head()
+	elif relisten:
+		player.fill_guess(player.track)
 	_build_queue()
 	_build_model()
 	for c in _reviewed.get_children():
 		c.queue_free()
-	for c: Control in [UI.text("↓", 13, UI.MUTED), UI.caps("Reviewed"), UI.text(str(state.reviewed.size()), 12, UI.TEXT, "mono"),
-			UI.spacer(), UI.button("Export →", "X", true, Callable(app, "export_batch"))]:
+	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Reviewed"), UI.text(str(state.reviewed.size()), 12, UI.TEXT, "mono")]
+	for c: Control in parts + [UI.spacer(), UI.button("Export →", "X", true, Callable(app, "export_batch"))]:
 		_reviewed.add_child(c)
-	table.set_rows(state.reviewed)
+	var rows: Array[Dictionary] = []
+	rows.append_array(state.reviewed)
+	table.set_rows(rows)
 
 
 func _build_queue() -> void:
@@ -77,14 +81,19 @@ func _build_queue() -> void:
 	for i in n:
 		cards.add_child(_card(state.queue[i], i == 0))
 	if state.queue.size() > n:
-		var more := UI.panel(UI.PANEL, 4)
+		var more := UI.panel(UI.DARK, 4)
 		var s: StyleBoxFlat = more.get_theme_stylebox("panel")
 		s.border_color = Color("#4a4b50")
 		s.set_border_width_all(1)
 		more.custom_minimum_size = Vector2(72, 64)
+		# the queue holds the next 200; the pool is everything that could be asked
 		var l := UI.text("+%d" % (state.queue.size() - n), 12, UI.MUTED)
-		l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		more.add_child(l)
+		var of := UI.text("of %s" % UI.thousands(maxi(state.pool, state.queue.size())), 10, UI.MUTED, "mono")
+		for x: Label in [l, of]:
+			x.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var c := UI.col(0, [l, of])
+		c.alignment = BoxContainer.ALIGNMENT_CENTER
+		more.add_child(c)
 		cards.add_child(more)
 	cards.add_child(UI.spacer())
 	cards.add_child(UI.text("←", 16, UI.MUTED))
@@ -136,7 +145,7 @@ func _ago(days: int) -> String:
 ## Where the queue's tracks come from: rekordbox, and how fresh its export is.
 func _widget() -> Control:
 	var old: bool = state.export_old()
-	var p := UI.panel(UI.DARK, 4, 9, 6)
+	var p := UI.panel(UI.PANEL, 4, 9, 6)
 	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
 	s.border_color = Color("#6a5420") if old else UI.LINE
 	s.set_border_width_all(1)
@@ -184,35 +193,76 @@ func _build_model() -> void:
 ## Load the front of the queue into the player, blind while calibrating.
 func _head() -> void:
 	relisten = false
+	table.select("")
 	if state.queue.is_empty():
 		player.clear("Reading your collection…" if not state.loaded else "Queue is empty: sync from rekordbox or add tracks from the library")
 		return
 	var t: Dictionary = state.queue[0]
+	if t.tag == "from rekordbox":
+		# dragged in to be edited: show what it has
+		player.show_track(t, "queue", int(t.colour), int(t.rating))
+		return
 	var blind: bool = state.calibrating() or not state.settings.show_guess
 	player.show_track(t, "queue", -1 if blind else t.guess, -1 if blind else t.guess_stars)
 
 
+## Save: a track from the queue moves on to the next in the queue; one from the list to the
+## next row in the list, as it is sorted now (a new colour re-sorts the saved one elsewhere),
+## so a sorted list can be worked through top to bottom. After the last row, the queue.
 func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
-	relisten = false
+	var nxt := _next_row() if relisten else {}
+	relisten = not nxt.is_empty()
 	state.decide(player.track, colour, rating, "vibe", energy, key)
+	if relisten:
+		open_row(nxt)
+
+
+func _next_row() -> Dictionary:
+	var at := table.rows.find(player.track)
+	return table.rows[at + 1] if at >= 0 and at + 1 < table.rows.size() else {}
 
 
 func _on_skip() -> void:
-	if relisten:
+	if player.mode == "dropped" and not _next_dropped().is_empty():
+		open_row(_next_dropped())
+	elif relisten:
 		_head()
 		_build_queue()
 	elif not state.queue.is_empty():
 		state.skip(state.queue[0])
 
 
+## The dropped row after the one in the player, in the table's order, wrapping round.
+func _next_dropped() -> Dictionary:
+	var rows := table.rows.filter(func(t: Dictionary) -> bool: return t.get("dropped", false) and t != player.track)
+	if rows.is_empty():
+		return {}
+	var at := table.rows.find(player.track)
+	for t: Dictionary in rows:
+		if table.rows.find(t) > at:
+			return t
+	return rows[0]
+
+
 func _on_row(t: Dictionary) -> void:
 	relisten = true
-	player.show_track(t, "relisten")
+	player.show_track(t, "dropped" if t.get("dropped", false) else "relisten")
+
+
+## Open a table row in the player, as a click on it does.
+func open_row(t: Dictionary) -> void:
+	table.select(t.path)
+	_on_row(t)
+
+
+## Whether a point in the window is on the reviewed strip or its table, for a drop.
+func is_table(at: Vector2) -> bool:
+	return at.y >= (_reviewed.get_parent() as Control).get_global_rect().position.y
 
 
 func handle_key(k: InputEventKey) -> bool:
 	if k.alt_pressed:
-		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm"}
+		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm", KEY_T: "ring"}
 		if sorts.has(k.keycode):
 			table.sort_by(sorts[k.keycode])
 			return true

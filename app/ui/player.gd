@@ -2,7 +2,7 @@ extends PanelContainer
 ## The player: one track, its waveform and the colour keys, then two rows level with
 ## the keys. Upper: what you say about the track (stars, energy, key). Lower: time
 ## (stop, parts, play) and the two buttons that keep their place and keys everywhere,
-## Skip (⇧ENTER) and Save (ENTER), which saves your label and moves on.
+## Skip (⇧ENTER) and Confirm (ENTER), which makes what is shown your label and moves on.
 ## Used by vibe and library.
 
 const UI := preload("res://ui/ui.gd")
@@ -18,7 +18,8 @@ const KEY_GAP := 6
 const MODES := {
 	"queue": {"tag": "", "skip": "Skip track", "hint": ""},
 	"relisten": {"tag": "relistening · from reviewed", "skip": "Requeue", "hint": ""},
-	"library": {"tag": "relistening · from library", "skip": "Skip", "hint": "Save adds it to the next Export"},
+	"library": {"tag": "relistening · from library", "skip": "Skip", "hint": "Confirm adds it to the next Export"},
+	"dropped": {"tag": "from rekordbox", "skip": "Skip", "hint": "Confirm makes it your label"},
 }
 
 var state
@@ -384,6 +385,8 @@ func _refresh() -> void:
 		c.queue_free()
 	var cfg: Dictionary = MODES[mode]
 	var tg: String = cfg.tag if cfg.tag != "" else str(track.tag)
+	if mode == "dropped":
+		tg += " · model's guess" if track.source == "model" else ""
 	if tg != "":
 		_head.add_child(UI.tag(tg))
 	_head.add_child(UI.text(track.title, 22, UI.TEXT, "heavy"))
@@ -391,6 +394,9 @@ func _refresh() -> void:
 	_head.add_child(UI.spacer())
 	if cfg.hint != "":
 		_head.add_child(UI.margin(UI.text(cfg.hint, 11, UI.MUTED), 0, 0, 16, 0))
+	if float(track.bpm) > 0:
+		var bpm := UI.row(4, [UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono"), UI.text("BPM", 11, UI.MUTED, "mono")])
+		_head.add_child(UI.margin(bpm, 0, 0, 16, 0))
 	_head.add_child(UI.text("", 12, UI.MUTED, "mono"))
 	_art.texture = UI.cover_texture(track, state.cover(track, 192))
 	_refresh_keys()
@@ -399,9 +405,20 @@ func _refresh() -> void:
 	for c in _actions.get_children():
 		c.queue_free()
 	_actions.add_child(UI.button(cfg.skip, "⇧ENTER", false, func() -> void: skip.emit()))
-	_actions.add_child(UI.button("Save", "ENTER", true, _next))
+	_actions.add_child(UI.button("Confirm", "ENTER", true, _next))
 	_refresh_transport()
 	_tick()
+
+
+## The model's guess arrived after the track opened: fill it in, unless you already chose.
+func fill_guess(t: Dictionary) -> void:
+	if t != track or t.source != "model" or int(t.colour) < 0:
+		return
+	if colour < 0:
+		colour = int(t.colour)
+		if rating == 0:
+			rating = int(t.rating)
+	_refresh()
 
 
 func _refresh_keys() -> void:
@@ -606,7 +623,7 @@ class Wave extends Control:
 
 	func _draw() -> void:
 		var h := size.y - LABELS
-		draw_rect(Rect2(0, 0, size.x, h), Color("#222327"))
+		draw_rect(Rect2(0, 0, size.x, h), UI.BG)
 		if peaks.is_empty():
 			draw_string(font, Vector2(8, h / 2 + 4), "reading the audio…", HORIZONTAL_ALIGNMENT_LEFT, -1, 11, Color("#5a5b62"))
 			return

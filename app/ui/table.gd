@@ -32,6 +32,22 @@ var _fit := {}  # [text, width] -> text that fits
 var _sans: Font
 var _bold: Font
 var _mono: Font
+var _trust: PopupPanel
+
+## The trust levels, as the ring shows them: [name, what you did, what it counts for].
+const TRUST := [
+	[4, "played", "you played it after the label was written", "counts most"],
+	[3, "confirmed", "you confirmed it here, or changed it in rekordbox", "counts a lot"],
+	[2, "existing", "it was there before vibecheck", "counts a little"],
+	[1, "guessed", "the model guessed it, nothing since", "counts least"],
+]
+const TRUST_NEXT := {
+	4: "This label counts fully.",
+	3: "Play it in a set to make it count most.",
+	2: "Play it, or confirm it here, to make it count more.",
+	1: "Play it, or correct its colour, to make it count more.",
+	0: "No label yet.",
+}
 
 
 func _init(c: Array) -> void:
@@ -75,6 +91,8 @@ func _value(t: Dictionary, k: String) -> Variant:
 			return str(t[k])
 		"colour":
 			return t.colour if t.colour >= 0 else 99
+		"ring":
+			return int(t.trust)
 	return t.get(k, 0)
 
 
@@ -158,9 +176,15 @@ func _draw() -> void:
 		for k: String in cols:
 			_cell(t, k, y, sel)
 	# the header last, over any row scrolled under it
-	draw_rect(Rect2(0, 0, size.x, HEAD), UI.PANEL)
+	draw_rect(Rect2(0, 0, size.x, HEAD), UI.DARK)
 	for k: String in cols:
 		var h: String = COLS[k][0].to_upper()
+		if k == "ring":
+			# trust has no word, just a ring, like its cells
+			draw_arc(Vector2(_x[k][0] + 6, HEAD / 2), 4.5, 0, TAU, 24, UI.MUTED, 1.5, true)
+			if k == sort_key:
+				draw_string(_mono, Vector2(_x[k][0] + 13, HEAD / 2 + 4), "▼" if sort_desc else "▲", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UI.MUTED)
+			continue
 		if k == sort_key and h != "":
 			h += " ▼" if sort_desc else " ▲"
 		draw_string(_mono, Vector2(_x[k][0], HEAD / 2 + 4), h, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UI.MUTED)
@@ -237,13 +261,16 @@ func _scroll_to(v: float) -> void:
 func _click(p: Vector2) -> void:
 	if p.y < HEAD:
 		for k: String in cols:
-			if COLS[k][0] != "" and p.x >= _x[k][0] and p.x < _x[k][0] + _x[k][1] + GAP:
+			if (COLS[k][0] != "" or k == "ring") and p.x >= _x[k][0] and p.x < _x[k][0] + _x[k][1] + GAP:
 				sort_by(k)
 		return
 	var i := int((p.y - HEAD + scroll) / ROW)
 	if i < 0 or i >= rows.size():
 		return
 	var t := rows[i]
+	if cols.has("ring") and p.x >= _x["ring"][0] - GAP / 2 and p.x < _x["ring"][0] + _x["ring"][1] + GAP / 2:
+		_trust_popup(t, Vector2i(get_screen_position() + p))
+		return
 	if cols.has("check") and p.x < _x["check"][0] + _x["check"][1] + GAP / 2:
 		if checked.has(t.path):
 			checked.erase(t.path)
@@ -254,6 +281,32 @@ func _click(p: Vector2) -> void:
 		return
 	select(t.path)
 	activated.emit(t)
+
+
+## What the ring means, with this track's level lit and what would raise it.
+func _trust_popup(t: Dictionary, at: Vector2i) -> void:
+	if _trust:
+		_trust.queue_free()
+	_trust = PopupPanel.new()
+	_trust.add_theme_stylebox_override("panel", UI.pad(UI.style(UI.DARK, 6, Color("#55565c"), 1), 12, 10))
+	var lv: int = int(t.trust)
+	var v := UI.col(6, [UI.caps("Trust: how much the model learns from this label")])
+	var g := GridContainer.new()
+	g.columns = 4
+	g.add_theme_constant_override("h_separation", 10)
+	g.add_theme_constant_override("v_separation", 4)
+	for row: Array in TRUST:
+		var on: bool = row[0] == lv
+		g.add_child(UI.Ring.new(row[0]))
+		g.add_child(UI.text(row[1], 12, UI.LIME if on else UI.TEXT, "bold" if on else "sans"))
+		g.add_child(UI.text(row[2], 12, UI.TEXT if on else UI.MUTED))
+		g.add_child(UI.text(row[3], 11, UI.LIME if on else UI.MUTED, "mono"))
+	v.add_child(g)
+	var nxt: String = TRUST_NEXT.get(lv, "")
+	v.add_child(UI.margin(UI.text(nxt, 12, UI.TEXT), 0, 4, 0, 0))
+	_trust.add_child(v)
+	add_child(_trust)
+	_trust.popup(Rect2i(at + Vector2i(8, 8), Vector2i.ZERO))
 
 
 func select(path: String) -> void:

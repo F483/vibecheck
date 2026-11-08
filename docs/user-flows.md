@@ -53,9 +53,9 @@ rule; they only see a small indicator per track.
 | level | what the user did | training weight | notes |
 |---|---|---|---|
 | 4: played | played it after we wrote the label (its play count went up), then kept it or edited it | 1.0 | the strongest signal: tested in a real set; the label left after playing is the final one, edited or not |
-| 3: set by hand | labelled it in the app, or changed our colour or rating in rekordbox, and not played since | about 0.7 | a considered first impression; moves to 4 once played. Editing its cues counts here too |
+| 3: confirmed (was "set by hand") | labelled it in the app, or changed our colour or rating in rekordbox, and not played since | about 0.7 | a considered first impression; moves to 4 once played. Editing its cues counts here too |
 | 2: existing label | it was there before vibecheck | about 0.3 until checked | a library's history can be wildly inconsistent; a track that has been played starts at 4 instead |
-| 1: untouched | we wrote it and nothing happened since | about 0.2 | usually more or less right, just not worth playing or correcting; kept small so the model doesn't learn its own guesses back |
+| 1: guessed (was "untouched") | we wrote it and nothing happened since | about 0.2 | usually more or less right, just not worth playing or correcting; kept small so the model doesn't learn its own guesses back |
 
 The weights are a starting point to tune, not measured values.
 

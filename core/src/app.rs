@@ -55,11 +55,18 @@ pub struct Export {
     pub name: String,
     /// path -> play count at export
     pub plays: HashMap<String, i64>,
+    /// dropped tracks exported with the colour and stars they had in rekordbox
+    /// (no label here): what the next sync compares against
+    #[serde(default)]
+    pub theirs: HashMap<String, (Option<i64>, Option<i64>)>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
 struct Saved {
     export: Option<Export>,
+    /// tracks dropped on the list in the app: in the next export as they are
+    #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "unsaved")]
+    dropped: Vec<String>,
 }
 
 fn saved_path(root: &Path) -> Res<PathBuf> {
@@ -78,6 +85,18 @@ fn save(root: &Path, s: &Saved) -> Res<()> {
     Ok(())
 }
 
+/// Tracks dropped on the list go out with the next export as they are, labelled
+/// or not: kept here until then.
+pub fn add_to_batch(root: &Path, paths: &[String]) -> Res<()> {
+    let mut s = load_saved(root);
+    for p in paths {
+        if !s.dropped.contains(p) {
+            s.dropped.push(p.clone());
+        }
+    }
+    save(root, &s)
+}
+
 /// Labels made after this belong to the next export: the last export, else the
 /// last round the command line made.
 fn since(con: &rusqlite::Connection, s: &Saved) -> Res<i64> {
@@ -89,7 +108,7 @@ fn since(con: &rusqlite::Connection, s: &Saved) -> Res<i64> {
 
 fn batch(con: &rusqlite::Connection, after: i64) -> Res<Vec<String>> {
     let mut st = con.prepare(
-        "SELECT path FROM current WHERE source = 'user' AND round_id IS NULL AND ts > ?1 AND missing_at IS NULL ORDER BY ts",
+        "SELECT path FROM current WHERE source IN ('user', 'model') AND round_id IS NULL AND ts > ?1 AND missing_at IS NULL ORDER BY ts",
     )?;
     let out = st.query_map([after], |r| r.get(0))?.collect::<Result<_, _>>()?;
     Ok(out)
@@ -167,8 +186,10 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
         st.query_map([keyenergy::VERSION], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?.collect::<Result<_, _>>()?
     };
     let mine = store::key_energy(&con)?;
-    let after = since(&con, &load_saved(root))?;
-    let in_batch: HashSet<String> = batch(&con, after)?.into_iter().collect();
+    let saved = load_saved(root);
+    let after = since(&con, &saved)?;
+    let mut in_batch: HashSet<String> = batch(&con, after)?.into_iter().collect();
+    in_batch.extend(saved.dropped.iter().cloned());
     let mut st = con.prepare(
         "SELECT path, hash, colour_id, stars, source, ts FROM current WHERE missing_at IS NULL ORDER BY path",
     )?;
@@ -569,11 +590,75 @@ fn is_key(k: &str) -> bool {
 }
 
 /// Listen to tracks that have no vector yet, so they can be learned from and asked.
+#[derive(Serialize)]
+pub struct Guess {
+    pub path: String,
+    /// palette id, 0 when the model has no colour for it
+    pub colour: i64,
+    pub stars: i64,
+}
+
+/// The model's colour and stars for tracks with none, saved as its labels
+/// (source "model", trust untouched) so they go out with the next export;
+/// listens first to any it hasn't heard. Tracks that have a label, or that it
+/// has no colour for, are left out; none while it has too little to learn from.
+pub fn guess(root: &Path, cfg: &Config, paths: &[String]) -> Res<Vec<Guess>> {
+    embed::embed_all(root, paths)?;
+    let l = labelled(root)?;
+    if l.x.len() < 20 {
+        return Ok(vec![]);
+    }
+    let ms = model(root, cfg, &l)?;
+    let con = store::labels_db(root)?;
+    let said = store::current(&con, None)?;
+    let open: Vec<String> = paths.iter().filter(|p| !said.get(*p).is_some_and(|l| l.said())).cloned().collect();
+    let (ps, x) = embed::load(root, &open)?;
+    let xr: Vec<&[f32]> = x.iter().map(|v| v.as_slice()).collect();
+    let preds = ms.0.predict(&xr);
+    let mut out = vec![];
+    con.execute_batch("BEGIN")?;
+    for (p, path) in preds.iter().zip(ps) {
+        let Some(colour) = best_colour(p).and_then(|g| palette::by_id(g.0)) else { continue };
+        let stars: i64 = p.top.get(STARS).and_then(|s| s.0.parse().ok()).unwrap_or(-1);
+        let id: i64 = con.query_row("SELECT id FROM tracks WHERE path = ?1", [&path], |r| r.get(0))?;
+        let label = Label { colour: Some(colour), stars: (1..=5).contains(&stars).then_some(stars as u8) };
+        store::log_label(&con, id, label, "model", None)?;
+        out.push(Guess { path, colour: colour.id, stars });
+    }
+    con.execute_batch("COMMIT")?;
+    Ok(out)
+}
+
 pub fn embed(root: &Path, paths: &[String]) -> Res<usize> {
     Ok(embed::embed_all(root, paths)?.done)
 }
 
 /// Up to `n` live tracks with no vector yet, in a fixed random order.
+/// Files dropped on the app (absolute, as Finder or rekordbox give them) as the
+/// library's own paths; None for a file outside the collection or not in it.
+pub fn dropped(root: &Path, paths: &[String]) -> Res<Vec<Option<String>>> {
+    let con = store::labels_db(root)?;
+    let mut st = con.prepare("SELECT path FROM tracks WHERE missing_at IS NULL")?;
+    let known: Vec<String> = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    Ok(match_dropped(root, paths, &known))
+}
+
+/// Matched on the NFC form: macOS hands out names as stored, which may be NFD
+/// or NFC; a symlink in the collection's own path is resolved on both sides.
+fn match_dropped(root: &Path, paths: &[String], known: &[String]) -> Vec<Option<String>> {
+    let by: HashMap<String, &String> = known.iter().map(|p| (store::norm(p), p)).collect();
+    let real = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    paths
+        .iter()
+        .map(|p| {
+            let p = Path::new(p);
+            let p2 = std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+            let rel = p.strip_prefix(root).or_else(|_| p2.strip_prefix(&real)).ok()?;
+            by.get(&store::norm(&rel.to_string_lossy())).map(|s| s.to_string())
+        })
+        .collect()
+}
+
 pub fn unheard(root: &Path, n: usize) -> Res<Vec<String>> {
     let con = store::labels_db(root)?;
     let have = embed::cached_hashes(&store::cache_db(root)?)?;
@@ -610,11 +695,18 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
     }
     let con = store::labels_db(root)?;
     let mut saved = load_saved(root);
-    let paths = batch(&con, since(&con, &saved)?)?;
+    let mut paths = batch(&con, since(&con, &saved)?)?;
+    let live: HashSet<String> = store::live_paths(&con)?.into_iter().collect();
+    for p in &saved.dropped {
+        if live.contains(p) && !paths.contains(p) {
+            paths.push(p.clone());
+        }
+    }
     if paths.is_empty() {
         return Err("nothing labelled since the last export".into());
     }
-    let labels = store::current(&con, Some("user"))?;
+    // yours, or the model's guess for a track dropped in the app with no colour
+    let labels = store::current(&con, None)?;
     let tonality = cfg.bool("rekordbox", "write_tonality", true);
     let comment = cfg.bool("rekordbox", "write_comment", true);
     let mut ke = if tonality || comment { keyenergy::analyse_all(root, &paths)?.0 } else { HashMap::new() };
@@ -646,11 +738,22 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
         workflow::log_cues(root, p, None)?;
     }
     let ts = now();
+    // the ones with no label here: remember what rekordbox had, to see a change at the next sync
+    let theirs = paths
+        .iter()
+        .filter(|p| !labels.contains_key(*p))
+        .map(|p| {
+            let l = x.get(p).and_then(|t| t.label);
+            (p.clone(), (l.and_then(|l| l.colour).map(|c| c.id), l.and_then(|l| l.stars).map(i64::from)))
+        })
+        .collect();
     saved.export = Some(Export {
         ts,
         name: name.clone(),
         plays: paths.iter().map(|p| (p.clone(), x.get(p).map(|t| t.info.plays).unwrap_or(0))).collect(),
+        theirs,
     });
+    saved.dropped.clear();
     save(root, &saved)?;
     Ok(Exported {
         name,
@@ -686,10 +789,17 @@ pub struct Synced {
 /// tracks of the last export that were played since are counted.
 pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
     let mut saved = load_saved(root);
-    let scope: Option<HashSet<String>> = saved.export.as_ref().map(|e| e.plays.keys().cloned().collect());
-    let n = workflow::read_corrections(root, xml_path, scope.clone(), false, false)
+    // tracks exported with rekordbox's own colour are compared below, not taken as new labels
+    let scope: Option<HashSet<String>> =
+        saved.export.as_ref().map(|e| e.plays.keys().filter(|p| !e.theirs.contains_key(*p)).cloned().collect());
+    let mut n = workflow::read_corrections(root, xml_path, scope.clone(), false, false)
         .map_err(|e| e.to_string().replace("STALE: ", "").to_string())?;
     let x = xml(root, xml_path)?;
+    if let Some(e) = &saved.export {
+        let theirs = their_corrections(root, e, &x)?;
+        n.changed += theirs.len();
+        n.paths.extend(theirs);
+    }
     let mut s = Synced { added: n.added, changed: n.changed, confirmed: n.confirmed, newer: n.newer, unknown: n.unknown, ..Default::default() };
     if let Some(e) = saved.export.as_mut() {
         let fixed: HashSet<&String> = n.paths.iter().collect();
@@ -708,6 +818,27 @@ pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
         save(root, &saved)?;
     }
     Ok(s)
+}
+
+/// Dropped tracks exported with rekordbox's colour: a colour or stars changed in
+/// rekordbox since is your label now; one left as it was stays as it is.
+fn their_corrections(root: &Path, e: &Export, x: &HashMap<String, Track>) -> Res<Vec<String>> {
+    let con = store::labels_db(root)?;
+    let have = store::current(&con, None)?;
+    let mut out = vec![];
+    con.execute_batch("BEGIN")?;
+    for (p, (c0, s0)) in &e.theirs {
+        let Some(l) = x.get(p).and_then(|t| t.label) else { continue };
+        let (c, s) = (l.colour.map(|c| c.id), l.stars.map(i64::from));
+        if (c, s) == (*c0, *s0) || !l.said() || have.contains_key(p) {
+            continue;
+        }
+        let id: i64 = con.query_row("SELECT id FROM tracks WHERE path = ?1", [p], |r| r.get(0))?;
+        store::log_label(&con, id, l, "user", None)?;
+        out.push(p.clone());
+    }
+    con.execute_batch("COMMIT")?;
+    Ok(out)
 }
 
 // --- stats -------------------------------------------------------------------------
@@ -925,6 +1056,19 @@ fn set_in(text: &str, section: &str, key: &str, value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropped_files_become_library_paths() {
+        let root = Path::new("/nowhere/Music/Collection");
+        let known = ["Mo\u{308}we/01 Tide.mp3".to_string(), "A/b.mp3".to_string()];
+        let got = match_dropped(root, &[
+            "/nowhere/Music/Collection/M\u{f6}we/01 Tide.mp3".into(),
+            "/nowhere/Music/Collection/Mo\u{308}we/01 Tide.mp3".into(),
+            "/nowhere/Downloads/A/b.mp3".into(),
+            "/nowhere/Music/Collection/A/c.mp3".into(),
+        ], &known);
+        assert_eq!(got, vec![Some(known[0].clone()), Some(known[0].clone()), None, None]);
+    }
 
     #[test]
     fn a_key_is_set_in_place_and_comments_stay() {

@@ -102,7 +102,8 @@ pub fn read_corrections(
         }
         let rid = of_round.get(rel).copied();
         if Some(now_l) == prev {
-            if in_scope && !last_user.contains_key(rel) {
+            // left as it was: confirms the command line's round; a guess the app exported stays a guess
+            if in_scope && !last_user.contains_key(rel) && rid.is_some() {
                 store::log_label(&con, tid, now_l, "user", rid)?;
                 touched.extend(rid);
                 n.confirmed += 1;

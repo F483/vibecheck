@@ -1,6 +1,6 @@
 extends VBoxContainer
 ## The whole collection: the same player docked on top, filters, and the same flat table.
-## Save puts a track into the reviewed table, so it goes out with the next Export.
+## Confirm puts a track into the reviewed table, so it goes out with the next Export.
 
 const UI := preload("res://ui/ui.gd")
 const Player := preload("res://ui/player.gd")
@@ -38,7 +38,7 @@ func _init(s, a) -> void:
 	head.custom_minimum_size.y = 40
 	head.add_child(UI.row(8, [UI.kbd("/"), search, UI.button("Columns", "", false, func() -> void: pass)]))
 	add_child(head)
-	player = Player.new(Color("#26272b"), state)
+	player = Player.new(UI.DARK, state)
 	player.next.connect(_on_next)
 	player.skip.connect(func() -> void: table.move(1))
 	add_child(player)
@@ -51,7 +51,7 @@ func _init(s, a) -> void:
 	_selection.add_child(UI.row(10, [_sel_count,
 		UI.button("Add to queue", "⌥Q", true, _queue_checked), UI.button("Clear", "", false, func() -> void: table.clear_checked()),
 		UI.spacer(), UI.kbd("⌥C"), UI.text("colour", 11, UI.MUTED), UI.kbd("⌥E"), UI.text("energy", 11, UI.MUTED),
-		UI.kbd("⌥R"), UI.text("rating", 11, UI.MUTED), UI.kbd("⌥B"), UI.text("bpm", 11, UI.MUTED),
+		UI.kbd("⌥R"), UI.text("rating", 11, UI.MUTED), UI.kbd("⌥B"), UI.text("bpm", 11, UI.MUTED), UI.kbd("⌥T"), UI.text("trust", 11, UI.MUTED),
 		UI.kbd("↑↓"), UI.text("move", 11, UI.MUTED)]))
 	_selection.visible = false
 	add_child(_selection)
@@ -75,14 +75,9 @@ func _init(s, a) -> void:
 			_fill())
 
 
-func _thousands(n: int) -> String:
-	var s := str(n)
-	return s.substr(0, s.length() - 3) + "," + s.substr(s.length() - 3) if n >= 1000 else s
-
-
 func _fill() -> void:
 	_dirty = false
-	search.placeholder_text = "Search %s tracks" % _thousands(state.library.size())
+	search.placeholder_text = "Search %s tracks" % UI.thousands(state.library.size())
 	for c in _chips.get_children():
 		c.queue_free()
 	var pending := 0
@@ -146,7 +141,7 @@ func handle_key(k: InputEventKey) -> bool:
 		if k.keycode == KEY_Q:
 			_queue_checked()
 			return true
-		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm"}
+		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm", KEY_T: "ring"}
 		if sorts.has(k.keycode):
 			table.sort_by(sorts[k.keycode])
 			return true

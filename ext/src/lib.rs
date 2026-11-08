@@ -51,6 +51,19 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
             let paths: Vec<String> = serde_json::from_value(a.get("paths").cloned().unwrap_or(json!([])))?;
             json!(app::embed(&root, &paths)?)
         }
+        "guess" => {
+            let paths: Vec<String> = serde_json::from_value(a.get("paths").cloned().unwrap_or(json!([])))?;
+            json!(app::guess(&root, &cfg()?, &paths)?)
+        }
+        "add_to_batch" => {
+            let paths: Vec<String> = serde_json::from_value(a.get("paths").cloned().unwrap_or(json!([])))?;
+            app::add_to_batch(&root, &paths)?;
+            json!(true)
+        }
+        "dropped" => {
+            let paths: Vec<String> = serde_json::from_value(a.get("paths").cloned().unwrap_or(json!([])))?;
+            json!(app::dropped(&root, &paths)?)
+        }
         "unheard" => json!(app::unheard(&root, n(a, "n", 20) as usize)?),
         "export" => json!(app::export(&root, &xml, &cfg()?)?),
         "sync" => json!(app::sync(&root, &xml)?),

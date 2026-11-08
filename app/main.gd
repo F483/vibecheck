@@ -27,7 +27,7 @@ func _ready() -> void:
 	th.default_font_size = 12
 	theme = th
 	var bg := ColorRect.new()
-	bg.color = UI.PANEL
+	bg.color = UI.DARK
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(bg)
 	var root := UI.row(0)
@@ -45,6 +45,7 @@ func _ready() -> void:
 		stack.add_child(s)
 	state.failed.connect(_failed)
 	state.rekordbox_exported.connect(sync_now)
+	get_window().files_dropped.connect(_dropped)
 	var watch := Timer.new()
 	watch.wait_time = 2.0
 	watch.autostart = true
@@ -62,6 +63,35 @@ func _notification(what: int) -> void:
 		get_tree().quit()
 
 
+## Tracks dragged in from rekordbox (or Finder), on the vibe screen: dropped on the reviewed
+## table they join it and the next Export, anywhere else they go to the front of the queue.
+func _dropped(paths: PackedStringArray) -> void:
+	if not state.loaded or dialog:
+		return
+	# the drop sends no position; where the mouse is now is where it let go
+	var w := get_window()
+	var at := Vector2(DisplayServer.mouse_get_position() - w.position) / w.content_scale_factor
+	var vibe: Vibe = screens.vibe
+	var to_table := current == "vibe" and vibe.is_table(at)
+	if not to_table:
+		vibe.relisten = false
+	var r := state.add_dropped(paths, to_table)
+	show_screen("vibe")
+	if to_table and not r.tracks.is_empty():
+		vibe.open_row(r.tracks[0])
+	var missing: PackedStringArray = r.missing
+	if missing.is_empty():
+		return
+	var v := _dialog_box(440)
+	v.add_child(UI.caps("Not in your collection"))
+	v.add_child(UI.wrap("Not added, %d of %d: they aren't tracks in %s." % [missing.size(), paths.size(), state.settings.music], 12, UI.TEXT))
+	var names := Array(missing.slice(0, 8))
+	if missing.size() > 8:
+		names.append("and %d more" % (missing.size() - 8))
+	v.add_child(UI.wrap("\n".join(names), 11))
+	v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
+
+
 func _failed(text: String) -> void:
 	var v := _dialog_box(440)
 	v.add_child(UI.caps("Something went wrong"))
@@ -70,7 +100,7 @@ func _failed(text: String) -> void:
 
 
 func _rail() -> Control:
-	var s := UI.style(UI.DARK)
+	var s := UI.style(UI.PANEL)
 	s.border_color = UI.LINE
 	s.border_width_right = 1
 	var p := PanelContainer.new()
@@ -199,8 +229,8 @@ func sync_now() -> void:
 		v = _dialog_box(420)
 		v.add_child(UI.caps("rekordbox.xml · synced"))
 		v.add_child(UI.text("Last export, %d tracks" % r.out if r.out > 0 else "No export from here yet", 18, UI.TEXT, "heavy"))
-		for line: Array in [[4, r.played, "played", "counts most"], [3, r.corrected, "corrected", "set by hand"],
-				[1, r.untouched, "untouched", "counts a little"]]:
+		for line: Array in [[4, r.played, "played", "counts most"], [3, r.corrected, "corrected", "now confirmed"],
+				[1, r.untouched, "untouched", "still guessed"]]:
 			var n := UI.text(str(int(line[1])), 18, UI.TEXT if line[0] > 1 else UI.MUTED, "mono")
 			n.custom_minimum_size.x = 40
 			v.add_child(UI.row(10, [UI.Ring.new(line[0]), n, UI.text(line[2], 12), UI.spacer(), UI.text(line[3], 12, UI.MUTED, "mono")]))
