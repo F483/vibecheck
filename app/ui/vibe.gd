@@ -14,6 +14,7 @@ var _queue: VBoxContainer
 var _model: HBoxContainer
 var _reviewed: HBoxContainer
 var _shown := -1
+var _status := ""
 
 
 func _init(s, a) -> void:
@@ -28,7 +29,7 @@ func _init(s, a) -> void:
 	var m := UI.section(UI.DARK, 16, 8)
 	m.add_child(_model)
 	add_child(m)
-	player = Player.new(UI.PANEL)
+	player = Player.new(UI.PANEL, state)
 	player.next.connect(_on_next)
 	player.skip.connect(_on_skip)
 	add_child(player)
@@ -36,20 +37,25 @@ func _init(s, a) -> void:
 	var r := UI.section(UI.DARK, 16, 8)
 	r.add_child(_reviewed)
 	add_child(r)
-	table = Table.new(["ring", "colour", "title", "artist", "energy", "rating", "bpm", "key", "flag"])
+	table = Table.new(["now", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key"])
 	table.activated.connect(_on_row)
 	var tm := UI.margin(table, 16, 6, 16, 10)
 	tm.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(tm)
 	state.changed.connect(refresh)
+	state.status.connect(func(t: String) -> void:
+		_status = t
+		_build_queue())
 	resized.connect(func() -> void:
 		if _fit() != _shown:
 			_build_queue())
 	refresh()
-	_head()
 
 
 func refresh() -> void:
+	# a new queue: load its head, unless you are relistening to a reviewed track
+	if not relisten and (state.queue.is_empty() or state.queue[0] != player.track):
+		_head()
 	_build_queue()
 	_build_model()
 	for c in _reviewed.get_children():
@@ -64,7 +70,7 @@ func _build_queue() -> void:
 	for c in _queue.get_children():
 		c.queue_free()
 	_queue.add_child(UI.row(8, [UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
-		UI.text("ordered by what teaches the model most", 11, UI.MUTED)]))
+		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.spacer(), UI.text(_status, 11, UI.LIME, "mono")]))
 	var cards := UI.row(8)
 	var n := _fit()
 	_shown = n
@@ -99,12 +105,12 @@ func _card(t: Dictionary, first: bool) -> Control:
 		if l is Label:
 			l.clip_text = true
 			l.custom_minimum_size.x = 110
-	p.add_child(UI.row(8, [UI.cover(t, 48), info]))
+	p.add_child(UI.row(8, [UI.cover(t, 48, state.cover(t)), info]))
 	UI.clickable(p, func() -> void:
 		state.queue.erase(t)
 		state.queue.push_front(t)
-		_head()
-		_build_queue())
+		relisten = false
+		refresh())
 	return p
 
 
@@ -114,6 +120,17 @@ func _fit() -> int:
 	var w := get_viewport_rect().size.x - 64 if is_inside_tree() else 1216.0
 	var room := w - 32 - 72 - 16 - 300 - 32  # margins, +N box, arrow, widget, gaps
 	return mini(maxi(int((room + 8) / 192), 1), state.queue.size())
+
+
+func _ago(days: int) -> String:
+	match days:
+		-1:
+			return "not yet"
+		0:
+			return "today"
+		1:
+			return "yesterday"
+	return "%d d ago" % days
 
 
 ## Where the queue's tracks come from: rekordbox, and how fresh its export is.
@@ -127,10 +144,10 @@ func _widget() -> Control:
 	var sync := UI.panel(UI.LINE, 4, 6, 1)
 	sync.add_child(UI.row(4, [UI.text("Sync", 11, UI.TEXT, "bold"), UI.kbd("⌥S")]))
 	UI.clickable(sync, Callable(app, "sync_now"))
-	var age := "today" if state.export_age_days == 0 else "%d d ago" % state.export_age_days
 	var v := UI.col(2, [
-		UI.row(6, [UI.caps("rekordbox"), UI.rect(UI.LIME, 6, 6), UI.text("watching rekordbox.xml", 11, UI.MUTED), UI.spacer(), sync]),
-		UI.row(6, [UI.text("collection exported " + age, 12, UI.AMBER if old else UI.TEXT), UI.spacer(),
+		UI.row(6, [UI.caps("rekordbox"), UI.rect(UI.LIME, 6, 6), UI.text("watching " + str(state.settings.xml).get_file(), 11, UI.MUTED),
+			UI.spacer(), sync]),
+		UI.row(6, [UI.text("collection exported " + _ago(state.export_age_days()), 12, UI.AMBER if old else UI.TEXT), UI.spacer(),
 			UI.text("+%d queued" % state.queued_by_sync, 12, UI.LIME, "mono")]),
 	])
 	if old:
@@ -145,14 +162,21 @@ func _build_model() -> void:
 	var acc: Vector2i = state.accuracy()
 	var th: int = state.settings.threshold
 	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Model")]
-	if state.calibrating():
+	if not state.loaded:
+		parts += [UI.text("reading your labels…", 12, UI.MUTED)]
+	elif state.calibrating():
 		parts += [UI.tag("early calibration"), UI.text("learning your taste, guess hidden (blind)", 12, UI.MUTED),
 			UI.Bar.new(160, float(state.labels) / th, UI.LIME), UI.text("%d / %d labels" % [state.labels, th], 12, UI.TEXT, "mono")]
 	else:
-		parts += [UI.tag("mixing in"), UI.text("batches and corrections join the queue", 12, UI.MUTED),
+		parts += [UI.tag("mixing in"), UI.text("unsure tracks, conflicts and old labels join the queue", 12, UI.MUTED),
 			UI.text("%d labels" % state.labels, 12, UI.TEXT, "mono")]
-	parts += [UI.spacer(), UI.text("model guesses right", 12, UI.MUTED),
-		UI.text("%d–%d%%" % [acc.x, acc.y], 14, UI.LIME, "mono"), UI.text("↓", 13, UI.MUTED)]
+	parts += [UI.spacer(), UI.text("model guesses right", 12, UI.MUTED)]
+	if state.measured > 0:
+		parts += [UI.text("%d–%d%%" % [acc.x, acc.y], 14, UI.LIME, "mono"),
+			UI.text("on %d held-back labels" % state.measured, 11, UI.MUTED)]
+	else:
+		parts += [UI.text("not measured yet", 12, UI.MUTED)]
+	parts += [UI.text("↓", 13, UI.MUTED)]
 	for c: Control in parts:
 		_model.add_child(c)
 
@@ -161,27 +185,24 @@ func _build_model() -> void:
 func _head() -> void:
 	relisten = false
 	if state.queue.is_empty():
-		player.clear()
+		player.clear("Reading your collection…" if not state.loaded else "Queue is empty: sync from rekordbox or add tracks from the library")
 		return
 	var t: Dictionary = state.queue[0]
 	var blind: bool = state.calibrating() or not state.settings.show_guess
-	player.show_track(t, "queue", -1 if blind else int(t.colour))
+	player.show_track(t, "queue", -1 if blind else t.guess, -1 if blind else t.guess_stars)
 
 
-func _on_next(colour: int, rating: int) -> void:
-	var t := player.track
-	state.decide(t, colour, rating, "vibe")
-	if not relisten:
-		state.queue.erase(t)
-		_build_queue()
-	_head()
+func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
+	relisten = false
+	state.decide(player.track, colour, rating, "vibe", energy, key)
 
 
 func _on_skip() -> void:
-	if not relisten and not state.queue.is_empty():
-		state.queue.push_back(state.queue.pop_front())
+	if relisten:
+		_head()
 		_build_queue()
-	_head()
+	elif not state.queue.is_empty():
+		state.skip(state.queue[0])
 
 
 func _on_row(t: Dictionary) -> void:
@@ -192,8 +213,8 @@ func _on_row(t: Dictionary) -> void:
 func handle_key(k: InputEventKey) -> bool:
 	if k.alt_pressed:
 		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm"}
-		if sorts.has(k.physical_keycode):
-			table.sort_by(sorts[k.physical_keycode])
+		if sorts.has(k.keycode):
+			table.sort_by(sorts[k.keycode])
 			return true
 		return false
 	if k.physical_keycode == KEY_UP or k.physical_keycode == KEY_DOWN:

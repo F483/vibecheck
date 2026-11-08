@@ -91,7 +91,7 @@ impl Prediction {
 }
 
 /// Standardise, then logistic regression: one fitted classifier.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Lr {
     pub classes: Vec<String>,
     mean: Vec<f64>,

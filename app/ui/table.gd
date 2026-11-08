@@ -1,6 +1,7 @@
-extends VBoxContainer
+extends Control
 ## One flat table like rekordbox: click a header to sort, click a row to open it in the player.
-## The same table for the reviewed tracks and for the whole library.
+## The same table for the reviewed tracks and for the whole library. Drawn, not built from
+## nodes, so a library of tens of thousands of tracks scrolls as fast as a batch of ten.
 
 const UI := preload("res://ui/ui.gd")
 
@@ -9,58 +10,71 @@ signal checked_changed(n: int)
 
 ## column -> [header, width]; width 0 takes the rest.
 const COLS := {
-	"check": ["", 16], "ring": ["", 12], "colour": ["Colour", 84], "title": ["Track", 0],
+	"now": ["", 8], "check": ["", 16], "ring": ["", 12], "colour": ["Colour", 84], "title": ["Track", 0],
 	"artist": ["Artist", 160], "energy": ["Energy", 104], "rating": ["Rating", 72], "bpm": ["BPM", 44],
-	"key": ["Key", 40], "plays": ["Plays", 40], "last": ["Last played", 88], "added": ["Added", 64],
-	"flag": ["", 110],
+	"key": ["Key", 40], "plays": ["Plays", 40], "labelled": ["Labelled", 80], "added": ["Added", 80],
 }
+const ROW := 24.0
+const HEAD := 28.0
+const GAP := 12.0
+const PAD := 8.0
 
 var cols: Array
 var rows: Array[Dictionary] = []
 var sort_key := "colour"
 var sort_desc := false
-var selected := -1
+var selected := ""
 var checked := {}
-var _header: HBoxContainer
-var _list: VBoxContainer
-var _scroll: ScrollContainer
-var _panels := {}
+var scroll := 0.0
+var _bar: VScrollBar
+var _x := {}  # column -> [x, width]
+var _fit := {}  # [text, width] -> text that fits
+var _sans: Font
+var _bold: Font
+var _mono: Font
 
 
 func _init(c: Array) -> void:
 	cols = c
-	add_theme_constant_override("separation", 0)
-	_header = UI.row(12)
-	add_child(UI.margin(_header, 8, 0, 8, 4))
-	add_child(UI.hline())
-	_scroll = ScrollContainer.new()
-	_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	_list = UI.col(0)
-	_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_scroll.add_child(_list)
-	add_child(_scroll)
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
+	size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	clip_contents = true
+	focus_mode = Control.FOCUS_NONE
+	_sans = UI.font("sans")
+	_bold = UI.font("bold")
+	_mono = UI.font("mono")
+	_bar = VScrollBar.new()
+	_bar.set_anchors_and_offsets_preset(Control.PRESET_RIGHT_WIDE)
+	_bar.offset_left = -8
+	_bar.offset_top = HEAD
+	_bar.value_changed.connect(func(v: float) -> void:
+		scroll = v
+		queue_redraw())
+	add_child(_bar)
+	resized.connect(_layout)
 
 
 func set_rows(r: Array[Dictionary]) -> void:
 	rows = r.duplicate()
 	_sort()
-	_build()
+	_layout()
 
 
 func sort_by(k: String) -> void:
 	sort_desc = not sort_desc if sort_key == k else false
 	sort_key = k
 	_sort()
-	_build()
+	queue_redraw()
 
 
 func _value(t: Dictionary, k: String) -> Variant:
-	if k == "title" or k == "artist":
-		return str(t[k]).to_lower()
-	if k == "last" or k == "added" or k == "key":
-		return str(t[k])
+	match k:
+		"title", "artist":
+			return str(t[k]).to_lower()
+		"added", "key":
+			return str(t[k])
+		"colour":
+			return t.colour if t.colour >= 0 else 99
 	return t.get(k, 0)
 
 
@@ -75,153 +89,209 @@ func _sort() -> void:
 		return (va > vb) if d else (va < vb))
 
 
-func _build() -> void:
-	for c in _header.get_children():
-		c.queue_free()
+func _layout() -> void:
+	var fixed := 0.0
 	for k: String in cols:
-		var h: String = COLS[k][0]
+		fixed += COLS[k][1]
+	var rest := maxf(size.x - 2 * PAD - 8 - fixed - GAP * (cols.size() - 1), 60)
+	var x := PAD
+	for k: String in cols:
+		var w: float = COLS[k][1] if COLS[k][1] > 0 else rest
+		_x[k] = [x, w]
+		x += w + GAP
+	var view := size.y - HEAD
+	_bar.max_value = rows.size() * ROW
+	_bar.page = view
+	_bar.visible = rows.size() * ROW > view
+	scroll = clampf(scroll, 0, maxf(rows.size() * ROW - view, 0))
+	_bar.set_value_no_signal(scroll)
+	queue_redraw()
+
+
+## The text cut to fit `w`, with an ellipsis; remembered, since rows redraw on every scroll.
+func _clip(s: String, w: float, f: Font, fs: int) -> String:
+	var key := "%s|%d|%d" % [s, w, fs]
+	if _fit.has(key):
+		return _fit[key]
+	var out := s
+	if f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x > w:
+		var lo := 0
+		var hi := s.length()
+		while lo < hi:
+			var m := (lo + hi + 1) / 2
+			if f.get_string_size(s.left(m) + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x <= w:
+				lo = m
+			else:
+				hi = m - 1
+		out = s.left(lo) + "…"
+	if _fit.size() > 20000:
+		_fit.clear()
+	_fit[key] = out
+	return out
+
+
+func _text(s: String, k: String, y: float, f: Font, c: Color, fs := 12, right := false) -> void:
+	var x: float = _x[k][0]
+	var w: float = _x[k][1]
+	var t := _clip(s, w, f, fs)
+	if right:
+		x += w - f.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	draw_string(f, Vector2(x, y + ROW / 2 + fs * 0.36), t, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, c)
+
+
+func _draw() -> void:
+	var first := int(scroll / ROW)
+	var last := mini(rows.size(), first + int((size.y - HEAD) / ROW) + 2)
+	for i in range(first, last):
+		var t := rows[i]
+		var y := HEAD + i * ROW - scroll
+		var sel: bool = t.path == selected
+		var r := Rect2(0, y, size.x - 8, ROW)
+		if sel:
+			draw_rect(r, UI.SEL)
+			draw_rect(r.grow(-0.5), UI.LIME, false, 1)
+		elif t.flag == "just reviewed":
+			draw_rect(r, UI.SEL)
+		elif checked.has(t.path):
+			draw_rect(r, Color("#2f3036"))
+		draw_line(Vector2(0, y + ROW - 0.5), Vector2(size.x - 8, y + ROW - 0.5), Color("#34353a"))
+		for k: String in cols:
+			_cell(t, k, y, sel)
+	# the header last, over any row scrolled under it
+	draw_rect(Rect2(0, 0, size.x, HEAD), UI.PANEL)
+	for k: String in cols:
+		var h: String = COLS[k][0].to_upper()
 		if k == sort_key and h != "":
 			h += " ▼" if sort_desc else " ▲"
-		var l := _cell(UI.caps(h), k)
-		if h != "":
-			UI.clickable(l, sort_by.bind(k))
-		_header.add_child(l)
-	for c in _list.get_children():
-		c.queue_free()
-	_panels.clear()
-	for t in rows:
-		var p := _row(t)
-		_panels[t.id] = p
-		_list.add_child(p)
+		draw_string(_mono, Vector2(_x[k][0], HEAD / 2 + 4), h, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UI.MUTED)
+	draw_line(Vector2(0, HEAD - 0.5), Vector2(size.x, HEAD - 0.5), UI.LINE)
 
 
-func _cell(c: Control, k: String) -> Control:
-	var w: int = COLS[k][1]
-	if w == 0:
-		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		c.custom_minimum_size.x = 60
-	else:
-		c.custom_minimum_size.x = w
-	var l := c as Label
-	if l:
-		l.clip_text = true
-		l.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	return c
-
-
-func _row(t: Dictionary) -> PanelContainer:
-	var p := PanelContainer.new()
-	p.custom_minimum_size.y = 24
-	var r := UI.row(12)
-	for k: String in cols:
-		r.add_child(_cell(_content(t, k), k))
-	p.add_child(UI.margin(r, 8, 0, 8, 0))
-	_style(p, t)
-	UI.clickable(p, func() -> void:
-		select(t.id)
-		activated.emit(t))
-	return p
-
-
-func _content(t: Dictionary, k: String) -> Control:
-	var bold: bool = t.id == selected
+func _cell(t: Dictionary, k: String, y: float, sel: bool) -> void:
+	var x: float = _x[k][0]
+	var mid := y + ROW / 2
 	match k:
 		"check":
-			var cb := CheckBox.new()
-			cb.button_pressed = checked.has(t.id)
-			cb.focus_mode = Control.FOCUS_NONE
-			cb.toggled.connect(func(on: bool) -> void:
-				if on:
-					checked[t.id] = true
-				else:
-					checked.erase(t.id)
-				_style(_panels[t.id], t)
-				checked_changed.emit(checked.size()))
-			return cb
+			var b := Rect2(x + 1, mid - 6, 12, 12)
+			if checked.has(t.path):
+				draw_rect(b, UI.LIME)
+				draw_polyline([b.position + Vector2(3, 6), b.position + Vector2(5, 9), b.position + Vector2(9, 3)], UI.BG, 1.5, true)
+			else:
+				draw_rect(b, Color("#6a6b70"), false, 1)
 		"ring":
-			return UI.Ring.new(t.trust)
+			var c := Vector2(x + 6, mid)
+			var lv: int = t.trust
+			var col := UI.LIME if lv >= 3 else (UI.AMBER if lv == 2 else UI.MUTED)
+			draw_arc(c, 4.5, 0, TAU, 24, Color("#4a4b50"), 2.0, true)
+			if lv > 0:
+				draw_arc(c, 4.5, -PI / 2, -PI / 2 + TAU * lv / 4.0, 24, col, 2.0, true)
 		"colour":
-			var cd: Dictionary = UI.COLOURS[t.colour]
-			return UI.row(6, [UI.rect(cd.c, 8, 16), UI.text(cd.name, 12)])
+			if t.colour >= 0:
+				var cd: Dictionary = UI.COLOURS[t.colour]
+				draw_rect(Rect2(x, mid - 8, 8, 16), cd.c)
+				draw_string(_sans, Vector2(x + 14, mid + 4.3), cd.name, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UI.TEXT)
+			else:
+				draw_string(_sans, Vector2(x + 14, mid + 4.3), "—", HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UI.MUTED)
 		"title":
-			return UI.text(t.title, 12, UI.TEXT, "bold" if bold else "sans")
+			_text(t.title, k, y, _bold if sel else _sans, UI.TEXT)
 		"artist":
-			return UI.text(t.artist, 12, UI.MUTED)
+			_text(t.artist, k, y, _sans, UI.MUTED)
 		"energy":
-			return UI.row(8, [UI.Bar.new(64, t.energy / 10.0), UI.text(str(t.energy), 12, UI.TEXT, "mono")])
+			if t.energy > 0:
+				draw_rect(Rect2(x, mid - 2, 64, 4), UI.LINE)
+				draw_rect(Rect2(x, mid - 2, 64 * t.energy / 10.0, 4), Color("#d6d7db"))
+				draw_string(_mono, Vector2(x + 72, mid + 4.3), str(t.energy), HORIZONTAL_ALIGNMENT_LEFT, -1, 12, UI.TEXT)
 		"rating":
-			return UI.text("★".repeat(t.rating), 11, UI.TEXT, "mono")
-		"flag":
-			var f: String = "▶ in the player" if bold else str(t.flag)
-			return UI.caps(f, UI.MUTED if f == "from library" else UI.LIME)
+			_text("★".repeat(maxi(t.rating, 0)), k, y, _mono, UI.TEXT, 11)
+		"bpm":
+			_text("%.0f" % t.bpm if t.bpm > 0 else "", k, y, _mono, UI.TEXT, 12, true)
+		"plays":
+			_text(str(t.plays), k, y, _mono, UI.TEXT, 12, true)
+		"now":
+			# the row in the player
+			if sel:
+				draw_colored_polygon([Vector2(x, mid - 4.5), Vector2(x + 7, mid), Vector2(x, mid + 4.5)], UI.LIME)
 		_:
-			var l := UI.text(str(t[k]), 12, UI.MUTED if k in ["last", "added"] else UI.TEXT, "mono")
-			if k in ["bpm", "plays"]:
-				l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-			return l
+			_text(str(t[k]), k, y, _mono, UI.MUTED if k in ["labelled", "added"] else UI.TEXT)
 
 
-func _style(p: PanelContainer, t: Dictionary) -> void:
-	var s := StyleBoxFlat.new()
-	s.border_color = Color("#34353a")
-	s.border_width_bottom = 1
-	s.bg_color = Color.TRANSPARENT
-	if t.id == selected:
-		s.bg_color = UI.SEL
-		s.border_color = UI.LIME
-		s.set_border_width_all(1)
-	elif t.flag == "just reviewed":
-		s.bg_color = UI.SEL
-	elif checked.has(t.id):
-		s.bg_color = Color("#2f3036")
-	p.add_theme_stylebox_override("panel", s)
+func _gui_input(e: InputEvent) -> void:
+	if e is InputEventMouseButton and e.pressed:
+		match e.button_index:
+			MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN:
+				_scroll_to(scroll + (-1 if e.button_index == MOUSE_BUTTON_WHEEL_UP else 1) * ROW * 3)
+			MOUSE_BUTTON_LEFT:
+				_click(e.position)
+		accept_event()
+	elif e is InputEventPanGesture:
+		_scroll_to(scroll + e.delta.y * ROW)
+		accept_event()
 
 
-func select(id: int) -> void:
-	var old := selected
-	selected = id
-	for i: int in [old, id]:
-		if _panels.has(i):
-			var t := _find(i)
-			var p: PanelContainer = _panels[i]
-			var idx := p.get_index()
-			p.queue_free()
-			var np := _row(t)
-			_panels[i] = np
-			_list.add_child(np)
-			_list.move_child(np, idx)
-	if _panels.has(id):
-		_scroll.ensure_control_visible.call_deferred(_panels[id])
+func _scroll_to(v: float) -> void:
+	scroll = clampf(v, 0, maxf(rows.size() * ROW - (size.y - HEAD), 0))
+	_bar.set_value_no_signal(scroll)
+	queue_redraw()
 
 
-func _find(id: int) -> Dictionary:
-	for t in rows:
-		if t.id == id:
-			return t
-	return {}
+func _click(p: Vector2) -> void:
+	if p.y < HEAD:
+		for k: String in cols:
+			if COLS[k][0] != "" and p.x >= _x[k][0] and p.x < _x[k][0] + _x[k][1] + GAP:
+				sort_by(k)
+		return
+	var i := int((p.y - HEAD + scroll) / ROW)
+	if i < 0 or i >= rows.size():
+		return
+	var t := rows[i]
+	if cols.has("check") and p.x < _x["check"][0] + _x["check"][1] + GAP / 2:
+		if checked.has(t.path):
+			checked.erase(t.path)
+		else:
+			checked[t.path] = true
+		checked_changed.emit(checked.size())
+		queue_redraw()
+		return
+	select(t.path)
+	activated.emit(t)
+
+
+func select(path: String) -> void:
+	selected = path
+	for i in rows.size():
+		if rows[i].path == path:
+			var y := i * ROW
+			var view := size.y - HEAD
+			if y < scroll:
+				_scroll_to(y)
+			elif y + ROW > scroll + view:
+				_scroll_to(y + ROW - view)
+			break
+	queue_redraw()
 
 
 ## Step the selection up or down and open that row.
 func move(d: int) -> void:
 	if rows.is_empty():
 		return
-	var i := 0
+	var i := -1
 	for j in rows.size():
-		if rows[j].id == selected:
-			i = clampi(j + d, 0, rows.size() - 1)
-	select(rows[i].id)
+		if rows[j].path == selected:
+			i = j
+	i = clampi(i + d, 0, rows.size() - 1)
+	select(rows[i].path)
 	activated.emit(rows[i])
 
 
 func checked_rows() -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for t in rows:
-		if checked.has(t.id):
+		if checked.has(t.path):
 			out.append(t)
 	return out
 
 
 func clear_checked() -> void:
 	checked.clear()
-	_build()
+	queue_redraw()
 	checked_changed.emit(0)

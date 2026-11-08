@@ -13,7 +13,8 @@ const AMBER := Color("#e0b04a")
 const SEL := Color("#3d4320")
 const DIM := Color(0.055, 0.055, 0.063, 0.72)
 
-## rekordbox's eight colours: keys QWER are the light row, ASDF the dark one.
+## rekordbox's eight colours: keys QWER are the light row, ASDF the dark one, by position
+## (a grid of keys on any layout); everything else is matched by the letter it types.
 const COLOURS := [
 	{"name": "Orange", "c": Color("#ff9f1c"), "key": KEY_Q},
 	{"name": "Yellow", "c": Color("#f4e04d"), "key": KEY_W},
@@ -35,6 +36,20 @@ const TAGS := {
 }
 
 static var _fonts := {}
+
+
+## What the key in this position prints on the keyboard in use: Q is X on Neo, A on AZERTY.
+static func key_label(physical: Key) -> String:
+	var l := DisplayServer.keyboard_get_label_from_physical(physical)
+	return OS.get_keycode_string(l if l != KEY_NONE else physical)
+
+
+## A colour key, by position: these win over letters that land on the same keys.
+static func is_colour_key(k: InputEventKey) -> bool:
+	for cd: Dictionary in COLOURS:
+		if k.physical_keycode == cd.key:
+			return true
+	return false
 
 
 static func font(kind := "sans") -> Font:
@@ -211,7 +226,20 @@ static func chip(t: String, on: bool, cb: Callable = Callable()) -> PanelContain
 	return p
 
 
-static func cover(t: Dictionary, side: float) -> TextureRect:
+## The track's cover, or a gradient in its own colour when the file has none.
+static func cover(t: Dictionary, side: float, art: Texture2D = null) -> TextureRect:
+	var r := TextureRect.new()
+	r.texture = cover_texture(t, art)
+	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	r.custom_minimum_size = Vector2(side, side)
+	r.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return r
+
+
+static func cover_texture(t: Dictionary, art: Texture2D = null) -> Texture2D:
+	if art:
+		return art
 	var g := Gradient.new()
 	g.set_color(0, t.cover[0])
 	g.set_color(1, t.cover[1])
@@ -220,13 +248,7 @@ static func cover(t: Dictionary, side: float) -> TextureRect:
 	tex.width = 64
 	tex.height = 64
 	tex.fill_to = Vector2(1, 1)
-	var r := TextureRect.new()
-	r.texture = tex
-	r.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	r.custom_minimum_size = Vector2(side, side)
-	r.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return r
+	return tex
 
 
 ## How far a label is trusted, 1 untouched .. 4 played: a ring filled in quarters.
@@ -308,6 +330,7 @@ class Icon extends Control:
 ## A slider drawn like the mockup: a thin track and a lime knob.
 class Track extends Control:
 	signal changed(v: float)
+	signal released(v: float)
 	var lo := 0.0
 	var hi := 1.0
 	var step := 1.0
@@ -322,6 +345,8 @@ class Track extends Control:
 		mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 
 	func _gui_input(e: InputEvent) -> void:
+		if e is InputEventMouseButton and not e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			released.emit(value)
 		var down: bool = (e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT) \
 			or (e is InputEventMouseMotion and e.button_mask & MOUSE_BUTTON_MASK_LEFT)
 		if down:

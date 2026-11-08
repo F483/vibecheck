@@ -26,6 +26,12 @@ func _init(s, a) -> void:
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(m)
 	add_child(sc)
+	state.changed.connect(func() -> void:
+		if is_visible_in_tree():
+			refresh())
+	visibility_changed.connect(func() -> void:
+		if is_visible_in_tree():
+			refresh())
 	refresh()
 
 
@@ -44,29 +50,37 @@ func refresh() -> void:
 	_add(_path("Music", "music", true))
 	_add(_path("rekordbox", "xml", false))
 	_add(UI.wrap("One file both ways: export the collection here from rekordbox; vibecheck writes its playlists into it."))
+	var conflicts: int = state.queue.filter(func(t: Dictionary) -> bool: return t.tag == "conflict").size()
+	var total: int = state.library.size()
 	var tiles := UI.row(6)
-	for t: Array in [["Tracks", "4,812", UI.TEXT], ["Labelled", "2,140", UI.TEXT], ["Conflicts", "37", UI.AMBER]]:
+	for t: Array in [["Tracks", _n(total), UI.TEXT], ["Labelled by you", _n(state.labels), UI.TEXT],
+			["Conflicts", _n(conflicts), UI.AMBER]]:
 		var p := UI.panel(UI.DARK, 4, 8, 8)
 		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		p.add_child(UI.col(2, [UI.caps(t[0]), UI.text(t[1], 18, t[2], "mono")]))
 		tiles.add_child(p)
 	_add(tiles)
-	_add(UI.row(8, [UI.text("Listening to a first sample", 12), UI.spacer(), UI.text("212 / 300 · ~8 min", 12, UI.MUTED, "mono")]))
-	var bar := UI.Bar.new(0, 0.7, UI.LIME)
+	var left: int = total - state.embedded
+	var now: String = ("now: " + state.listening) if state.listening != "" else ("done" if left == 0 else "paused")
+	_add(UI.row(8, [UI.text("Listened to", 12), UI.spacer(),
+		UI.text("%s / %s · %s" % [_n(state.embedded), _n(total), now], 12, UI.MUTED, "mono")]))
+	var bar := UI.Bar.new(0, float(state.embedded) / maxf(total, 1), UI.LIME)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_add(bar)
+	_toggle("Listen to the rest in the background (about 5 s a track)", "listen")
+	_add(UI.wrap("Only tracks it has listened to can be asked about and learned from. A track you label is listened to right away."))
 
 	_heading("Calibration")
-	_add(UI.row(8, [UI.text("Start mixing in batches and corrections after", 12), UI.spacer(),
-		UI.text("%d labels" % st.threshold, 12, UI.TEXT, "mono")]))
+	var th := UI.text("%d labels" % st.threshold, 12, UI.TEXT, "mono")
+	_add(UI.row(8, [UI.text("Start mixing in unsure tracks and conflicts after", 12), UI.spacer(), th]))
 	var slider := UI.Track.new(100, 300, 10, st.threshold)
-	slider.changed.connect(func(v: float) -> void:
-		st.threshold = int(v)
-		state.changed.emit()
-		refresh.call_deferred())
+	slider.changed.connect(func(v: float) -> void: th.text = "%d labels" % int(v))
+	slider.released.connect(func(v: float) -> void:
+		if int(v) != st.threshold:
+			state.set_setting("threshold", int(v)))
 	_add(slider)
 	_add(UI.row(0, [UI.text("100", 10, UI.MUTED, "mono"), UI.spacer(), UI.text("200", 10, UI.MUTED, "mono"), UI.spacer(), UI.text("300", 10, UI.MUTED, "mono")]))
-	_add(UI.wrap("Below this the queue brings only calibration tracks and conflicts, all blind. Past it, batch tracks and corrections mix in more and more."))
+	_add(UI.wrap("Below this the queue brings only calibration tracks, blind and spread across the sound of your collection. Past it, the tracks the model is least sure about, conflicts and old labels."))
 	_toggle("Show the model's guess in the player after calibration", "show_guess")
 	_add(_line("Re-ask old tracks blind", UI.text("rises as the library fills in", 12, UI.MUTED, "mono")))
 
@@ -82,8 +96,7 @@ func refresh() -> void:
 	var lead := UI.row(6, [UI.text("Hot cues", 12), UI.spacer()])
 	for i in 2:
 		lead.add_child(UI.chip(["At each change · A–D", "16 + 8 bars before · A–H"][i], st.cues_lead == i, func() -> void:
-			st.cues_lead = i
-			refresh()))
+			state.set_setting("cues_lead", i)))
 	_add(lead)
 	var loops := UI.row(6, [UI.text("Loops", 12), UI.spacer()])
 	var used := "ABCD" if st.cues_lead == 0 else "ABCDEFGH"
@@ -93,9 +106,20 @@ func refresh() -> void:
 	_add(UI.wrap("Click a slot to make it a loop and set its length in bars, e.g. A and G as 16-bar loops to wait at the mix-in and mix-out."))
 	_toggle("Memory cue on every hot cue and the first downbeat", "cues_memory")
 
-	var start := UI.row(8, [UI.wrap("The 37 conflicts go first, then at least %d tracks blind." % st.threshold), UI.button("Start", "ENTER", true, func() -> void: app.show_screen("vibe"))])
+	var next := "Calibration first: at least %d tracks, blind." % st.threshold if state.calibrating() \
+		else "%d labels so far: the queue mixes in what the model is least sure about." % state.labels
+	var start := UI.row(8, [UI.wrap(next), UI.button("Start", "ENTER", true, func() -> void: app.show_screen("vibe"))])
 	start.get_child(0).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_child(UI.margin(start, 0, 10, 0, 0))
+
+
+func _n(n: int) -> String:
+	var s := str(n)
+	var out := ""
+	while s.length() > 3:
+		out = "," + s.right(3) + out
+		s = s.left(s.length() - 3)
+	return s + out
 
 
 func _add(c: Control) -> void:
@@ -122,9 +146,7 @@ func _toggle(t: String, key: String, example := "") -> void:
 	var right := UI.row(10)
 	if example != "":
 		right.add_child(UI.text(example, 12, UI.MUTED, "mono"))
-	right.add_child(UI.chip("On" if on else "Off", on, func() -> void:
-		st[key] = not st[key]
-		refresh()))
+	right.add_child(UI.chip("On" if on else "Off", on, func() -> void: state.set_setting(key, not on)))
 	_add(_line(t, right))
 
 
@@ -149,9 +171,8 @@ func _pick(key: String, folder: bool) -> void:
 	if not folder:
 		d.filters = PackedStringArray(["*.xml ; rekordbox xml"])
 	var done := func(path: String) -> void:
-		state.settings[key] = path.replace(OS.get_environment("HOME"), "~")
 		d.queue_free()
-		refresh()
+		state.set_setting(key, path.replace(OS.get_environment("HOME"), "~"))
 		app.refresh_rail()
 	d.dir_selected.connect(done)
 	d.file_selected.connect(done)
@@ -161,7 +182,7 @@ func _pick(key: String, folder: bool) -> void:
 
 
 func _slot(slot: String, used: bool) -> Control:
-	var loops: Dictionary = state.settings.cues_loops
+	var loops: Dictionary = state.settings.cues_loops.duplicate()
 	var bars: int = loops.get(slot, 0)
 	var p := UI.panel(_slot_bg(bars), 3, 0, 2)
 	p.custom_minimum_size = Vector2(44, 36)
@@ -178,7 +199,7 @@ func _slot(slot: String, used: bool) -> Control:
 			loops.erase(slot)
 		else:
 			loops[slot] = nxt
-		refresh())
+		state.set_setting("cues_loops", loops))
 	return p
 
 

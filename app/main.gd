@@ -43,8 +43,30 @@ func _ready() -> void:
 		var s: Control = screens[k]
 		s.set_anchors_preset(Control.PRESET_FULL_RECT)
 		stack.add_child(s)
+	state.failed.connect(_failed)
+	state.rekordbox_exported.connect(sync_now)
+	var watch := Timer.new()
+	watch.wait_time = 2.0
+	watch.autostart = true
+	watch.timeout.connect(state.poll)
+	add_child(watch)
+	get_tree().auto_accept_quit = false
 	show_screen("vibe" if state.is_ready() else "settings")
+	state.load_all()
 	_shot()
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_WM_CLOSE_REQUEST:
+		state.stop()
+		get_tree().quit()
+
+
+func _failed(text: String) -> void:
+	var v := _dialog_box(440)
+	v.add_child(UI.caps("Something went wrong"))
+	v.add_child(UI.wrap(text, 12, UI.TEXT))
+	v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
 
 
 func _rail() -> Control:
@@ -129,38 +151,72 @@ func _dialog_box(w: float) -> VBoxContainer:
 
 
 func export_batch() -> void:
-	state.record_export()
-	var e: Dictionary = state.last_export
+	if state.reviewed.is_empty():
+		_failed("Nothing to export yet: label some tracks first.")
+		return
 	var v := _dialog_box(464)
-	v.add_child(UI.caps("Exported → rekordbox"))
-	v.add_child(UI.text("%d tracks · %s" % [e.count, e.name], 18, UI.TEXT, "heavy"))
-	v.add_child(UI.text("written into %s · old one kept as .bak" % state.settings.xml, 11, UI.MUTED, "mono"))
-	v.add_child(UI.margin(UI.caps("Now in rekordbox"), 0, 4, 0, 0))
-	var steps := [
-		"Refresh the rekordbox xml node in the sidebar.",
-		"Right-click %s › Import Playlist." % e.name,
-		"Play, fix what is wrong, then File › Export Collection in xml format over the same file. vibecheck syncs on its own.",
-	]
-	for i in steps.size():
-		v.add_child(UI.row(8, [UI.text(str(i + 1), 12, UI.LIME, "mono"), UI.wrap(steps[i], 12, UI.TEXT)]))
-		(v.get_child(v.get_child_count() - 1).get_child(1) as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.add_child(UI.wrap("First time only: Preferences › Advanced › Database › rekordbox xml, choose this file."))
-	v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
+	v.add_child(UI.caps("Exporting → rekordbox"))
+	v.add_child(UI.text("%d tracks" % state.reviewed.size(), 18, UI.TEXT, "heavy"))
+	v.add_child(UI.wrap("Working out key and energy and placing cue points; a minute for a big batch.", 12))
+	state.export(func(e: Variant) -> void:
+		if e == null:
+			return
+		v = _dialog_box(464)
+		v.add_child(UI.caps("Exported → rekordbox"))
+		v.add_child(UI.text("%d tracks · %s" % [e.count, e.name], 18, UI.TEXT, "heavy"))
+		var parts := ["%d colours" % e.coloured, "%d ratings" % e.rated]
+		if e.keyed > 0:
+			parts.append("%d keys" % e.keyed)
+		if e.commented > 0:
+			parts.append("%d energy comments" % e.commented)
+		if e.cued > 0:
+			parts.append("cues on %d" % e.cued)
+		if e.not_in_xml > 0:
+			parts.append("%d not in the export" % e.not_in_xml)
+		v.add_child(UI.text(", ".join(parts), 12, UI.MUTED, "mono"))
+		v.add_child(UI.text("written into %s · old one kept as .bak" % state.settings.xml, 11, UI.MUTED, "mono"))
+		v.add_child(UI.margin(UI.caps("Now in rekordbox"), 0, 4, 0, 0))
+		var steps := [
+			"Refresh the rekordbox xml node in the sidebar.",
+			"Right-click %s › Import Playlist." % e.name,
+			"Play, fix what is wrong, then File › Export Collection in xml format over the same file. vibecheck syncs on its own.",
+		]
+		for i in steps.size():
+			v.add_child(UI.row(8, [UI.text(str(i + 1), 12, UI.LIME, "mono"), UI.wrap(steps[i], 12, UI.TEXT)]))
+			(v.get_child(v.get_child_count() - 1).get_child(1) as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_child(UI.wrap("First time only: Preferences › Advanced › Database › rekordbox xml, choose this file."))
+		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)])))
 
 
 func sync_now() -> void:
-	state.apply_sync()
-	var r: Dictionary = state.last_sync
+	if not state.loaded:
+		return
 	var v := _dialog_box(400)
-	v.add_child(UI.caps("rekordbox.xml changed · synced"))
-	v.add_child(UI.text("Batch %s" % Time.get_date_string_from_system(), 18, UI.TEXT, "heavy"))
-	for line: Array in [[4, r.played, "played", "counts most"], [3, r.corrected, "corrected", "set by hand"],
-			[1, r.untouched, "untouched", "counts a little"]]:
-		var n := UI.text(str(line[1]), 18, UI.TEXT if line[0] > 1 else UI.MUTED, "mono")
-		n.custom_minimum_size.x = 40
-		v.add_child(UI.row(10, [UI.Ring.new(line[0]), n, UI.text(line[2], 12), UI.spacer(), UI.text(line[3], 12, UI.MUTED, "mono")]))
-	v.add_child(UI.wrap("%d tracks went to the front of your queue: conflicts, old labels and unsure ones." % r.queued, 12))
-	v.add_child(UI.row(0, [UI.spacer(), UI.button("Back to vibe", "ENTER", true, close_dialog)]))
+	v.add_child(UI.caps("Reading rekordbox.xml…"))
+	state.sync(func(r: Variant) -> void:
+		if r == null:
+			return
+		v = _dialog_box(420)
+		v.add_child(UI.caps("rekordbox.xml · synced"))
+		v.add_child(UI.text("Last export, %d tracks" % r.out if r.out > 0 else "No export from here yet", 18, UI.TEXT, "heavy"))
+		for line: Array in [[4, r.played, "played", "counts most"], [3, r.corrected, "corrected", "set by hand"],
+				[1, r.untouched, "untouched", "counts a little"]]:
+			var n := UI.text(str(int(line[1])), 18, UI.TEXT if line[0] > 1 else UI.MUTED, "mono")
+			n.custom_minimum_size.x = 40
+			v.add_child(UI.row(10, [UI.Ring.new(line[0]), n, UI.text(line[2], 12), UI.spacer(), UI.text(line[3], 12, UI.MUTED, "mono")]))
+		var more := []
+		if r.added + r.changed > r.corrected:
+			more.append("%d more labels taken from rekordbox" % (r.added + r.changed - r.corrected))
+		if r.confirmed > 0:
+			more.append("%d from the command line's rounds confirmed" % r.confirmed)
+		if r.newer > 0:
+			more.append("%d left alone: you labelled them here after this export" % r.newer)
+		if r.unknown > 0:
+			more.append("%d colours from before vibecheck ignored" % r.unknown)
+		if not more.is_empty():
+			v.add_child(UI.wrap(", ".join(more) + ".", 11))
+		v.add_child(UI.wrap("Your queue is being rebuilt: conflicts, old labels and unsure tracks.", 12))
+		v.add_child(UI.row(0, [UI.spacer(), UI.button("Back to vibe", "ENTER", true, close_dialog)])))
 
 
 func _unhandled_key_input(e: InputEvent) -> void:
@@ -174,9 +230,9 @@ func _unhandled_key_input(e: InputEvent) -> void:
 		return
 	if k.echo and not k.keycode in [KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
 		return
-	if k.alt_pressed and k.physical_keycode == KEY_S:
+	if k.alt_pressed and k.keycode == KEY_S:
 		sync_now()
-	elif current == "vibe" and k.physical_keycode == KEY_X and not k.alt_pressed:
+	elif current == "vibe" and k.keycode == KEY_X and not k.alt_pressed and not UI.is_colour_key(k):
 		export_batch()
 	elif current == "settings" and k.keycode in [KEY_ENTER, KEY_KP_ENTER]:
 		show_screen("vibe")
@@ -198,7 +254,8 @@ func _hidpi() -> void:
 	w.move_to_center()
 
 
-## --shot=path.png [--screen=id] [--dialog=export|sync]: render one frame to a file and quit.
+## --shot=path.png [--screen=id] [--dialog=export|sync] [--wait=s] [--after=s]: once loaded, wait,
+## show the screen, wait again, render one frame to a file and quit.
 func _shot() -> void:
 	var args := {}
 	for a in OS.get_cmdline_user_args():
@@ -206,7 +263,12 @@ func _shot() -> void:
 		args[kv[0]] = kv[1] if kv.size() > 1 else ""
 	if not args.has("shot"):
 		return
+	var t := Time.get_ticks_msec()
+	while not state.loaded and Time.get_ticks_msec() - t < 120000:
+		await get_tree().process_frame
+	await get_tree().create_timer(float(args.get("wait", "1"))).timeout
 	show_screen(args.get("screen", "vibe"))
+	await get_tree().create_timer(float(args.get("after", "0"))).timeout
 	match args.get("dialog", ""):
 		"export":
 			export_batch()
@@ -216,4 +278,5 @@ func _shot() -> void:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw
 	get_viewport().get_texture().get_image().save_png(args.shot)
+	state.stop()
 	get_tree().quit()

@@ -14,12 +14,33 @@ its script.
 
 ![Studio workspace](workspace.png)
 
-**Built in Godot** in `app/`, with mock data and not yet connected to the
-core. `app/main.gd` holds the rail, the dialogs and key routing. Each screen is
-in `app/ui/`, along with the shared `player.gd` and `table.gd`, and `ui.gd`
+**Built in Godot** in `app/`, on the core. `app/main.gd` holds the rail, the
+dialogs and key routing. Each screen is in `app/ui/`, along with the shared
+`player.gd` and `table.gd` (drawn, so 15,000 rows scroll freely), and `ui.gd`
 holds the palette and widgets. All of it is built in code: no `.tscn` per
-screen and no imported assets. Screenshot any screen with
-`godot --path app -- --shot=out.png --screen=library --dialog=export`.
+screen and no imported assets. `state.gd` calls the core through the
+extension's one JSON call (`ext/src/lib.rs` → `core/src/app.rs`) on worker
+threads. Screenshot any screen with
+`godot --path app -- --shot=out.png --screen=library --dialog=export`; add
+`--music=… --xml=…` (and `VIBECHECK_STATE=<dir>`) to try a copy without
+touching the saved settings or the collection's state.
+
+How the app maps onto the core:
+
+- A decision in the player is a `user` label outside any round. What was
+  labelled since the last export is the reviewed table and the next export.
+  The export is remembered in `.vibecheck/app.json`, with each track's play
+  count at the time, so the next sync can count plays.
+- Sync is the command line's, plus one rule: a track labelled after the xml was
+  exported is left alone, since the xml can't know about it.
+- The model in use is trained on the training slice only, so the accuracy it
+  shows is measured on itself (held-back labels, 95% range).
+- Queue: calibration tracks spread across the sound of the collection while
+  below the threshold; after it, the least sure, mixed with conflicts and old
+  labels, asked blind.
+- Player sections are the cue model's transitions (mix in, changes, mix out)
+  when rekordbox has a beat grid.
+- Trust is approximated until schema v5: played = a label and a play count.
 
 ## Direction
 
@@ -72,29 +93,69 @@ the stages, and ↓ arrows sit at both ends of each strip.
    - "model guesses right 40–70%", always shown as a range, so the user sees
      everything from the start.
 4. **Player** (light). Call it "player", never "card". It holds:
-   - the full-track waveform with section labels, click and jump;
+   - the track's **cover in front of the waveform**, as tall as the peaks (a
+     gradient in the track's colours when the file has none);
+   - the full-track waveform with section labels, click and jump, and the
+     **cue points drawn as rekordbox draws them**, so it is clear where they
+     will end up: lettered hot cues along the top (green cue, orange loop with
+     its length shaded), red memory-cue triangles along the bottom. They are
+     what an export would write, from the cue model and the cue settings; a
+     track with cues of your own shows those, marked "your cues · kept on
+     export";
    - the colour keys in **two rows** (QWER light / ASDF dark), which the user
      likes;
-   - stars (1–5, hold ⇧);
-   - shortcuts, and the two action buttons.
+   - two rows exactly the height of the colour keys, so everything lines up
+     with them:
+     - **upper row, what you say about the track**, level with the light keys:
+       stars (1–5, hold ⇧), **Energy** and **Key**, each a value that pops
+       out a picker (the user preferred this to − and + buttons): energy 1–10
+       in a row (N; ←→ step, a digit picks, 0 is 10), key all 24, minor on
+       top and major below, round the wheel (K; ←→ round the wheel, ↑↓
+       minor/major); and U undo. A key badge next to a control does the same
+       as the control when clicked: the user clicked N and K expecting that. A corrected value
+       turns lime. The player shows what an export would write: your
+       correction, else the analysis;
+     - **lower row, the parts of the track**, level with the dark keys: ←
+       then a button per part numbered as on the waveform, the part playing
+       lit, →;
+   - below the colour keys, the main controls on their own level: Stop (ESC)
+     and Play/Pause (SPACE) on the left, Skip and Save on the right. They
+     moved out of the dark-key row because it no longer fit the window.
+   - In the library the hint "Save adds it to the next Export" sits on the
+     title line, before the time, because the upper row is full.
 5. **Reviewed strip** (dark). It shows "↓ Reviewed 47" and an **"Export → X"**
    button. The arrow is on the button and points right, because the tracks go
    out of the app. Nothing else is on the strip.
 6. **Reviewed table** (light). One flat table like rekordbox, with no colour
    grouping. Click a header to sort by colour, energy, rating or BPM; click a
    row to relisten in the player and fix it. This is how the user hunts for
-   outliers: sort, step through, fix.
+   outliers: sort, step through, fix. A lime ▶ at the start of the row marks
+   the track in the player; there is no status column ("just reviewed", "in
+   the player", "from library" were dropped as noise). The track just saved
+   keeps a faint highlight.
 
 ### Player buttons: same slot, same keys everywhere
 
 | context | ⇧ENTER | ENTER |
 |---|---|---|
-| vibe, track from the queue | **Skip track**: next track, no label | **Next**: save, next track |
-| vibe, relistening a reviewed row | **Requeue**: back to the queue (the user prefers this short label) | **Next**: save, back to the queue |
-| collection | **Skip**: next row, no save | **Next**: save, add to the reviewed table and the export, next row |
+| vibe, track from the queue | **Skip track**: next track, no label | **Save**: save, next track |
+| vibe, relistening a reviewed row | **Requeue**: back to the queue (the user prefers this short label) | **Save**: save, back to the queue |
+| collection | **Skip**: next row, no save | **Save**: save, add to the reviewed table and the export, next row |
 
-- ESC stops playback, as in rekordbox. There is no separate "back" or "close".
+- ESC stops playback and returns to the start of the track, as Stop; SPACE
+  pauses where it is. There is no separate "back" or "close".
 - The label changes with the context, but the position and the key never do.
+- **Keyboard layouts.** The colour grid and the number row are matched by
+  position, so they stay a grid on any layout, and their badges show what the
+  keyboard in use prints there (on Neo 2: X V L C / U I A E). Every other
+  shortcut is matched by the letter it types (N, K, U, X, ⌥S, …). Where a
+  letter lands on a colour position, the colour wins: on Neo 2 that is U (the
+  Red position) and X (Orange), so undo is also ⌘Z, the same on every layout.
+  The user types on Neo 2.
+- ENTER is **Save**, not "Next" (which undersold it: it stores your label,
+  which the model learns from) and not "Confirm" (which sounds like accepting
+  the model's guess, the anchoring the user flows warn about, and means
+  nothing on a blind track).
 
 ## Calibration
 
@@ -140,9 +201,8 @@ the stages, and ↓ arrows sit at both ends of each strip.
 - Below it: filter chips, then a selection bar ("N selected · Add to
   queue ⌥Q"), then the **same flat table** with extra columns (plays, last
   played, added).
-- Stepping through the collection with Next saves each track into the **same
-  reviewed table** as vibe, so it goes out with the next Export. Rows that
-  came from here are flagged "from library".
+- Stepping through the collection with Save saves each track into the **same
+  reviewed table** as vibe, so it goes out with the next Export.
 
 ## Settings contents
 
@@ -168,6 +228,9 @@ the stages, and ↓ arrows sit at both ends of each strip.
   - Loops (`[cues] loops`): slots A–H, each a cue or a loop. Click a slot to
     set its length in bars. Slots the chosen preset doesn't use are dimmed.
   - Memory cue on every hot cue and the first downbeat (`[cues] memory`).
+- Key and energy you correct in the player are saved with Save in `labels.db`
+  (`key_energy`, schema v5, the first the Python prototype can't open) and
+  win over the analysis in the library and in every export.
 - Not in settings yet:
   - `misleading_cost` and `rating_misleading_cost`. These could become
     "guess often ↔ only when sure" sliders.
@@ -177,7 +240,7 @@ the stages, and ↓ arrows sit at both ends of each strip.
 
 ## Open
 
-- Should the vibe player and the table rows show cover art too?
+- Should the table rows show cover art too? (The player does.)
 - Should the Export button warn or block while the collection export is old?
 - Should settings later drop "Start" and move the counts to stats?
 - Should the collection player fold to a slim bar when no track is open?

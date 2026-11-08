@@ -1,6 +1,6 @@
 extends VBoxContainer
 ## The whole collection: the same player docked on top, filters, and the same flat table.
-## Next saves a track into the reviewed table, so it goes out with the next Export.
+## Save puts a track into the reviewed table, so it goes out with the next Export.
 
 const UI := preload("res://ui/ui.gd")
 const Player := preload("res://ui/player.gd")
@@ -17,6 +17,7 @@ var filter := "All"
 var _chips: HBoxContainer
 var _selection: PanelContainer
 var _sel_count: Label
+var _dirty := true
 
 
 func _init(s, a) -> void:
@@ -24,7 +25,7 @@ func _init(s, a) -> void:
 	app = a
 	add_theme_constant_override("separation", 0)
 	search = LineEdit.new()
-	search.placeholder_text = "Search %s tracks" % _thousands(state.library_total)
+	search.placeholder_text = "Search your tracks"
 	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	search.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
 	search.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
@@ -37,7 +38,7 @@ func _init(s, a) -> void:
 	head.custom_minimum_size.y = 40
 	head.add_child(UI.row(8, [UI.kbd("/"), search, UI.button("Columns", "", false, func() -> void: pass)]))
 	add_child(head)
-	player = Player.new(Color("#26272b"))
+	player = Player.new(Color("#26272b"), state)
 	player.next.connect(_on_next)
 	player.skip.connect(func() -> void: table.move(1))
 	add_child(player)
@@ -54,21 +55,24 @@ func _init(s, a) -> void:
 		UI.kbd("↑↓"), UI.text("move", 11, UI.MUTED)]))
 	_selection.visible = false
 	add_child(_selection)
-	table = Table.new(["check", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key", "plays", "last", "added"])
+	table = Table.new(["now", "check", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key", "plays", "labelled", "added"])
 	table.activated.connect(func(t: Dictionary) -> void: player.show_track(t, "library"))
+	search.text_submitted.connect(func(_t: String) -> void: search.release_focus())
 	table.checked_changed.connect(func(n: int) -> void:
 		_selection.visible = n > 0
 		_sel_count.text = "%d selected" % n)
 	var tm := UI.margin(table, 16, 6, 16, 10)
 	tm.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(tm)
-	_fill()
-	var first: Dictionary = table.rows[0]
-	for t in table.rows:
-		if t.title == "Night Swim":
-			first = t
-	table.select(first.id)
-	player.show_track(first, "library")
+	player.clear("Pick a track below, or step through with ↑↓")
+	# 15,000 rows: refilter only when this screen is in view
+	state.changed.connect(func() -> void:
+		_dirty = true
+		if is_visible_in_tree():
+			_fill())
+	visibility_changed.connect(func() -> void:
+		if is_visible_in_tree() and _dirty:
+			_fill())
 
 
 func _thousands(n: int) -> String:
@@ -77,6 +81,8 @@ func _thousands(n: int) -> String:
 
 
 func _fill() -> void:
+	_dirty = false
+	search.placeholder_text = "Search %s tracks" % _thousands(state.library.size())
 	for c in _chips.get_children():
 		c.queue_free()
 	var pending := 0
@@ -100,7 +106,7 @@ func _fill() -> void:
 	var q := search.text.to_lower()
 	var out: Array[Dictionary] = []
 	for t: Dictionary in state.library:
-		if q != "" and not (str(t.title).to_lower().contains(q) or str(t.artist).to_lower().contains(q)):
+		if q != "" and not (t.title.to_lower().contains(q) or t.artist.to_lower().contains(q)):
 			continue
 		match filter:
 			"Played":
@@ -118,13 +124,12 @@ func _fill() -> void:
 	table.set_rows(out)
 
 
-func _on_next(colour: int, rating: int) -> void:
+func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
 	# the next row as it is now: a new colour re-sorts the saved track elsewhere
 	var i := table.rows.find(player.track)
 	var nxt: Dictionary = table.rows[mini(i + 1, table.rows.size() - 1)]
-	state.decide(player.track, colour, rating, "library")
-	table.set_rows(table.rows)
-	table.select(nxt.id)
+	state.decide(player.track, colour, rating, "library", energy, key)
+	table.select(nxt.path)
 	player.show_track(nxt, "library")
 
 
@@ -138,12 +143,12 @@ func handle_key(k: InputEventKey) -> bool:
 		search.grab_focus()
 		return true
 	if k.alt_pressed:
-		if k.physical_keycode == KEY_Q:
+		if k.keycode == KEY_Q:
 			_queue_checked()
 			return true
 		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm"}
-		if sorts.has(k.physical_keycode):
-			table.sort_by(sorts[k.physical_keycode])
+		if sorts.has(k.keycode):
+			table.sort_by(sorts[k.keycode])
 			return true
 		return false
 	if k.physical_keycode == KEY_UP or k.physical_keycode == KEY_DOWN:

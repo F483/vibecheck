@@ -7,6 +7,13 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+# decoding and training are too slow unoptimised to use the app in a debug build
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.vibecheck]
+opt-level = 3
+
 [profile.release]
 lto = true
 strip = true

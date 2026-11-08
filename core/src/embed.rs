@@ -130,6 +130,9 @@ impl Embedder {
     pub fn windows(&mut self, windows: &[&[f32]]) -> Res<Vec<[f32; DIM]>> {
         let mut out = Vec::with_capacity(windows.len());
         for chunk in windows.chunks(std::env::var("VIBECHECK_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(2)) {
+            if crate::stopping() {
+                return Err("stopped".into());
+            }
             let mut data = vec![0f32; chunk.len() * SAMPLES];
             for (i, w) in chunk.iter().enumerate() {
                 let row = &mut data[i * SAMPLES..(i + 1) * SAMPLES];
@@ -244,6 +247,9 @@ pub fn embed_all(root: &Path, paths: &[String]) -> Res<Stats> {
         }
         drop(tx);
         for (k, (i, pcm)) in rx.into_iter().enumerate() {
+            if crate::stopping() {
+                break; // dropping the receiver stops the decoders too
+            }
             let rel = todo[i];
             let vec = pcm.and_then(|d| {
                 let ws = audio::excerpts(&d, WINDOWS, SECONDS);

@@ -26,8 +26,9 @@ const HEAD_TAIL_BYTES: u64 = 256 * 1024;
 const MIGRATIONS: &[(i64, &str, &str)] = &[
     (3, "baseline", include_str!("../migrations/0003_baseline.sql")),
     (4, "cue_writes", include_str!("../migrations/0004_cue_writes.sql")),
+    (5, "key_energy", include_str!("../migrations/0005_key_energy.sql")),
 ];
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 const BASELINE: i64 = 3;
 
 pub fn vibecheck_dir(root: &Path) -> Res<PathBuf> {
@@ -361,6 +362,25 @@ pub fn cues_written(con: &Connection) -> Res<HashMap<String, Vec<f64>>> {
          WHERE w.id = (SELECT MAX(id) FROM cue_writes WHERE track_id = w.track_id)",
     )?;
     Ok(m.into_iter().map(|(p, h)| (p, serde_json::from_str(&h).unwrap_or_default())).collect())
+}
+
+/// Your key and energy for a track, as corrected; None leaves that one alone.
+pub fn log_key_energy(con: &Connection, track_id: i64, key: Option<&str>, energy: Option<u8>) -> Res<()> {
+    con.execute(
+        "INSERT INTO key_energy (track_id, key, energy, ts) VALUES (?1,?2,?3,?4)",
+        params![track_id, key, energy, now()],
+    )?;
+    Ok(())
+}
+
+/// path -> (key, energy) as you last corrected them.
+pub fn key_energy(con: &Connection) -> Res<HashMap<String, (Option<String>, Option<u8>)>> {
+    let mut st = con.prepare(
+        "SELECT t.path, k.key, k.energy FROM key_energy k JOIN tracks t ON t.id = k.track_id
+         WHERE k.id = (SELECT MAX(id) FROM key_energy WHERE track_id = k.track_id)",
+    )?;
+    let out = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?.collect::<Result<_, _>>()?;
+    Ok(out)
 }
 
 /// Tracks with any statement at all, including a deliberate blank.

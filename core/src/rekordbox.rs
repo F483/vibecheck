@@ -202,6 +202,23 @@ pub struct Track {
     /// POSITION_MARK attributes, as strings, in order
     pub marks: Vec<Vec<(String, String)>>,
     pub label: Option<Label>,
+    /// what rekordbox shows, for the app's tables
+    pub info: Info,
+}
+
+/// The columns rekordbox shows, as the xml has them.
+#[derive(Debug, Clone, Default)]
+pub struct Info {
+    pub name: String,
+    pub artist: String,
+    pub genre: String,
+    pub mix: String,
+    pub bpm: f64,
+    pub tonality: String,
+    pub comment: String,
+    pub plays: i64,
+    /// "2024-05-01"
+    pub added: String,
 }
 
 /// Every collection track inside `collection`, by NFC relative path.
@@ -223,6 +240,17 @@ pub fn read(xml: &Path, collection: &Path) -> Res<HashMap<String, Track>> {
                     track_id: tag.get("TrackID").unwrap_or("").to_string(),
                     duration: tag.get("TotalTime").and_then(|v| v.parse().ok()).unwrap_or(0.0),
                     label: Some(Label { colour, stars: Some(palette::stars_from_rating(tag.get("Rating"))) }),
+                    info: Info {
+                        name: tag.get("Name").unwrap_or("").to_string(),
+                        artist: tag.get("Artist").unwrap_or("").to_string(),
+                        genre: tag.get("Genre").unwrap_or("").to_string(),
+                        mix: tag.get("Mix").unwrap_or("").to_string(),
+                        bpm: tag.get("AverageBpm").and_then(|v| v.parse().ok()).unwrap_or(0.0),
+                        tonality: tag.get("Tonality").unwrap_or("").to_string(),
+                        comment: tag.get("Comments").unwrap_or("").to_string(),
+                        plays: tag.get("PlayCount").and_then(|v| v.parse().ok()).unwrap_or(0),
+                        added: tag.get("DateAdded").unwrap_or("").to_string(),
+                    },
                     ..Default::default()
                 };
                 match (rel, tag.empty) {
