@@ -199,7 +199,7 @@ func _row(r: Dictionary) -> Dictionary:
 		"colour": _ui_of.get(int(r.colour), -1), "rating": maxi(int(r.stars), 0), "source": r.source,
 		"trust": int(r.trust), "energy": int(r.energy), "key": r.key, "bpm": float(r.bpm), "plays": int(r.plays),
 		"added": r.added, "labelled": Time.get_date_string_from_unix_time(ts) if ts > 0 else "",
-		"labelled_ts": ts, "batch": r.batch, "embedded": r.embedded, "length": maxf(float(r.length), 1.0),
+		"labelled_ts": ts, "batch": r.batch, "joined": int(r.joined), "embedded": r.embedded, "length": maxf(float(r.length), 1.0),
 		"tag": "", "flag": "", "guess": -1, "guess_stars": -1,
 		"cover": [Color.from_hsv(float(hash(r.path) % 1000) / 1000.0, 0.5, 0.45), Color("#1c1d20")],
 	}
@@ -282,8 +282,11 @@ func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, 
 	t.flag = "from library" if from == "library" else "just reviewed"
 	if reviewed.has(t):
 		reviewed.erase(t)
+	elif int(t.get("joined", 0)) == 0:
+		t.joined = int(Time.get_unix_time_from_system() * 1000)
 	reviewed.push_front(t)
 	t.erase("dropped")
+	t.erase("fresh")
 	if not mine:
 		labels += 1
 	_answered[t.path] = true
@@ -337,11 +340,15 @@ func add_dropped(paths: PackedStringArray, to_table: bool) -> Dictionary:
 	if ts.is_empty():
 		pass
 	elif to_table:
-		for t: Dictionary in ts:
-			# stepped through in the player until confirmed
+		var at := int(Time.get_unix_time_from_system() * 1000)
+		for i in ts.size():
+			var t: Dictionary = ts[i]
+			# stepped through in the player until confirmed; marked in the list until opened
 			t.dropped = true
+			t.fresh = true
 			t.batch = true
 			if not reviewed.has(t):
+				t.joined = at + i
 				reviewed.push_front(t)
 		_call(_main, "add_to_batch", {"paths": ts.map(func(t: Dictionary) -> String: return t.path)}, func(_r: Variant) -> void: pass)
 		_guess(ts)

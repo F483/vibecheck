@@ -67,6 +67,9 @@ struct Saved {
     /// tracks dropped on the list in the app: in the next export as they are
     #[serde(default, skip_serializing_if = "Vec::is_empty", alias = "unsaved")]
     dropped: Vec<String>,
+    /// path -> when it was dropped, unix ms: its place in the list
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    dropped_at: HashMap<String, i64>,
 }
 
 fn saved_path(root: &Path) -> Res<PathBuf> {
@@ -89,12 +92,33 @@ fn save(root: &Path, s: &Saved) -> Res<()> {
 /// or not: kept here until then.
 pub fn add_to_batch(root: &Path, paths: &[String]) -> Res<()> {
     let mut s = load_saved(root);
-    for p in paths {
+    let at = now_ms();
+    for (i, p) in paths.iter().enumerate() {
         if !s.dropped.contains(p) {
             s.dropped.push(p.clone());
+            s.dropped_at.insert(p.clone(), at + i as i64);
         }
     }
     save(root, &s)
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
+/// When each track in the next export joined the list, unix ms: dropped on it,
+/// else its first label since the last export. Orders the list's # column.
+fn joined(con: &rusqlite::Connection, s: &Saved, after: i64) -> Res<HashMap<String, i64>> {
+    let mut st = con.prepare(
+        "SELECT t.path, MIN(l.ts) FROM labels l JOIN tracks t ON t.id = l.track_id
+         WHERE l.ts > ?1 AND l.round_id IS NULL AND l.source IN ('user', 'model') GROUP BY t.path",
+    )?;
+    let mut out: HashMap<String, i64> = st.query_map([after], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? * 1000)))?.collect::<Result<_, _>>()?;
+    for (p, at) in &s.dropped_at {
+        let e = out.entry(p.clone()).or_insert(*at);
+        *e = (*e).min(*at);
+    }
+    Ok(out)
 }
 
 /// Labels made after this belong to the next export: the last export, else the
@@ -166,6 +190,8 @@ pub struct Row {
     pub labelled: i64,
     /// labelled here since the last export: goes out with the next one
     pub batch: bool,
+    /// when it joined the export list, unix ms; 0 when not in it
+    pub joined: i64,
     pub embedded: bool,
     pub length: f64,
 }
@@ -190,6 +216,7 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
     let after = since(&con, &saved)?;
     let mut in_batch: HashSet<String> = batch(&con, after)?.into_iter().collect();
     in_batch.extend(saved.dropped.iter().cloned());
+    let joined = joined(&con, &saved, after)?;
     let mut st = con.prepare(
         "SELECT path, hash, colour_id, stars, source, ts FROM current WHERE missing_at IS NULL ORDER BY path",
     )?;
@@ -245,6 +272,7 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
             added: info.added.clone(),
             labelled: if source == "user" || source == "model" { ts.unwrap_or(0) } else { 0 },
             batch: in_batch.contains(&path),
+            joined: if in_batch.contains(&path) { joined.get(&path).copied().unwrap_or(0) } else { 0 },
             embedded: embedded.contains(&hash),
             length: t.map(|t| t.duration).unwrap_or(0.0),
             path,
@@ -754,6 +782,7 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
         theirs,
     });
     saved.dropped.clear();
+    saved.dropped_at.clear();
     save(root, &saved)?;
     Ok(Exported {
         name,

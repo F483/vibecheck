@@ -139,8 +139,12 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 5. **Export list strip** (light). It shows "↓ Export list 47" and an **"Export → X"**
    button. The arrow is on the button and points right, because the tracks go
    out of the app. Nothing else is on the strip.
-6. **Export list** (dark). One flat table like rekordbox, with no colour
-   grouping. Click a header to sort by colour, energy, rating, BPM or trust
+6. **Export list** (dark). Its first column is **#**, the order tracks joined
+   the list (dropped, confirmed or guessed), like a rekordbox playlist's
+   number: sort by it to get each drop back together. Tracks dropped in are
+   marked (lime bar, faint lime row) wherever the sort puts them, until you
+   open them; the user chose this over pinning them to the top. One flat
+   table like rekordbox, with no colour grouping. Click a header to sort by colour, energy, rating, BPM or trust
    (the ring column's header is a ring; ⌥C ⌥E ⌥R ⌥B ⌥T); click a
    row to relisten in the player and fix it. This is how the user hunts for
    outliers: sort, step through, fix. **Click a trust ring** (here and in the

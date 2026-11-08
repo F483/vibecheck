@@ -10,7 +10,7 @@ signal checked_changed(n: int)
 
 ## column -> [header, width]; width 0 takes the rest.
 const COLS := {
-	"now": ["", 8], "check": ["", 16], "ring": ["", 12], "colour": ["Colour", 84], "title": ["Track", 0],
+	"now": ["", 8], "num": ["#", 28], "check": ["", 16], "ring": ["", 12], "colour": ["Colour", 84], "title": ["Track", 0],
 	"artist": ["Artist", 160], "energy": ["Energy", 104], "rating": ["Rating", 72], "bpm": ["BPM", 44],
 	"key": ["Key", 40], "plays": ["Plays", 40], "labelled": ["Labelled", 80], "added": ["Added", 80],
 }
@@ -93,6 +93,8 @@ func _value(t: Dictionary, k: String) -> Variant:
 			return t.colour if t.colour >= 0 else 99
 		"ring":
 			return int(t.trust)
+		"num":
+			return int(t.get("joined", 0))
 	return t.get(k, 0)
 
 
@@ -168,6 +170,10 @@ func _draw() -> void:
 		if sel:
 			draw_rect(r, UI.SEL)
 			draw_rect(r.grow(-0.5), UI.LIME, false, 1)
+		elif t.get("fresh", false):
+			# just dropped in, not opened yet: find them wherever the sort put them
+			draw_rect(r, Color(UI.LIME, 0.08))
+			draw_rect(Rect2(0, y, 3, ROW), UI.LIME)
 		elif t.flag == "just reviewed":
 			draw_rect(r, UI.SEL)
 		elif checked.has(t.path):
@@ -186,8 +192,12 @@ func _draw() -> void:
 				draw_string(_mono, Vector2(_x[k][0] + 13, HEAD / 2 + 4), "▼" if sort_desc else "▲", HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UI.MUTED)
 			continue
 		if k == sort_key and h != "":
-			h += " ▼" if sort_desc else " ▲"
-		draw_string(_mono, Vector2(_x[k][0], HEAD / 2 + 4), h, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UI.MUTED)
+			h = (("▼ " if sort_desc else "▲ ") + h) if k == "num" else h + (" ▼" if sort_desc else " ▲")
+		var hx: float = _x[k][0]
+		if k == "num":
+			# over its numbers, which are right-aligned
+			hx += _x[k][1] - _mono.get_string_size(h, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x
+		draw_string(_mono, Vector2(hx, HEAD / 2 + 4), h, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, UI.MUTED)
 	draw_line(Vector2(0, HEAD - 0.5), Vector2(size.x, HEAD - 0.5), UI.LINE)
 
 
@@ -231,6 +241,8 @@ func _cell(t: Dictionary, k: String, y: float, sel: bool) -> void:
 			_text("%.0f" % t.bpm if t.bpm > 0 else "", k, y, _mono, UI.TEXT, 12, true)
 		"plays":
 			_text(str(t.plays), k, y, _mono, UI.TEXT, 12, true)
+		"num":
+			_text(str(t.get("num", "")), k, y, _mono, UI.MUTED, 12, true)
 		"now":
 			# the row in the player
 			if sel:

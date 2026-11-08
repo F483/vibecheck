@@ -37,7 +37,7 @@ func _init(s, a) -> void:
 	var r := UI.section(UI.PANEL, 16, 8)
 	r.add_child(_reviewed)
 	add_child(r)
-	table = Table.new(["now", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key"])
+	table = Table.new(["now", "num", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key"])
 	table.activated.connect(_on_row)
 	var tm := UI.margin(table, 16, 6, 16, 10)
 	tm.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -67,6 +67,15 @@ func refresh() -> void:
 		_reviewed.add_child(c)
 	var rows: Array[Dictionary] = []
 	rows.append_array(state.reviewed)
+	# the # column: the order tracks joined the list, as in a rekordbox playlist
+	var by_join := rows.duplicate()
+	# ties broken by title, as the table breaks them, so sorting by # gives 1, 2, 3…
+	by_join.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var ja := int(a.get("joined", 0))
+		var jb := int(b.get("joined", 0))
+		return str(a.title) < str(b.title) if ja == jb else ja < jb)
+	for i in by_join.size():
+		by_join[i].num = i + 1
 	table.set_rows(rows)
 
 
@@ -246,6 +255,8 @@ func _next_dropped() -> Dictionary:
 
 func _on_row(t: Dictionary) -> void:
 	relisten = true
+	if t.erase("fresh"):
+		table.queue_redraw()
 	player.show_track(t, "dropped" if t.get("dropped", false) else "relisten")
 
 
