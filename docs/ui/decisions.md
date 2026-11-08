@@ -28,7 +28,7 @@ touching the saved settings or the collection's state.
 How the app maps onto the core:
 
 - A decision in the player is a `user` label outside any round. What was
-  labelled since the last export is the reviewed table and the next export.
+  labelled since the last export is the export list and the next export.
   The export is remembered in `.vibecheck/app.json`, with each track's play
   count at the time, so the next sync can count plays.
 - Sync is the command line's, plus two rules: a guess the app exported that
@@ -68,11 +68,14 @@ How the app maps onto the core:
 ## Vibe workspace: one screen
 
 The main screen is called **Vibe**, after the app's name. It was chosen over
-Review, Tag, Train, Check, Label and Listen. "Reviewed" stays as the name of
-the table of tracks you have finished.
+Review, Tag, Train, Check, Label and Listen. The list under the player is
+the **export list**: everything that goes out with the next Export (and
+becomes a rekordbox playlist), confirmed, guessed or dropped in as it is. It
+was "Reviewed" until dropped tracks and guesses made that wrong; chosen over
+Batch, Next export, Playlist and Crate.
 
 The screen reads top to bottom as the flow:
-queue → model → player → reviewed → table. Lighter strips (`#2a2b2f`) separate
+queue → model → player → export list. Lighter strips (`#2a2b2f`) separate
 the stages, which sit on the dark background (`#222327`), and ↓ arrows sit at
 both ends of each strip. This was the other way round until the user asked to
 invert it app-wide: the trust rings read much better on the dark background
@@ -133,10 +136,10 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      moved out of the dark-key row because it no longer fit the window.
    - In the library the hint "Confirm adds it to the next Export" sits on the
      title line, before the time, because the upper row is full.
-5. **Reviewed strip** (light). It shows "↓ Reviewed 47" and an **"Export → X"**
+5. **Export list strip** (light). It shows "↓ Export list 47" and an **"Export → X"**
    button. The arrow is on the button and points right, because the tracks go
    out of the app. Nothing else is on the strip.
-6. **Reviewed table** (dark). One flat table like rekordbox, with no colour
+6. **Export list** (dark). One flat table like rekordbox, with no colour
    grouping. Click a header to sort by colour, energy, rating, BPM or trust
    (the ring column's header is a ring; ⌥C ⌥E ⌥R ⌥B ⌥T); click a
    row to relisten in the player and fix it. This is how the user hunts for
@@ -155,8 +158,8 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 | context | ⇧ENTER | ENTER |
 |---|---|---|
 | vibe, track from the queue | **Skip track**: next track, no label | **Confirm**: your label, next track |
-| vibe, relistening a reviewed row | **Requeue**: back to the queue (the user prefers this short label) | **Confirm**: your label, next row in the list as sorted now; after the last, back to the queue. Sort, then work through the list top to bottom |
-| collection | **Skip**: next row, no label | **Confirm**: your label, into the reviewed table and the export, next row |
+| vibe, relistening a row of the export list | **Requeue**: back to the queue (the user prefers this short label) | **Confirm**: your label, next row in the list as sorted now; after the last, back to the queue. Sort, then work through the list top to bottom |
+| collection | **Skip**: next row, no label | **Confirm**: your label, into the export list, next row |
 
 - ESC stops playback and returns to the start of the track, as Stop; SPACE
   pauses where it is. There is no separate "back" or "close".
@@ -184,7 +187,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 - Select tracks in rekordbox and drag them onto the vibe screen. Where they
   land decides what happens:
-  - **on the reviewed strip or table**: they join the list and the **next
+  - **on the export list or its strip**: they join the list and the **next
     Export** as they are, every row alike (the user: "users will not care
     about this distinction; the trust ring says whether it was confirmed").
     A track with no colour gets the model's guess for colour and stars, saved
@@ -253,7 +256,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   queue ⌥Q"), then the **same flat table** with extra columns (plays, last
   played, added).
 - Stepping through the collection with Confirm puts each track into the **same
-  reviewed table** as vibe, so it goes out with the next Export.
+  export list** as vibe, so it goes out with the next Export.
 
 ## Settings contents
 

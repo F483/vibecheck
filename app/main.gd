@@ -187,7 +187,7 @@ func export_batch() -> void:
 	var v := _dialog_box(464)
 	v.add_child(UI.caps("Exporting → rekordbox"))
 	v.add_child(UI.text("%d tracks" % state.reviewed.size(), 18, UI.TEXT, "heavy"))
-	v.add_child(UI.wrap("Working out key and energy and placing cue points; a minute for a big batch.", 12))
+	v.add_child(UI.wrap("Working out key and energy and placing cue points; a minute for a long list.", 12))
 	state.export(func(e: Variant) -> void:
 		if e == null:
 			return

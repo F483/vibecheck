@@ -96,7 +96,7 @@ func _fill() -> void:
 	var allc := UI.panel(UI.LINE, 3, 9, 4)
 	allc.add_child(UI.row(5, [dots, UI.text("all colours", 11)]))
 	_chips.add_child(allc)
-	for f in ["Energy 1–10", "Rating any", "BPM any", "Batch any"]:
+	for f in ["Energy 1–10", "Rating any", "BPM any", "Export list any"]:
 		_chips.add_child(UI.chip(f, false))
 	var q := search.text.to_lower()
 	var out: Array[Dictionary] = []

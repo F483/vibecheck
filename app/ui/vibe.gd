@@ -62,7 +62,7 @@ func refresh() -> void:
 	_build_model()
 	for c in _reviewed.get_children():
 		c.queue_free()
-	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Reviewed"), UI.text(str(state.reviewed.size()), 12, UI.TEXT, "mono")]
+	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Export list"), UI.text(str(state.reviewed.size()), 12, UI.TEXT, "mono")]
 	for c: Control in parts + [UI.spacer(), UI.button("Export →", "X", true, Callable(app, "export_batch"))]:
 		_reviewed.add_child(c)
 	var rows: Array[Dictionary] = []

@@ -17,7 +17,7 @@ const KEY_GAP := 6
 ## The skip button and the tag, per context.
 const MODES := {
 	"queue": {"tag": "", "skip": "Skip track", "hint": ""},
-	"relisten": {"tag": "relistening · from reviewed", "skip": "Requeue", "hint": ""},
+	"relisten": {"tag": "relistening · from the export list", "skip": "Requeue", "hint": ""},
 	"library": {"tag": "relistening · from library", "skip": "Skip", "hint": "Confirm adds it to the next Export"},
 	"dropped": {"tag": "from rekordbox", "skip": "Skip", "hint": "Confirm makes it your label"},
 }
