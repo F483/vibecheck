@@ -24,14 +24,22 @@ its script.
 
 ## Screens and rail
 
-- The rail holds **review, library, stats, settings**, with settings directly
-  below stats.
+- The rail holds **vibe, library, stats, settings**, with settings directly
+  below stats. Each item is an **icon** with a small label underneath:
+  sparkles for vibe (it stands for the AI; chosen over headphones,
+  a brain, a node graph and a waveform), books for library, a chart for stats,
+  a gear for settings. These replace the earlier letters (R/C/S/,). The icons are
+  18 px line drawings: grey normally, lime when active.
 - **Settings is the setup.** On first run the user fills in Music and
-  `rekordbox.xml`; review, library and stats stay greyed out until both are
-  set. It is the same page afterwards. Keep "Start reviewing ENTER" for now.
+  `rekordbox.xml`; vibe, library and stats stay greyed out until both are
+  set. It is the same page afterwards. Keep "Start ENTER" for now.
 - Stats and collection are one click away from every screen.
 
-## Review workspace: one screen
+## Vibe workspace: one screen
+
+The main screen is called **Vibe**, after the app's name. It was chosen over
+Review, Tag, Train, Check, Label and Listen. "Reviewed" stays as the name of
+the table of tracks you have finished.
 
 The screen reads top to bottom as the flow:
 queue → model → player → reviewed → table. Darker strips (`#222327`) separate
@@ -74,8 +82,8 @@ the stages, and ↓ arrows sit at both ends of each strip.
 
 | context | ⇧ENTER | ENTER |
 |---|---|---|
-| review, track from the queue | **Skip track**: next track, no label | **Next**: save, next track |
-| review, relistening a reviewed row | **Requeue**: back to the queue (the user prefers this short label) | **Next**: save, back to the queue |
+| vibe, track from the queue | **Skip track**: next track, no label | **Next**: save, next track |
+| vibe, relistening a reviewed row | **Requeue**: back to the queue (the user prefers this short label) | **Next**: save, back to the queue |
 | collection | **Skip**: next row, no save | **Next**: save, add to the reviewed table and the export, next row |
 
 - ESC stops playback, as in rekordbox. There is no separate "back" or "close".
@@ -111,7 +119,7 @@ the stages, and ↓ arrows sit at both ends of each strip.
 - **Sync** is automatic. The app watches the xml, and when rekordbox exports,
   the **Sync summary** popup dims the workspace and shows: played / corrected /
   untouched, plus how many tracks went to the front of the queue. "Back to
-  review ENTER" confirms. "Sync ⌥S" in the widget is the manual fallback.
+  vibe ENTER" confirms. "Sync ⌥S" in the widget is the manual fallback.
 - Importing applies every field in the xml, so the export has to be recent.
   That is why the widget warns when it is old.
 - **Canvas layout:** export goes out at the bottom (the export strip → the
@@ -120,13 +128,13 @@ the stages, and ↓ arrows sit at both ends of each strip.
 
 ## Collection
 
-- The player is docked **on top** and is the **same component as in review**,
+- The player is docked **on top** and is the **same component as in vibe**,
   so the user recognises it and it can be reused.
-- Below it: filter chips, then a selection bar ("N selected · Add to review
+- Below it: filter chips, then a selection bar ("N selected · Add to
   queue ⌥Q"), then the **same flat table** with extra columns (plays, last
   played, added).
 - Stepping through the collection with Next saves each track into the **same
-  reviewed table** as review, so it goes out with the next Export. Rows that
+  reviewed table** as vibe, so it goes out with the next Export. Rows that
   came from here are flagged "from library".
 
 ## Settings contents
@@ -138,12 +146,32 @@ the stages, and ↓ arrows sit at both ends of each strip.
 - The calibration threshold, 100–300.
 - Show the model's guess in the player after calibration (On).
 - Re-ask old tracks blind (rises as the library fills in).
-- Warn when the collection export is older than 7 days.
+- **rekordbox**
+  - Write the key into rekordbox's key field ("8A"): `[rekordbox] write_tonality`.
+  - Start the comment with key and energy ("8A - Energy 6"); the rest of the
+    comment, /* tags */ included, is kept: `[rekordbox] write_comment`.
+  - Warn when the collection export is older than 7 days. This one is new and
+    not in the config yet.
+- **Cue points**
+  - Write cue points (`[cues] write`). They go only on tracks with no cues or
+    with generated ones; a track with any cue you set yourself is never touched.
+  - Hot cues (`[cues] lead`), two presets:
+    - "At each change · A–D" = `[0]`;
+    - "16 + 8 bars before · A–H" = `[16, 8]`.
+  - Loops (`[cues] loops`): slots A–H, each a cue or a loop. Click a slot to
+    set its length in bars. Slots the chosen preset doesn't use are dimmed.
+  - Memory cue on every hot cue and the first downbeat (`[cues] memory`).
+- Not in settings yet:
+  - `misleading_cost` and `rating_misleading_cost`. These could become
+    "guess often ↔ only when sure" sliders.
+  - `cues.retrain_after`.
+  - `[audio]` and `[model]` never go in settings: they are pinned and part of
+    the cache key.
 
 ## Open
 
-- Should the review player and the table rows show cover art too?
+- Should the vibe player and the table rows show cover art too?
 - Should the Export button warn or block while the collection export is old?
-- Should settings later drop "Start reviewing" and move the counts to stats?
+- Should settings later drop "Start" and move the counts to stats?
 - Should the collection player fold to a slim bar when no track is open?
 - Does a skipped track go back into the queue or get dropped?
