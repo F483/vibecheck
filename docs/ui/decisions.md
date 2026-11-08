@@ -203,7 +203,10 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
     collection's `.vibecheck/app.json` until exported. (Before, dropped rows
     with a colour were dimmed and held back until confirmed; dropped.) No
     guesses while calibrating or with the guess turned off; a track the model
-    hasn't listened to is listened to first, a few seconds each;
+    hasn't listened to is listened to first, a few seconds each, and while it
+    waits its **trust ring spins** (a lime arc going round), turning into the
+    guessed ring when the guess lands (chosen over a moving dot in the
+    colour cell, a "listening…" word and a progress bar);
   - **anywhere else**: to the **front of the queue**, in the order dragged,
     tagged "from rekordbox", the first straight into the player, also as they
     are, not blind. They stay at the front when the queue is rebuilt, until

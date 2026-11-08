@@ -116,6 +116,7 @@ func _fill() -> void:
 		out.append(t)
 	_chips.add_child(UI.spacer())
 	_chips.add_child(UI.text("%d tracks" % out.size(), 11, UI.MUTED, "mono"))
+	table.spinning = state.guessing > 0
 	table.set_rows(out)
 
 

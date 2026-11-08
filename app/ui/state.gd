@@ -33,6 +33,7 @@ var loaded := false
 var embedded := 0
 var exported_at := 0
 var queued_by_sync := 0
+var guessing := 0  # tracks the model is listening to and guessing now: their rings spin
 var last_export := {}
 var last_sync := {}
 var stats := {}
@@ -368,8 +369,15 @@ func _guess(ts: Array) -> void:
 		.map(func(t: Dictionary) -> String: return t.path)
 	if paths.is_empty():
 		return
+	for p: String in paths:
+		by_path[p].guessing = true
+	guessing += paths.size()
 	_call(_ask, "guess", {"paths": paths}, func(gs: Variant) -> void:
+		guessing -= paths.size()
+		for p: String in paths:
+			by_path.get(p, {}).erase("guessing")
 		if gs == null:
+			changed.emit()
 			return
 		for g: Dictionary in gs:
 			var t: Dictionary = by_path.get(g.path, {})

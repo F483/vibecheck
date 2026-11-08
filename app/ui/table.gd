@@ -33,6 +33,8 @@ var _sans: Font
 var _bold: Font
 var _mono: Font
 var _trust: PopupPanel
+## while any row's guess is being worked out, its ring spins: redraw every frame
+var spinning := false
 
 ## The trust levels, as the ring shows them: [name, what you did, what it counts for].
 const TRUST := [
@@ -68,6 +70,11 @@ func _init(c: Array) -> void:
 		queue_redraw())
 	add_child(_bar)
 	resized.connect(_layout)
+
+
+func _process(_d: float) -> void:
+	if spinning:
+		queue_redraw()
 
 
 func set_rows(r: Array[Dictionary]) -> void:
@@ -214,6 +221,12 @@ func _cell(t: Dictionary, k: String, y: float, sel: bool) -> void:
 				draw_rect(b, Color("#6a6b70"), false, 1)
 		"ring":
 			var c := Vector2(x + 6, mid)
+			if t.get("guessing", false):
+				# being listened to and guessed: an arc going round where the ring will be
+				var a := Time.get_ticks_msec() / 1000.0 * TAU
+				draw_arc(c, 4.5, 0, TAU, 24, Color("#4a4b50"), 2.0, true)
+				draw_arc(c, 4.5, a, a + PI / 2, 12, UI.LIME, 2.0, true)
+				return
 			var lv: int = t.trust
 			var col := UI.LIME if lv >= 3 else (UI.AMBER if lv == 2 else UI.MUTED)
 			draw_arc(c, 4.5, 0, TAU, 24, Color("#4a4b50"), 2.0, true)
@@ -315,6 +328,8 @@ func _trust_popup(t: Dictionary, at: Vector2i) -> void:
 		g.add_child(UI.text(row[3], 11, UI.LIME if on else UI.MUTED, "mono"))
 	v.add_child(g)
 	var nxt: String = TRUST_NEXT.get(lv, "")
+	if t.get("guessing", false):
+		nxt = "The model is listening to it and guessing its colour and stars."
 	v.add_child(UI.margin(UI.text(nxt, 12, UI.TEXT), 0, 4, 0, 0))
 	_trust.add_child(v)
 	add_child(_trust)

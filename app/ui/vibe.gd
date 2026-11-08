@@ -76,6 +76,7 @@ func refresh() -> void:
 		return str(a.title) < str(b.title) if ja == jb else ja < jb)
 	for i in by_join.size():
 		by_join[i].num = i + 1
+	table.spinning = state.guessing > 0
 	table.set_rows(rows)
 
 
