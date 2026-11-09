@@ -52,7 +52,10 @@ func _ready() -> void:
 	watch.timeout.connect(state.poll)
 	add_child(watch)
 	get_tree().auto_accept_quit = false
+	for k: String in SCREENS:
+		(screens[k] as Control).minimum_size_changed.connect(_fit_min_soon)
 	show_screen("vibe" if state.is_ready() else "settings")
+	_fit_min_soon()
 	state.load_all()
 	_shot()
 
@@ -272,6 +275,33 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	else:
 		return
 	get_viewport().set_input_as_handled()
+
+
+## The window can't be made narrower or shorter than the largest screen needs, so nothing is
+## ever pushed out of view. Measured from the screens, so it follows the layout.
+## Measured a frame later: rows rebuilt this frame still hold their old children until it ends,
+## and would count twice.
+var _fit_pending := false
+
+
+func _fit_min_soon() -> void:
+	if _fit_pending:
+		return
+	_fit_pending = true
+	await get_tree().process_frame
+	_fit_pending = false
+	_fit_min()
+
+
+func _fit_min() -> void:
+	var need := Vector2.ZERO
+	for k: String in SCREENS:
+		need = need.max((screens[k] as Control).get_combined_minimum_size())
+	need.x += 64  # the rail
+	var w := get_window()
+	var px := Vector2i((need * w.content_scale_factor).ceil())
+	if px != w.min_size:
+		w.min_size = px
 
 
 ## Retina reports pixels, so a 1280 px window shows at half size: scale window and content by the screen.

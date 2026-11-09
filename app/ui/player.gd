@@ -1,7 +1,7 @@
 extends PanelContainer
 ## The player: one track, its waveform, a centred tray of what you say about the track
 ## (stars, bpm, energy, key), the colour keys with the parts of the track beside them, then
-## a centred tray of the main controls: stop, play | undo | the two buttons that keep their place and keys
+## a centred tray of the main controls: undo | stop, play | the two buttons that keep their place and keys
 ## everywhere, Skip or Requeue (⇧ENTER) and Confirm (ENTER), which makes what is shown your
 ## label and moves on.
 ## Used by vibe and library.
@@ -26,6 +26,8 @@ const MODES := {
 var state
 var track: Dictionary = {}
 var mode := "queue"
+## The tracks the player may load next, read ahead so their waveforms are there: set by its screen.
+var ahead := Callable()
 var colour := -1
 var rating := 0
 var energy := 0
@@ -42,10 +44,13 @@ var _lit := -1
 var _audio: AudioStreamPlayer
 
 var _head: HBoxContainer
+var _title: Label
 var _wave: Wave
 var _art: TextureRect
 var _keys: GridContainer
 var _stars: HBoxContainer
+## bpm and the divider after it; hidden when rekordbox has no bpm
+var _bpm: HBoxContainer
 var _meta: HBoxContainer
 var _picker: PopupPanel
 var _boxes := {}
@@ -68,6 +73,7 @@ func _init(bg: Color, s) -> void:
 	add_theme_stylebox_override("panel", UI.pad(_bg(bg), 16, 14))
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_head = UI.row(10)
+	_head.resized.connect(_fit_title)
 	_wave = Wave.new(UI.font("mono"))
 	_wave.seek.connect(func(f: float) -> void: seek(f * length))
 	_wave.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -83,7 +89,8 @@ func _init(bg: Color, s) -> void:
 	_keys.add_theme_constant_override("h_separation", KEY_GAP)
 	_keys.add_theme_constant_override("v_separation", KEY_GAP)
 	_stars = UI.row(4)
-	_meta = UI.row(8)
+	_meta = UI.row(12)
+	_bpm = UI.row(12)
 	_transport = UI.row(6)
 	_parts_row = UI.row(4)
 	_actions = UI.row(8)
@@ -92,10 +99,40 @@ func _init(bg: Color, s) -> void:
 	_parts_row.custom_minimum_size.y = KEY_H
 	_parts_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	# each on its own level and centred in a tray: what you say about the track (stars, bpm,
-	# energy, key) under the waveform, the main controls (stop, play | undo | skip, confirm)
+	# energy, key) under the waveform, the main controls (undo | stop, play | skip, confirm)
 	# under the keys
-	_trays = [_tray(UI.row(0, [_stars, _meta])), _tray(UI.row(12, [_transport, _vline(), _undo_box, _vline(), _actions]))]
+	_trays = [_tray(UI.row(12, [_bpm, _stars, _vline(), _meta])), _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
 	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), _trays[0], UI.row(20, [_keys, _parts_row]), _trays[1]]))
+
+
+## The title at its full width while it fits, else trimmed with …, leaving the artist line some
+## room: the title never sets how narrow the window can get.
+func _fit_title() -> void:
+	if not is_instance_valid(_title) or _title.is_queued_for_deletion():
+		return
+	var others := 0.0
+	var n := 0
+	for c: Control in _head.get_children():
+		if c.is_queued_for_deletion() or not c.visible:
+			continue
+		n += 1
+		if c != _title and c.size_flags_horizontal != Control.SIZE_EXPAND_FILL:
+			others += c.get_combined_minimum_size().x
+	var f := _title.get_theme_font("font")
+	var full := f.get_string_size(_title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, _title.get_theme_font_size("font_size")).x
+	var room := _head.size.x - others - 10 * (n - 1) - 120
+	_title.custom_minimum_size.x = minf(full, maxf(room, 80))
+
+
+## The main controls' tray, taken out of the player to sit elsewhere (vibe: on the export
+## list's strip, centred, Export to its right). Still shown and hidden with the track.
+func take_controls() -> Control:
+	var wrap: Control = _trays[1]
+	var t: Control = wrap.get_child(1)
+	wrap.remove_child(t)
+	wrap.queue_free()
+	_trays[1] = t
+	return t
 
 
 ## A centred group: dark, thin border, rounded.
@@ -149,19 +186,25 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 		_audio.play()
 	else:
 		playing = false
+	_refresh()
 	state.wave(t, func(w: Variant) -> void:
 		if w == null or track != t:
 			return
 		length = float(w.duration)
+		_wave.show_peaks(PackedFloat32Array(w.peaks), length)
+		_tick(),
+	func(p: Variant) -> void:
+		if p == null or track != t:
+			return
 		sections.clear()
 		var names: Array[String] = []
-		for sec: Array in w.sections:
+		for sec: Array in p.sections:
 			sections.append(float(sec[0]))
 			names.append(str(sec[1]))
-		_wave.show_peaks(PackedFloat32Array(w.peaks), sections, names, length, w.cues, w.own_cues)
+		_wave.show_parts(sections, names, p.cues, p.own_cues)
 		# what an export would write; yours stays if you changed it meanwhile
-		var we := int(w.energy)
-		var wk := str(w.key)
+		var we := int(p.energy)
+		var wk := str(p.key)
 		if energy == _energy0 and we > 0:
 			energy = we
 		if key == _key0 and wk != "":
@@ -174,8 +217,8 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 			t.key = wk
 		_lit = -1
 		_refresh_meta()
-		_tick())
-	_refresh()
+		_tick(),
+	ahead.call() if ahead.is_valid() else [])
 
 
 func clear(text := "Queue is empty: sync from rekordbox or add tracks from the library") -> void:
@@ -189,7 +232,7 @@ func clear(text := "Queue is empty: sync from rekordbox or add tracks from the l
 		c.queue_free()
 	for t in _trays:
 		t.visible = false
-	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars]:
+	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars, _bpm]:
 		for c in r.get_children():
 			c.queue_free()
 	_head.add_child(UI.text(text, 14, UI.MUTED))
@@ -224,8 +267,8 @@ func _refresh_transport() -> void:
 	_lit = _section()
 	for b: Control in _parts():
 		_parts_row.add_child(b)
-	_transport.add_child(_control("stop", "Stop", "ESC", stop))
-	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing))
+	_transport.add_child(_control("stop", "Stop", "ESC", stop, UI.COLOURS[0].c))
+	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing), UI.COLOURS[5].c)
 	p.custom_minimum_size.x = 132
 	(p.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	_transport.add_child(p)
@@ -259,10 +302,8 @@ func _refresh_meta() -> void:
 		c.queue_free()
 	if track.is_empty():
 		return
-	# read only, so no box: what rekordbox measured, between the stars and energy
-	if float(track.bpm) > 0:
-		_meta.add_child(UI.margin(UI.row(6, [UI.caps("BPM"), UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono")]), 16, 0, 0, 0))
 	_meta.add_child(_field("Energy", str(energy) if energy > 0 else "—", energy != _energy0, "N", pick_energy))
+	_meta.add_child(_vline())
 	_meta.add_child(_field("Key", key if key != "" else "—", key != _key0, "K", pick_key))
 
 
@@ -278,7 +319,7 @@ func _field(t: String, v: String, changed: bool, k: String, open: Callable) -> C
 	var f := UI.panel(Color.TRANSPARENT, 3, 0, 0)
 	f.add_child(UI.row(6, [UI.caps(t), box, UI.kbd(k)]))
 	UI.clickable(f, open.bind(box))
-	return UI.margin(f, 16, 0, 0, 0)
+	return f
 
 
 func set_energy(e: int) -> void:
@@ -393,11 +434,12 @@ func _key_key(e: InputEvent) -> void:
 
 
 ## A player button with a drawn glyph, the same height as Skip and Save.
-func _control(glyph: String, t: String, key: String, cb: Callable) -> PanelContainer:
-	var p := UI.panel(UI.LINE, 4, 10, 6)
+## Stop is rekordbox's orange, play its green, with dark ink as on Confirm.
+func _control(glyph: String, t: String, key: String, cb: Callable, bg: Color) -> PanelContainer:
+	var p := UI.panel(bg, 4, 10, 6)
 	p.custom_minimum_size.y = 32
 	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	p.add_child(UI.row(6, [Glyph.new(glyph), UI.text(t, 12, UI.TEXT, "bold"), UI.kbd(key)]))
+	p.add_child(UI.row(6, [Glyph.new(glyph, UI.BG), UI.text(t, 12, UI.BG, "bold"), UI.kbd(key, true)]))
 	UI.clickable(p, cb)
 	return p
 
@@ -418,7 +460,9 @@ func _refresh() -> void:
 		tg += " · model's guess" if track.source == "model" else ""
 	if tg != "":
 		_head.add_child(UI.tag(tg))
-	_head.add_child(UI.text(track.title, 22, UI.TEXT, "heavy"))
+	_title = UI.text(track.title, 22, UI.TEXT, "heavy")
+	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_head.add_child(_title)
 	# the artist line takes the room left and trims with … so the player never outgrows the window
 	var by := UI.text(" · ".join(PackedStringArray([track.artist, track.mix].filter(func(x: String) -> bool: return x != ""))), 13, UI.MUTED)
 	by.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -429,6 +473,13 @@ func _refresh() -> void:
 	_head.add_child(UI.text("", 12, UI.MUTED, "mono"))
 	_art.texture = UI.cover_texture(track, state.cover(track, 192))
 	_refresh_keys()
+	# first, read only, so no box: what rekordbox measured
+	for c in _bpm.get_children():
+		c.queue_free()
+	_bpm.visible = float(track.bpm) > 0
+	if _bpm.visible:
+		_bpm.add_child(UI.row(6, [UI.caps("BPM"), UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono")]))
+		_bpm.add_child(_vline())
 	_refresh_stars()
 	_refresh_meta()
 	for c in _actions.get_children():
@@ -445,6 +496,7 @@ func _refresh() -> void:
 	_actions.add_child(UI.button("Confirm", "ENTER", true, _next))
 	_refresh_transport()
 	_tick()
+	_fit_title.call_deferred()
 
 
 ## The model's guess arrived after the track opened: fill it in, unless you already chose.
@@ -483,7 +535,7 @@ func _refresh_stars() -> void:
 		var k := UI.text("★" if i < rating else "☆", 20, UI.LIME if i < rating else UI.MUTED)
 		UI.clickable(k, set_rating.bind(i + 1))
 		_stars.add_child(k)
-	_stars.add_child(UI.text("  ⇧1–5", 12, UI.MUTED))
+	_stars.add_child(UI.text(" ⇧1–5", 12, UI.MUTED))
 
 
 func set_colour(i: int) -> void:
@@ -640,13 +692,16 @@ class Wave extends Control:
 		frac = 0.0
 		queue_redraw()
 
-	func show_peaks(p: PackedFloat32Array, s: Array[float], n: Array[String], len: float, c: Array, own: bool) -> void:
+	func show_peaks(p: PackedFloat32Array, len: float) -> void:
 		peaks = p
+		length = maxf(len, 1.0)
+		queue_redraw()
+
+	func show_parts(s: Array[float], n: Array[String], c: Array, own: bool) -> void:
 		starts = s
 		names = n
 		cues = c
 		own_cues = own
-		length = maxf(len, 1.0)
 		queue_redraw()
 
 	func _gui_input(e: InputEvent) -> void:
@@ -712,15 +767,17 @@ class Wave extends Control:
 ## Play, pause and stop, drawn so they look the same whatever the font.
 class Glyph extends Control:
 	var kind := ""
+	var ink := Color("#e8e8ea")
 
-	func _init(k: String) -> void:
+	func _init(k: String, c := Color("#e8e8ea")) -> void:
 		kind = k
+		ink = c
 		custom_minimum_size = Vector2(10, 10)
 		size_flags_vertical = Control.SIZE_SHRINK_CENTER
 		mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	func _draw() -> void:
-		var c := Color("#e8e8ea")
+		var c := ink
 		match kind:
 			"play":
 				draw_colored_polygon(PackedVector2Array([Vector2(1, 0), Vector2(10, 5), Vector2(1, 10)]), c)

@@ -167,7 +167,10 @@ pub fn cache_db(root: &Path) -> Res<Connection> {
          CREATE TABLE IF NOT EXISTS cue_bars (
            hash TEXT NOT NULL, version TEXT NOT NULL, grid TEXT NOT NULL,
            bars INTEGER NOT NULL, dim INTEGER NOT NULL, data BLOB NOT NULL,
-           ts INTEGER NOT NULL, PRIMARY KEY (hash, version, grid));",
+           ts INTEGER NOT NULL, PRIMARY KEY (hash, version, grid));
+         CREATE TABLE IF NOT EXISTS peaks (
+           hash TEXT NOT NULL, bins INTEGER NOT NULL, duration REAL NOT NULL,
+           data BLOB NOT NULL, ts INTEGER NOT NULL, PRIMARY KEY (hash, bins));",
     )?;
     Ok(con)
 }
@@ -250,6 +253,11 @@ impl Label {
 
 pub fn track_ids(con: &Connection) -> Res<HashMap<String, i64>> {
     pairs(con, "SELECT path, id FROM tracks")
+}
+
+/// One track's audio hash, None when it is not in the library.
+pub fn hash_of(con: &Connection, path: &str) -> Res<Option<String>> {
+    Ok(con.query_row("SELECT hash FROM tracks WHERE path=?1", [path], |r| r.get(0)).optional()?)
 }
 
 pub fn hash_by_path(con: &Connection) -> Res<HashMap<String, String>> {

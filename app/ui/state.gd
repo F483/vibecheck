@@ -57,6 +57,11 @@ var _answered := {}
 var _skipped: Array[Dictionary] = []
 var _front := {}  # paths you put at the front of the queue: kept there when it is rebuilt
 var _covers := {}
+## Waveforms and parts of the player's track and the ones it may load next, as they come:
+## path -> {"wave": …, "parts": …}. Others are forgotten; the core keeps them in its cache.
+var _wv := {}
+var _wv_now := ""
+var _wv_cb := {}
 var _seen_mtime := 0
 var _exporting := false
 var _decided := 0
@@ -98,6 +103,7 @@ func stop() -> void:
 	for l: Lane in [_main, _waves, _stats, _bg, _ask, _model]:
 		l.stop()
 	_covers.clear()
+	_wv.clear()
 	queue.clear()
 	reviewed.clear()
 	library.clear()
@@ -138,7 +144,7 @@ func _call(lane: Lane, cmd: String, args: Dictionary, done: Callable, what := ""
 	args.xml = settings.xml
 	if what != "":
 		status.emit(what)
-	lane.push(cmd, JSON.stringify(args), func(r: Variant) -> void:
+	lane.push(cmd, JSON.stringify(args), str(args.get("path", "")), func(r: Variant) -> void:
 		if what != "":
 			status.emit("")
 		if not r is Dictionary or r.has("error"):
@@ -495,9 +501,40 @@ func poll() -> void:
 
 # --- one track -------------------------------------------------------------------------
 
-## The waveform and parts of a track; `done` gets {duration, peaks, sections} or null.
-func wave(t: Dictionary, done: Callable) -> void:
-	_call(_waves, "wave", {"path": t.path, "bins": 600}, done)
+## The player's track: `on_wave` gets {duration, peaks}, then `on_parts` {sections, key,
+## energy, cues, own_cues}; null on failure. Those of `ahead`, the tracks it may load next,
+## are read meanwhile, so theirs are there when they come; calls for any other track that
+## have not started yet are dropped, so stepping through fast doesn't wait for each one.
+func wave(t: Dictionary, on_wave: Callable, on_parts: Callable, ahead: Array = []) -> void:
+	_wv_now = t.path
+	_wv_cb = {"wave": on_wave, "parts": on_parts}
+	var want: Array[String] = [t.path]
+	for a: Dictionary in ahead:
+		if not a.is_empty() and a.path not in want:
+			want.append(a.path)
+	for p: String in _wv.keys():
+		if p not in want:
+			_wv.erase(p)
+	_waves.drop(func(path: String) -> bool: return path in want)
+	for p in want:
+		_wv_load(p)
+	for k: String in ["wave", "parts"]:
+		if _wv[t.path].has(k):
+			_wv_cb[k].call(_wv[t.path][k])
+
+
+func _wv_load(path: String) -> void:
+	if _wv.has(path):
+		return
+	var got := {}
+	_wv[path] = got
+	for k: String in ["wave", "parts"]:
+		_call(_waves, k, {"path": path, "bins": 600}, func(r: Variant) -> void:
+			if not is_same(_wv.get(path), got):
+				return  # dropped while it was read
+			got[k] = r
+			if path == _wv_now:
+				_wv_cb[k].call(r))
 
 
 func audio_path(t: Dictionary) -> String:
@@ -574,6 +611,7 @@ func _listen_to(ts: Array[Dictionary], then := Callable()) -> void:
 func set_setting(k: String, v: Variant) -> void:
 	settings[k] = v
 	if CORE_KEYS.has(k):
+		_wv.clear()  # the cues shown follow the settings
 		var value: Variant = v
 		if k == "cues_lead":
 			value = [0] if v == 0 else [16, 8]
@@ -611,11 +649,12 @@ class Lane:
 	var _jobs: Array = []
 	var _quit := false
 
-	func push(cmd: String, args: String, done: Callable) -> void:
+	## `key` names what the call is for, for `drop`.
+	func push(cmd: String, args: String, key: String, done: Callable) -> void:
 		if not _thread.is_started():
 			_thread.start(_work)
 		_mutex.lock()
-		_jobs.append([cmd, args, done])
+		_jobs.append([cmd, args, done, key])
 		_mutex.unlock()
 		busy += 1
 		_sem.post()
@@ -627,6 +666,9 @@ class Lane:
 			if _quit:
 				_mutex.unlock()
 				return
+			if _jobs.is_empty():
+				_mutex.unlock()
+				continue  # dropped
 			var j: Array = _jobs.pop_front()
 			_mutex.unlock()
 			var out: String = ClassDB.class_call_static("Vibecheck", "call", j[0], j[1])
@@ -640,6 +682,14 @@ class Lane:
 	func _done(done: Callable, r: Variant) -> void:
 		busy -= 1
 		done.call(r)
+
+	## Forget the calls not started yet whose key `keep` turns down; they never answer.
+	func drop(keep: Callable) -> void:
+		_mutex.lock()
+		var left := _jobs.filter(func(j: Array) -> bool: return keep.call(j[3]))
+		busy -= _jobs.size() - left.size()
+		_jobs = left
+		_mutex.unlock()
 
 	func stop() -> void:
 		if not _thread.is_started():

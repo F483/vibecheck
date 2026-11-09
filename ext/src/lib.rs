@@ -73,7 +73,8 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         "export" => json!(app::export(&root, &xml, &cfg()?)?),
         "sync" => json!(app::sync(&root, &xml)?),
         "stats" => json!(app::stats(&root, &cfg()?)?),
-        "wave" => json!(app::wave(&root, &xml, &cfg()?, s(a, "path"), n(a, "bins", 600) as usize)?),
+        "wave" => json!(app::wave(&root, s(a, "path"), n(a, "bins", 600) as usize)?),
+        "parts" => json!(app::parts(&root, &xml, &cfg()?, s(a, "path"))?),
         "settings" => app::settings(&cfg()?),
         "set" => {
             app::set(&root, s(a, "section"), s(a, "key"), a.get("value").unwrap_or(&Value::Null))?;

@@ -116,6 +116,14 @@ func _sort() -> void:
 		return (va > vb) if d else (va < vb))
 
 
+## Every fixed column and a little of the title: narrower than this and columns would be cut.
+func _get_minimum_size() -> Vector2:
+	var fixed := 0.0
+	for k: String in cols:
+		fixed += COLS[k][1]
+	return Vector2(2 * PAD + 8 + fixed + GAP * (cols.size() - 1) + 160, HEAD + ROW * 3)
+
+
 func _layout() -> void:
 	var fixed := 0.0
 	for k: String in cols:

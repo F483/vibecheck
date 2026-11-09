@@ -17,14 +17,14 @@ use std::sync::Mutex;
 use std::time::Instant;
 
 use realfft::RealFftPlanner;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use crate::{Res, audio, now, store};
 
 /// The prototype's method version: part of the cache key.
 pub const VERSION: &str = "ke1/6d426c19f036";
 
-const RATE: u32 = 22_050;
+pub const RATE: u32 = 22_050;
 const WINDOWS: usize = 24;
 const SECONDS: f64 = 10.0;
 const N_FFT: usize = 4096;
@@ -285,10 +285,7 @@ pub fn analyse_all(root: &Path, rels: &[String]) -> Res<(HashMap<String, KeyEner
     for (rel, r) in todo.iter().zip(results) {
         match r {
             Some((k, detail)) => {
-                cache.execute(
-                    "INSERT OR REPLACE INTO analysis (hash, version, key, energy, detail, ts) VALUES (?1,?2,?3,?4,?5,?6)",
-                    params![hb[rel], VERSION, k.key, k.energy as i64, detail, now()],
-                )?;
+                keep(&cache, &hb[rel], &k, &detail)?;
                 out.insert(rel.clone(), k);
                 st.done += 1;
             }
@@ -297,6 +294,23 @@ pub fn analyse_all(root: &Path, rels: &[String]) -> Res<(HashMap<String, KeyEner
     }
     cache.execute_batch("COMMIT")?;
     Ok((out, st))
+}
+
+/// One track's key and energy from the cache.
+pub fn cached(cache: &Connection, hash: &str) -> Option<KeyEnergy> {
+    cache
+        .query_row("SELECT key, energy FROM analysis WHERE hash=?1 AND version=?2", params![hash, VERSION], |r| {
+            Ok(KeyEnergy { key: r.get(0)?, energy: r.get::<_, i64>(1)? as u8 })
+        })
+        .ok()
+}
+
+pub fn keep(cache: &Connection, hash: &str, k: &KeyEnergy, detail: &str) -> Res<()> {
+    cache.execute(
+        "INSERT OR REPLACE INTO analysis (hash, version, key, energy, detail, ts) VALUES (?1,?2,?3,?4,?5,?6)",
+        params![hash, VERSION, k.key, k.energy as i64, detail, now()],
+    )?;
+    Ok(())
 }
 
 /// Run `f` over items on all cores, in order, printing progress for long runs.

@@ -938,11 +938,17 @@ pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
 
 // --- one track -----------------------------------------------------------------------
 
+/// The track as loudness bins: drawn as soon as it comes, before its parts.
 #[derive(Serialize)]
 pub struct Wave {
     pub duration: f64,
     /// loudness per bin, 0..1
     pub peaks: Vec<f32>,
+}
+
+/// What the waveform shows over the peaks, and what an export would write.
+#[derive(Serialize)]
+pub struct Parts {
     /// where each part starts, seconds, and its name
     pub sections: Vec<(f64, &'static str)>,
     /// what an export would write: your correction, else the analysis
@@ -979,50 +985,127 @@ fn cue_of(m: &cues::Mark) -> Option<Cue> {
     })
 }
 
-/// The track as `bins` loudness values, and its parts: where the cue model puts
-/// the mix-in, two changes and the mix-out, when rekordbox has a beat grid.
-pub fn wave(root: &Path, xml_path: &Path, cfg: &Config, path: &str, bins: usize) -> Res<Wave> {
-    let d = audio::decode_native(&root.join(path))?;
+/// The audio `wave` last decoded, for `parts` of the same track: the player asks for one
+/// right after the other, so a track new to the analysis is decoded once, not three times.
+// the cue features and key analysis share one decode, so they must read the same rate
+const _: () = assert!(cues::SR == keyenergy::RATE);
+static DECODED: Mutex<Option<(String, Arc<audio::Decoded>)>> = Mutex::new(None);
+
+/// The track as `bins` loudness values, kept in the cache by audio hash.
+pub fn wave(root: &Path, path: &str, bins: usize) -> Res<Wave> {
+    let cache = store::cache_db(root)?;
+    let hash = store::hash_of(&store::labels_db(root)?, path)?;
+    if let Some(h) = &hash
+        && let Ok((duration, data)) = cache.query_row(
+            "SELECT duration, data FROM peaks WHERE hash=?1 AND bins=?2",
+            rusqlite::params![h, bins as i64],
+            |r| Ok((r.get::<_, f64>(0)?, r.get::<_, Vec<u8>>(1)?)),
+        )
+    {
+        let peaks = data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+        return Ok(Wave { duration, peaks });
+    }
+    let d = Arc::new(audio::decode_native(&root.join(path))?);
+    *DECODED.lock().unwrap() = Some((path.to_string(), d.clone()));
     let duration = d.samples.len() as f64 / d.rate as f64;
     let per = (d.samples.len() / bins.max(1)).max(1);
     let mut peaks: Vec<f32> =
         d.samples.chunks(per).map(|c| (c.iter().map(|s| s * s).sum::<f32>() / c.len() as f32).sqrt()).collect();
     let top = peaks.iter().cloned().fold(1e-6, f32::max);
     peaks.iter_mut().for_each(|p| *p /= top);
-    let mut sections = vec![(0.0, "start")];
+    if let Some(h) = &hash {
+        let data: Vec<u8> = peaks.iter().flat_map(|v| v.to_le_bytes()).collect();
+        cache.execute(
+            "INSERT OR REPLACE INTO peaks VALUES (?1,?2,?3,?4,?5)",
+            rusqlite::params![h, bins as i64, duration, data, now()],
+        )?;
+    }
+    Ok(Wave { duration, peaks })
+}
+
+/// The track's parts: where the cue model puts the mix-in, two changes and the mix-out,
+/// when rekordbox has a beat grid; its cues, key and energy. Analysis the cache lacks is
+/// made from one decode, shared.
+pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Parts> {
+    let kept = DECODED.lock().unwrap().take().filter(|(p, _)| p == path).map(|(_, d)| d);
+    let mut slow: Option<audio::Decoded> = None;
+    let cache = store::cache_db(root)?;
+    let labels = store::labels_db(root)?;
+    let hash = store::hash_of(&labels, path)?;
     let x = xml(root, xml_path)?;
-    let mut marks: Vec<cues::Mark> = x.get(path).map(|t| t.marks.clone()).unwrap_or_default();
-    let own_cues = x.get(path).is_some_and(|t| !cues::writable(t));
-    if let Some(t) = x.get(path).filter(|t| !t.tempos.is_empty()) {
-        let one: HashMap<String, Track> = [(path.to_string(), t.clone())].into();
-        if let Ok((f, _)) = cues::features_all(root, &one)
-            && let Some(f) = f.get(path)
-        {
+    let t = x.get(path);
+    let mut marks: Vec<cues::Mark> = t.map(|t| t.marks.clone()).unwrap_or_default();
+    let own_cues = t.is_some_and(|t| !cues::writable(t));
+    let mut sections = vec![(0.0, "start")];
+    if let (Some(t), Some(h)) = (t.filter(|t| !t.tempos.is_empty()), &hash) {
+        let f = match cues::cached_features(&cache, h, t) {
+            Some(f) => Some(f),
+            None => {
+                let f = cues::features_of(audio22(root, path, &kept, &mut slow)?, t);
+                if let Some(f) = &f {
+                    cues::keep_features(&cache, h, t, f)?;
+                }
+                f
+            }
+        };
+        if let Some(f) = f {
             let down = cues::downbeats(&t.tempos, t.duration + 2.0);
             let names = ["mix in", "change", "change", "mix out"];
-            let trans = cues::Model::load(root)?.transitions(f);
+            let trans = cues::Model::load(root)?.transitions(&f);
             if !own_cues && cfg.bool("cues", "write", true) {
                 let lead = cfg.ints("cues", "lead", &[0]);
                 marks = cues::place(&trans, &down, &lead, &cfg.int_map("cues", "loops"), cfg.bool("cues", "memory", true));
             }
             for (b, name) in trans.iter().zip(names) {
                 let s = cues::bar_time(&down, *b);
-                if s > sections.last().unwrap().0 + 1.0 && s < duration {
+                if s > sections.last().unwrap().0 + 1.0 && s < t.duration {
                     sections.push((s, name));
                 }
             }
         }
     }
-    let (mut key, mut energy) = match keyenergy::analyse_all(root, &[path.to_string()]) {
-        Ok((k, _)) => k.get(path).map(|k| (k.key.clone(), k.energy as i64)).unwrap_or_default(),
-        Err(_) => Default::default(),
-    };
-    if let Some((k, e)) = store::key_energy(&store::labels_db(root)?)?.remove(path) {
+    let (mut key, mut energy) = Default::default();
+    if let Some(h) = &hash {
+        let k = match keyenergy::cached(&cache, h) {
+            Some(k) => Some(k),
+            None => {
+                match keyenergy::analyse(audio22(root, path, &kept, &mut slow)?) {
+                    Ok((k, detail)) => {
+                        keyenergy::keep(&cache, h, &k, &detail)?;
+                        Some(k)
+                    }
+                    Err(_) => None,
+                }
+            }
+        };
+        if let Some(k) = k {
+            (key, energy) = (k.key, k.energy as i64);
+        }
+    }
+    if let Some((k, e)) = store::key_energy(&labels)?.remove(path) {
         key = k.unwrap_or(key);
         energy = e.map(i64::from).unwrap_or(energy);
     }
     let cues = marks.iter().filter_map(cue_of).collect();
-    Ok(Wave { duration, peaks, sections, key, energy, cues, own_cues })
+    Ok(Parts { sections, key, energy, cues, own_cues })
+}
+
+/// The track at the analysis rate, decoded (or taken from `kept`) the first time it is asked for.
+fn audio22<'a>(
+    root: &Path,
+    path: &str,
+    kept: &Option<Arc<audio::Decoded>>,
+    slot: &'a mut Option<audio::Decoded>,
+) -> Res<&'a audio::Decoded> {
+    if slot.is_none() {
+        let d = match kept {
+            Some(d) => d.clone(),
+            None => Arc::new(audio::decode_native(&root.join(path))?),
+        };
+        let samples = audio::resample(&d.samples, d.rate, cues::SR)?;
+        *slot = Some(audio::Decoded { samples, rate: cues::SR, duration: d.duration });
+    }
+    Ok(slot.as_ref().unwrap())
 }
 
 // --- settings --------------------------------------------------------------------------

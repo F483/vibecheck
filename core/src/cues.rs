@@ -18,7 +18,7 @@ use std::f64::consts::PI;
 use std::path::Path;
 
 use realfft::RealFftPlanner;
-use rusqlite::params;
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
 use crate::rekordbox::Track;
@@ -26,7 +26,7 @@ use crate::{Res, audio, keyenergy, now, store};
 
 /// The prototype's feature version: part of the cache key.
 pub const VERSION: &str = "cue1/818c48ebef3e";
-const SR: u32 = 22_050;
+pub const SR: u32 = 22_050;
 const N_FFT: usize = 2048;
 const HOP: usize = 512;
 const N_MELS: usize = 64;
@@ -1067,7 +1067,12 @@ pub fn yours(tracks: &HashMap<String, Track>, written: &HashMap<String, Vec<f64>
 
 /// Per-bar features of one file on its grid; None when too short or off-grid.
 pub fn track_features(path: &Path, t: &Track) -> Option<Vec<Vec<f32>>> {
-    let d = audio::decode(path, SR).ok()?;
+    features_of(&audio::decode(path, SR).ok()?, t)
+}
+
+/// Per-bar features of audio already decoded at the cue model's rate, `SR`.
+pub fn features_of(d: &audio::Decoded, t: &Track) -> Option<Vec<Vec<f32>>> {
+    assert_eq!(d.rate, SR);
     let y = &d.samples;
     if y.len() < SR as usize * 30 {
         return None;
@@ -1102,17 +1107,9 @@ pub fn features_all(root: &Path, tracks: &HashMap<String, Track>) -> Res<(HashMa
         if t.tempos.is_empty() {
             continue;
         }
-        let row: Option<(i64, i64, Vec<u8>)> = cache
-            .query_row(
-                "SELECT bars, dim, data FROM cue_bars WHERE hash=?1 AND version=?2 AND grid=?3",
-                params![h, VERSION, grid_digest(&t.tempos)],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-            )
-            .ok();
-        match row {
-            Some((n, d, data)) => {
-                let v: Vec<f32> = data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
-                out.insert(rel.clone(), v.chunks(d as usize).take(n as usize).map(|r| r.to_vec()).collect());
+        match cached_features(&cache, h, t) {
+            Some(f) => {
+                out.insert(rel.clone(), f);
             }
             None => todo.push(rel.clone()),
         }
@@ -1126,11 +1123,7 @@ pub fn features_all(root: &Path, tracks: &HashMap<String, Track>) -> Res<(HashMa
     for (rel, f) in todo.iter().zip(res) {
         match f {
             Some(f) => {
-                let data: Vec<u8> = f.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
-                cache.execute(
-                    "INSERT OR REPLACE INTO cue_bars VALUES (?1,?2,?3,?4,?5,?6,?7)",
-                    params![hb[rel], VERSION, grid_digest(&tracks[rel].tempos), f.len() as i64, f[0].len() as i64, data, now()],
-                )?;
+                keep_features(&cache, &hb[rel], &tracks[rel], &f)?;
                 out.insert(rel.clone(), f);
                 st.done += 1;
             }
@@ -1139,6 +1132,28 @@ pub fn features_all(root: &Path, tracks: &HashMap<String, Track>) -> Res<(HashMa
     }
     cache.execute_batch("COMMIT")?;
     Ok((out, st))
+}
+
+/// One track's per-bar features from the cache, keyed by audio, method and grid.
+pub fn cached_features(cache: &Connection, hash: &str, t: &Track) -> Option<Vec<Vec<f32>>> {
+    let (n, d, data): (i64, i64, Vec<u8>) = cache
+        .query_row(
+            "SELECT bars, dim, data FROM cue_bars WHERE hash=?1 AND version=?2 AND grid=?3",
+            params![hash, VERSION, grid_digest(&t.tempos)],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .ok()?;
+    let v: Vec<f32> = data.chunks_exact(4).map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]])).collect();
+    Some(v.chunks(d as usize).take(n as usize).map(|r| r.to_vec()).collect())
+}
+
+pub fn keep_features(cache: &Connection, hash: &str, t: &Track, f: &[Vec<f32>]) -> Res<()> {
+    let data: Vec<u8> = f.iter().flatten().flat_map(|v| v.to_le_bytes()).collect();
+    cache.execute(
+        "INSERT OR REPLACE INTO cue_bars VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![hash, VERSION, grid_digest(&t.tempos), f.len() as i64, f[0].len() as i64, data, now()],
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]

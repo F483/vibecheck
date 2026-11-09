@@ -41,6 +41,10 @@ func _init(s, a) -> void:
 	player = Player.new(UI.DARK, state)
 	player.next.connect(_on_next)
 	player.skip.connect(func() -> void: table.move(1))
+	# Confirm, Skip and ↓ all load the next row
+	player.ahead = func() -> Array:
+		var i := table.rows.find(player.track)
+		return [table.rows[i + 1]] if i >= 0 and i + 1 < table.rows.size() else []
 	add_child(player)
 	_chips = UI.row(6)
 	var cs := UI.section(UI.PANEL, 16, 8)

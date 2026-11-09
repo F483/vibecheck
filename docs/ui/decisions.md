@@ -42,6 +42,12 @@ How the app maps onto the core:
   labels, and ends the process (tens of ms): background listening only writes
   the cache, where an interrupted write rolls back. Ctrl+C in the terminal
   takes the same way out.
+- The window can't be made smaller than the largest screen needs (now about
+  1164×691 points, set by the collection table's columns), so nothing is
+  ever pushed out of view. It is measured from the screens; the queue cards
+  (as many as fit), the player's title (trimmed with …) and the artist line
+  don't count towards it. It opens at 1280×720 (trying it out; 1360×800 was
+  the other candidate).
 - The model in use is trained on the training slice only, so the accuracy it
   shows is measured on itself (held-back labels, 95% range).
 - Queue: calibration tracks spread across the sound of the collection while
@@ -95,14 +101,14 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    last card says how many more are queued and how many could be asked in
    all ("+197 of 8,412": tracks listened to and not labelled by you). Tags: next, conflict, calibration, unsure, re-ask, old
    label. The queue is ordered by what teaches the model most.
-2. **rekordbox widget**, at the right end of the queue row with a ← pointing
-   into the queue, because it is where the queue's tracks come from. It shows:
-   - "watching rekordbox.xml";
-   - "collection exported X ago";
-   - "+N queued";
-   - a "Sync ⌥S" button.
-   When the export is older than the threshold (default 7 days), the widget
-   turns amber and says "old: export it again in rekordbox before Export".
+2. **rekordbox widget**, one line at the right of the queue's title line
+   ("Queue 53 ordered by …"), because it is where the queue's tracks come
+   from. It shows "rekordbox · watching rekordbox.xml · collection exported X
+   ago · +N queued" and a "Sync ⌥S" button. It was a two-line box at the end
+   of the card row with a ← into the queue; moved up so the cards get the
+   whole row (the user). When the export is older than the threshold
+   (default 7 days), the date turns amber and "⚠ old: export it again in
+   rekordbox before Export" follows it.
    There is only one timestamp, because the app syncs as soon as rekordbox
    exports.
 3. **Model strip** (light), between the queue and the player, because the tracks
@@ -131,18 +137,24 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      you say sat level with the light keys and the controls on the two
      sides):
      - under the waveform, above the colour keys, **what you say about the
-       track**: stars (five ★/☆, filled up to the
-       rating; click or ⇧1–5), the **BPM** from rekordbox's grid (read only,
-       so no box; moved here from beside the time), **Energy** and **Key**,
+       track**: the **BPM** from rekordbox's grid
+       first (read only, so no box; moved here from beside the time), stars
+       (five ★/☆, filled up to the rating; click or ⇧1–5), **Energy** and **Key**,
        each a value that pops out a picker (the user preferred this to − and
        + buttons): energy 1–10 in a row (N; ←→ step, a digit picks, 0 is 10),
        key all 24, minor on top and major below, round the wheel (K; ←→ round
        the wheel, ↑↓ minor/major). A key badge next to a control does the
        same as the control when clicked: the user clicked N and K expecting
        that. A corrected value turns lime. The player shows what an export
-       would write: your correction, else the analysis;
-     - under the colour keys, **the main controls**: Stop (ESC) and Play/Pause (SPACE) | **Undo** (U),
-       a button of its own | Skip or Requeue and Confirm. Play/Pause and
+       would write: your correction, else the analysis. Thin dividers between
+       BPM | stars | energy | key, as in the controls tray (the user);
+     - **the main controls**, on vibe on the export list's strip, centred,
+       with Export staying at its right end (the user: it frees a row for the
+       list); in the collection under the colour keys: **Undo** (U), a button
+       of its own, leftmost | Stop (ESC) and Play/Pause (SPACE) | Skip or
+       Requeue and Confirm. Stop is filled in
+       rekordbox's orange and Play/Pause in its green, dark ink as on Confirm
+       (the user). Play/Pause and
        Skip/Requeue keep a fixed width so the tray doesn't shift.
      - With no track open the trays are hidden.
    - The artist line in the header takes the room left and trims with …, so a
