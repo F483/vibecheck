@@ -60,6 +60,9 @@ pub fn decode_native(path: &Path) -> Res<Decoded> {
     let extra = track.delay.unwrap_or(0) as usize + track.padding.unwrap_or(0) as usize;
     let (mut out, mut rate, mut buf) = (Vec::<f32>::new(), 0u32, Vec::<f32>::new());
     loop {
+        if crate::stopping() {
+            return Err("stopped".into());
+        }
         let packet = match format.next_packet() {
             Ok(Some(p)) => p,
             Ok(None) => break,
@@ -138,6 +141,10 @@ pub fn resample(x: &[f32], from: u32, to: u32) -> Res<Vec<f32>> {
     };
     let mut out = Vec::with_capacity(n_out);
     for n in 0..n_out {
+        // a whole track is a second or so of work: closing doesn't wait for it
+        if n % (1 << 20) == 0 && crate::stopping() {
+            return Err("stopped".into());
+        }
         let pos = n as u64 * q as u64;
         let (s, ph) = ((pos / p as u64) as isize, (pos % p as u64) as usize);
         let taps = &bank[ph * len..(ph + 1) * len];

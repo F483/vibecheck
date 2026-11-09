@@ -220,7 +220,28 @@ pub fn embed_all(root: &Path, paths: &[String]) -> Res<Stats> {
     if todo.is_empty() {
         return Ok(st);
     }
-    let mut emb = Embedder::load()?;
+    // loading the model takes seconds: keep the loaded ones for the next batch, one per caller
+    // running at once (the app listens in the background while it guesses a dropped track)
+    static IDLE: Mutex<Vec<Embedder>> = Mutex::new(vec![]);
+    let taken = IDLE.lock().unwrap().pop();
+    let mut emb = match taken {
+        Some(e) => e,
+        None => Embedder::load()?,
+    };
+    let r = embed_with(&mut emb, root, &todo, &cache, &hb, &mut st);
+    IDLE.lock().unwrap().push(emb);
+    r?;
+    Ok(st)
+}
+
+fn embed_with(
+    emb: &mut Embedder,
+    root: &Path,
+    todo: &[&String],
+    cache: &Connection,
+    hb: &HashMap<String, String>,
+    st: &mut Stats,
+) -> Res<()> {
     let t0 = Instant::now();
     let mut last = t0;
     // decode ahead on worker threads while the model works
@@ -291,7 +312,7 @@ pub fn embed_all(root: &Path, paths: &[String]) -> Res<Stats> {
         }
         Ok(())
     })?;
-    Ok(st)
+    Ok(())
 }
 
 /// (paths that have a vector, row-major vectors), in the order given.

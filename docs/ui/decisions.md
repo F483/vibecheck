@@ -35,6 +35,13 @@ How the app maps onto the core:
   comes back unchanged stays a guess (only the command line's open rounds
   are confirmed that way); and a track labelled after the xml was
   exported is left alone, since the xml can't know about it.
+- Start fast, close fast. The app starts on the last trained model (about 1 s
+  to the first track) and, if your labels moved on since, retrains behind it
+  and refreshes the queue; the library and the first queue load side by side.
+  Closing stops long work at its next safe point, waits only for what writes
+  labels, and ends the process (tens of ms): background listening only writes
+  the cache, where an interrupted write rolls back. Ctrl+C in the terminal
+  takes the same way out.
 - The model in use is trained on the training slice only, so the accuracy it
   shows is measured on itself (held-back labels, 95% range).
 - Queue: calibration tracks spread across the sound of the collection while
@@ -120,7 +127,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    - two rows exactly the height of the colour keys, so everything lines up
      with them:
      - **upper row, what you say about the track**, level with the light keys:
-       stars (1–5, hold ⇧), **Energy** and **Key**, each a value that pops
+       stars (five ★/☆, filled up to the rating; click or ⇧1–5), **Energy** and **Key**, each a value that pops
        out a picker (the user preferred this to − and + buttons): energy 1–10
        in a row (N; ←→ step, a digit picks, 0 is 10), key all 24, minor on
        top and major below, round the wheel (K; ←→ round the wheel, ↑↓
@@ -132,7 +139,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
        then a button per part numbered as on the waveform, the part playing
        lit, →;
    - below the colour keys, the main controls on their own level: Stop (ESC)
-     and Play/Pause (SPACE) on the left, Skip and Confirm on the right. They
+     and Play/Pause (SPACE) on the left, Skip or Requeue and Confirm on the right. They
      moved out of the dark-key row because it no longer fit the window.
    - In the library the hint "Confirm adds it to the next Export" sits on the
      title line, before the time, because the upper row is full.
@@ -161,8 +168,8 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 | context | ⇧ENTER | ENTER |
 |---|---|---|
-| vibe, track from the queue | **Skip track**: next track, no label | **Confirm**: your label, next track |
-| vibe, relistening a row of the export list | **Requeue**: back to the queue (the user prefers this short label) | **Confirm**: your label, next row in the list as sorted now; after the last, back to the queue. Sort, then work through the list top to bottom |
+| vibe, track from the queue | **Requeue**: to the end of the queue, asked again later; next track, no label | **Confirm**: your label, next track |
+| vibe, relistening a row of the export list | **Skip**: next row in the list as sorted now, no label; after the last, back to the queue. (Was "Requeue" here and "Skip track" on the queue; swapped, since the queue one is what puts the track back in the queue) | **Confirm**: your label, next row in the list as sorted now; after the last, back to the queue. Sort, then work through the list top to bottom |
 | collection | **Skip**: next row, no label | **Confirm**: your label, into the export list, next row |
 
 - ESC stops playback and returns to the start of the track, as Stop; SPACE
@@ -225,8 +232,8 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 - In settings, a **threshold slider (100–300, default 100)** sets when batch
   tracks and corrections start mixing into the queue. Below it the queue holds
   only calibration tracks and conflicts, all blind.
-- "Skip track" means only "skip this one track". Users read it that way, so it
-  must never mean "skip calibration".
+- No button reads "skip calibration": Requeue and Skip only ever move past
+  one track.
 
 ## rekordbox: export and sync
 
@@ -305,4 +312,3 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 - Should the Export button warn or block while the collection export is old?
 - Should settings later drop "Start" and move the counts to stats?
 - Should the collection player fold to a slim bar when no track is open?
-- Does a skipped track go back into the queue or get dropped?

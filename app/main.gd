@@ -57,10 +57,11 @@ func _ready() -> void:
 	_shot()
 
 
+## Closing the window, and any other quit (Ctrl+C in the terminal) on the way out:
+## the label writers finish, then the process ends without the engine's teardown.
 func _notification(what: int) -> void:
-	if what == NOTIFICATION_WM_CLOSE_REQUEST:
-		state.stop()
-		get_tree().quit()
+	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_EXIT_TREE:
+		state.quit()
 
 
 ## Tracks dragged in from rekordbox (or Finder), on the vibe screen: dropped on the reviewed

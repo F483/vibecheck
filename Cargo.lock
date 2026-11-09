@@ -1313,6 +1313,7 @@ name = "vibecheck_ext"
 version = "0.1.0"
 dependencies = [
  "godot",
+ "libc",
  "serde_json",
  "vibecheck",
 ]

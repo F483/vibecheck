@@ -388,7 +388,10 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
 /// The model in use: trained on the training slice, so the score it shows is
 /// its own. Training takes seconds, so it is kept until the labels or the dial
 /// change: in memory, and in cache.db so the next start skips it too.
-fn model(root: &Path, cfg: &Config, l: &Labelled) -> Res<Arc<(predict::Model, Score)>> {
+/// The model trained on your labels, cached in memory and in cache.db. With
+/// `stale_ok`, the last one trained on fewer of your labels will do (and the
+/// second value says so): the app starts on it and retrains behind it.
+fn model(root: &Path, cfg: &Config, l: &Labelled, stale_ok: bool) -> Res<(Arc<(predict::Model, Score)>, bool)> {
     #[derive(Serialize, Deserialize)]
     struct Saved {
         models: HashMap<String, predict::Lr>,
@@ -397,26 +400,32 @@ fn model(root: &Path, cfg: &Config, l: &Labelled) -> Res<Arc<(predict::Model, Sc
     type Cached = Option<(String, Arc<(predict::Model, Score)>)>;
     static CACHE: Mutex<Cached> = Mutex::new(None);
     let con = store::labels_db(root)?;
-    let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels", [], |r| r.get(0))?;
+    // only your labels change it: the model's guesses don't count
+    let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels WHERE source = 'user'", [], |r| r.get(0))?;
     let ax = axes(cfg);
-    let key = format!(
-        "m1|{}|{last}|{}|{}|{}|{}|{}",
+    let kind = format!(
+        "m2|{}|{}|{}|{}|{}",
         root.display(),
-        l.y.len(),
         ax[0].misleading_cost,
         ax[2].misleading_cost,
         predict::C,
         embed::fingerprint()
     );
+    let key = format!("{kind}#{last}|{}", l.y.len());
     if let Some((k, m)) = CACHE.lock().unwrap().as_ref()
-        && *k == key
+        && (*k == key || stale_ok && k.starts_with(&format!("{kind}#")))
     {
-        return Ok(m.clone());
+        return Ok((m.clone(), *k != key));
     }
     let cache = store::cache_db(root)?;
     cache.execute_batch("CREATE TABLE IF NOT EXISTS models (key TEXT PRIMARY KEY, data TEXT NOT NULL, ts INTEGER NOT NULL)")?;
-    let saved: Option<String> = cache.query_row("SELECT data FROM models WHERE key = ?1", [&key], |r| r.get(0)).ok();
-    let m = match saved.and_then(|d| serde_json::from_str::<Saved>(&d).ok()) {
+    let saved: Option<(String, String)> = if stale_ok {
+        cache.query_row("SELECT key, data FROM models WHERE substr(key, 1, ?2) = ?1", rusqlite::params![format!("{kind}#"), (kind.len() + 1) as i64], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+    } else {
+        cache.query_row("SELECT key, data FROM models WHERE key = ?1", [&key], |r| Ok((r.get(0)?, r.get(1)?))).ok()
+    };
+    let stale = saved.as_ref().is_some_and(|(k, _)| *k != key);
+    let m = match saved.and_then(|(_, d)| serde_json::from_str::<Saved>(&d).ok()) {
         Some(s) => {
             let mut m = predict::Model::new(ax.clone());
             for a in &ax {
@@ -428,14 +437,25 @@ fn model(root: &Path, cfg: &Config, l: &Labelled) -> Res<Arc<(predict::Model, Sc
         }
         None => {
             let (m, score) = fit(l, &ax, usize::MAX);
+            if crate::stopping() {
+                return Err("stopped".into());
+            }
             let s = Saved { models: m.models.iter().map(|(k, v)| (k.to_string(), v.clone())).collect(), score: score.clone() };
             cache.execute("DELETE FROM models", [])?;
             cache.execute("INSERT INTO models (key, data, ts) VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(&s)?, now()])?;
             Arc::new((m, score))
         }
     };
-    *CACHE.lock().unwrap() = Some((key, m.clone()));
-    Ok(m)
+    if !stale {
+        *CACHE.lock().unwrap() = Some((key, m.clone()));
+    }
+    Ok((m, stale))
+}
+
+/// Retrain on all your labels now, if the cached model is behind them.
+pub fn train(root: &Path, cfg: &Config) -> Res<()> {
+    model(root, cfg, &labelled(root)?, false)?;
+    Ok(())
 }
 
 // --- the queue ---------------------------------------------------------------------
@@ -459,6 +479,8 @@ pub struct Queue {
     pub measured: usize,
     /// tracks that could be asked: listened to, not labelled by you
     pub pool: usize,
+    /// asked of a model trained before your latest labels: retrain, then ask again
+    pub stale: bool,
 }
 
 fn unit(v: &[f32]) -> Vec<f32> {
@@ -489,7 +511,7 @@ fn spread(pool: &[Vec<f32>], have: &[Vec<f32>], n: usize) -> Vec<usize> {
 /// the tracks the model is least sure about, mixed with conflicts (your label
 /// against a model that is sure otherwise) and old labels (a colour from
 /// before vibecheck the model disagrees with), those two asked blind.
-pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: usize, skip: &[String]) -> Res<Queue> {
+pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: usize, skip: &[String], stale_ok: bool) -> Res<Queue> {
     let con = store::labels_db(root)?;
     let l = labelled(root)?;
     let mine: HashSet<String> = store::current(&con, Some("user"))?.into_keys().collect();
@@ -497,9 +519,9 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let live = store::live_paths(&con)?;
     let open: Vec<String> = live.into_iter().filter(|p| !mine.contains(p) && !skip.contains(p)).collect();
     let (pool, px) = embed::load(root, &open)?;
-    let ms = model(root, cfg, &l)?;
+    let (ms, stale) = model(root, cfg, &l, stale_ok)?;
     let (m, s) = (&ms.0, &ms.1);
-    let mut q = Queue { items: vec![], labels: mine.len(), accuracy: s.colour, measured: s.colour_n, pool: pool.len() };
+    let mut q = Queue { items: vec![], labels: mine.len(), accuracy: s.colour, measured: s.colour_n, pool: pool.len(), stale };
     if mine.len() < threshold || l.x.len() < 20 {
         let have: Vec<Vec<f32>> = l.x.iter().map(|v| unit(v)).collect();
         let ux: Vec<Vec<f32>> = px.iter().map(|v| unit(v)).collect();
@@ -636,7 +658,7 @@ pub fn guess(root: &Path, cfg: &Config, paths: &[String]) -> Res<Vec<Guess>> {
     if l.x.len() < 20 {
         return Ok(vec![]);
     }
-    let ms = model(root, cfg, &l)?;
+    let (ms, _) = model(root, cfg, &l, true)?;
     let con = store::labels_db(root)?;
     let said = store::current(&con, None)?;
     let open: Vec<String> = paths.iter().filter(|p| !said.get(*p).is_some_and(|l| l.said())).cloned().collect();
@@ -887,7 +909,7 @@ pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
     let l = labelled(root)?;
     let ax = axes(cfg);
     let n_train = l.hashes.iter().filter(|h| evaluate::part(h) == "train").count();
-    let ms = model(root, cfg, &l)?;
+    let (ms, _) = model(root, cfg, &l, false)?;
     let mut s = Stats { labels: l.y.len(), now: ms.1.clone(), ..Default::default() };
     let mut k = 25;
     while k < n_train && !crate::stopping() {

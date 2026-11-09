@@ -49,6 +49,9 @@ var _main := Lane.new()
 var _waves := Lane.new()
 var _stats := Lane.new()
 var _bg := Lane.new()
+var _model := Lane.new()  # the first queue and retraining, beside the library loading
+var _library_ready := false
+var _pending_queue := Callable()
 var _ask := Lane.new()  # the model's guesses for dropped tracks: not behind background listening
 var _answered := {}
 var _skipped: Array[Dictionary] = []
@@ -80,9 +83,19 @@ func _init() -> void:
 
 ## Close down: long work in the core gives up at its next safe point, then the
 ## workers are joined and what holds textures let go, so nothing leaks at exit.
+## Closing the app: long work stops at its next safe point; wait only for the lanes that write
+## labels (quick now), then end the process at once, without waiting for background listening
+## (cache writes only: an interrupted one rolls back) or the engine's teardown.
+func quit() -> void:
+	ClassDB.class_call_static("Vibecheck", "stop")
+	for l: Lane in [_main, _ask, _model]:
+		l.stop()
+	ClassDB.class_call_static("Vibecheck", "exit")
+
+
 func stop() -> void:
 	ClassDB.class_call_static("Vibecheck", "stop")
-	for l: Lane in [_main, _waves, _stats, _bg, _ask]:
+	for l: Lane in [_main, _waves, _stats, _bg, _ask, _model]:
 		l.stop()
 	_covers.clear()
 	queue.clear()
@@ -150,7 +163,15 @@ func load_all() -> void:
 		var f := ConfigFile.new()
 		f.load(CFG)
 		exported_at = f.get_value("rekordbox", settings.xml, m)
-		_load_library(refresh_queue), "Reading your collection…")
+		# the library and the first queue load side by side; the queue waits for the library
+		_library_ready = false
+		_load_library(func() -> void:
+			_library_ready = true
+			if _pending_queue.is_valid():
+				var p := _pending_queue
+				_pending_queue = Callable()
+				p.call())
+		refresh_queue(false, true), "Reading your collection…")
 	_call(_main, "settings", {}, func(c: Variant) -> void:
 		if c == null:
 			return
@@ -207,7 +228,9 @@ func _row(r: Dictionary) -> Dictionary:
 
 
 ## Ask the core what to ask next. The track in the player stays first; what you skipped goes last.
-func refresh_queue(count_new := false) -> void:
+## `start`: the first one, asked of the last trained model so the app is ready at once; when
+## that model is behind your labels it retrains behind the queue, then asks again.
+func refresh_queue(count_new := false, start := false) -> void:
 	var head: Dictionary = queue[0] if not queue.is_empty() else {}
 	var skip: Array = _answered.keys()
 	for t in _skipped:
@@ -218,43 +241,55 @@ func refresh_queue(count_new := false) -> void:
 	var before := {}
 	for t in queue:
 		before[t.path] = true
-	_call(_main, "queue", {"threshold": settings.threshold, "n": 200, "skip": skip}, func(q: Variant) -> void:
-		if q == null:
-			return
-		labels = int(q.labels)
-		measured = int(q.measured)
-		pool = int(q.pool)
-		_acc = Vector2(q.accuracy[0], q.accuracy[1]) * 100.0
-		var now_head: Dictionary = queue[0] if not queue.is_empty() else {}
-		var out: Array[Dictionary] = []
-		if not now_head.is_empty():
-			out.append(now_head)
-		for t in queue:
-			if _front.has(t.path) and t != now_head and not _answered.has(t.path):
-				out.append(t)
-		var fresh := 0
-		for it: Dictionary in q.items:
-			var t: Dictionary = by_path.get(it.path, {})
-			if t.is_empty() or t == now_head or _answered.has(t.path) or _front.has(t.path):
-				continue
-			t.tag = it.tag
-			t.guess = _ui_of.get(int(it.guess), -1)
-			t.guess_stars = int(it.stars)
+	_call(_model if start else _main, "queue", {"threshold": settings.threshold, "n": 200, "skip": skip, "stale_ok": start},
+		func(q: Variant) -> void:
+			if q == null:
+				return
+			if not _library_ready:
+				_pending_queue = _apply_queue.bind(q, before, count_new)
+			else:
+				_apply_queue(q, before, count_new), "Choosing what to ask…" if not loaded else "")
+
+
+func _apply_queue(q: Dictionary, before: Dictionary, count_new: bool) -> void:
+	labels = int(q.labels)
+	measured = int(q.measured)
+	pool = int(q.pool)
+	_acc = Vector2(q.accuracy[0], q.accuracy[1]) * 100.0
+	var now_head: Dictionary = queue[0] if not queue.is_empty() else {}
+	var out: Array[Dictionary] = []
+	if not now_head.is_empty():
+		out.append(now_head)
+	for t in queue:
+		if _front.has(t.path) and t != now_head and not _answered.has(t.path):
 			out.append(t)
-			if it.tag in ["conflict", "old label"] and not before.has(t.path):
-				fresh += 1
-		for t in _skipped:
-			if t != now_head and not _answered.has(t.path):
-				out.append(t)
-		queue = out
-		if count_new:
-			queued_by_sync = fresh
-		var first := not loaded
-		loaded = true
-		if first:
-			# only now is it known whether it is still calibrating
-			_guess(reviewed)
-		changed.emit(), "Choosing what to ask…" if not loaded else "")
+	var fresh := 0
+	for it: Dictionary in q.items:
+		var t: Dictionary = by_path.get(it.path, {})
+		if t.is_empty() or t == now_head or _answered.has(t.path) or _front.has(t.path):
+			continue
+		t.tag = it.tag
+		t.guess = _ui_of.get(int(it.guess), -1)
+		t.guess_stars = int(it.stars)
+		out.append(t)
+		if it.tag in ["conflict", "old label"] and not before.has(t.path):
+			fresh += 1
+	for t in _skipped:
+		if t != now_head and not _answered.has(t.path):
+			out.append(t)
+	queue = out
+	if count_new:
+		queued_by_sync = fresh
+	var first := not loaded
+	loaded = true
+	if first:
+		# only now is it known whether it is still calibrating
+		_guess(reviewed)
+	if q.get("stale", false):
+		_call(_model, "train", {}, func(r: Variant) -> void:
+			if r != null:
+				refresh_queue())
+	changed.emit()
 
 
 # --- deciding --------------------------------------------------------------------------

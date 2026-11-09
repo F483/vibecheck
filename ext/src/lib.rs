@@ -39,7 +39,12 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         "library" => json!(app::library(&root, &xml)?),
         "queue" => {
             let skip: Vec<String> = a.get("skip").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-            json!(app::queue(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize, n(a, "n", 200) as usize, &skip)?)
+            let stale_ok = a.get("stale_ok").and_then(Value::as_bool).unwrap_or(false);
+            json!(app::queue(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize, n(a, "n", 200) as usize, &skip, stale_ok)?)
+        }
+        "train" => {
+            app::train(&root, &cfg()?)?;
+            json!(true)
         }
         "decide" => {
             let key = Some(s(a, "key")).filter(|k| !k.is_empty());
@@ -106,6 +111,15 @@ impl Vibecheck {
     #[func]
     fn stop() {
         vibecheck::STOP.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// End the process now, without the engine's teardown or waiting for
+    /// background listening: called once whatever writes labels has finished.
+    /// The cache's interrupted writes roll back; the OS frees the rest.
+    #[func]
+    fn exit() {
+        // SAFETY: _exit only ends the process; nothing runs after it
+        unsafe { libc::_exit(0) }
     }
 
     /// The cover picture embedded in the file, jpeg or png bytes; empty without one.

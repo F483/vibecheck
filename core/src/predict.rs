@@ -233,7 +233,8 @@ pub fn lbfgs(mut x: Vec<f64>, mut f: impl FnMut(&[f64], &mut [f64]) -> f64, iter
     let (mut ss, mut ys, mut rhos): (Vec<Vec<f64>>, Vec<Vec<f64>>, Vec<f64>) = (vec![], vec![], vec![]);
     let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>();
     for _ in 0..iters {
-        if g.iter().fold(0f64, |m, v| m.max(v.abs())) < tol {
+        // closing: the caller throws the half-trained result away
+        if crate::stopping() || g.iter().fold(0f64, |m, v| m.max(v.abs())) < tol {
             break;
         }
         // two-loop recursion

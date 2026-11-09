@@ -236,8 +236,13 @@ func _on_skip() -> void:
 	if player.mode == "dropped" and not _next_dropped().is_empty():
 		open_row(_next_dropped())
 	elif relisten:
-		_head()
-		_build_queue()
+		# next row as sorted; after the last, back to the queue, as Confirm
+		var nxt := _next_row()
+		if nxt.is_empty():
+			_head()
+			_build_queue()
+		else:
+			open_row(nxt)
 	elif not state.queue.is_empty():
 		state.skip(state.queue[0])
 

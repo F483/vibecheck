@@ -2,7 +2,7 @@ extends PanelContainer
 ## The player: one track, its waveform and the colour keys, then two rows level with
 ## the keys. Upper: what you say about the track (stars, energy, key). Lower: time
 ## (stop, parts, play) and the two buttons that keep their place and keys everywhere,
-## Skip (⇧ENTER) and Confirm (ENTER), which makes what is shown your label and moves on.
+## Skip or Requeue (⇧ENTER) and Confirm (ENTER), which makes what is shown your label and moves on.
 ## Used by vibe and library.
 
 const UI := preload("res://ui/ui.gd")
@@ -16,8 +16,8 @@ const KEY_GAP := 6
 
 ## The skip button and the tag, per context.
 const MODES := {
-	"queue": {"tag": "", "skip": "Skip track", "hint": ""},
-	"relisten": {"tag": "relistening · from the export list", "skip": "Requeue", "hint": ""},
+	"queue": {"tag": "", "skip": "Requeue", "hint": ""},
+	"relisten": {"tag": "relistening · from the export list", "skip": "Skip", "hint": ""},
 	"library": {"tag": "relistening · from library", "skip": "Skip", "hint": "Confirm adds it to the next Export"},
 	"dropped": {"tag": "from rekordbox", "skip": "Skip", "hint": "Confirm makes it your label"},
 }
@@ -443,12 +443,10 @@ func _refresh_stars() -> void:
 	for c in _stars.get_children():
 		c.queue_free()
 	for i in 5:
-		var k := UI.kbd(str(i + 1))
-		if i < rating:
-			k.add_theme_stylebox_override("panel", UI.pad(UI.style(UI.LIME, 3), 5, 1))
+		var k := UI.text("★" if i < rating else "☆", 20, UI.LIME if i < rating else UI.MUTED)
 		UI.clickable(k, set_rating.bind(i + 1))
 		_stars.add_child(k)
-	_stars.add_child(UI.text("  stars, hold ⇧", 12, UI.MUTED))
+	_stars.add_child(UI.text("  ⇧1–5", 12, UI.MUTED))
 
 
 func set_colour(i: int) -> void:
