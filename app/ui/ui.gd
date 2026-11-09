@@ -10,6 +10,11 @@ const TEXT := Color("#e8e8ea")
 const MUTED := Color("#a0a1a8")
 const LIME := Color("#c8f13c")
 const AMBER := Color("#e0b04a")
+## The main controls, coloured by role (the user): moving through tracks slate (Undo,
+## Skip/Requeue), playback light grey (Stop, Play), deciding lime (Confirm), output aqua (Export).
+const MOVE := Color("#4a5468")
+const PLAYBACK := Color("#d6d7db")
+const OUTPUT := Color("#25e0d0")
 const SEL := Color("#3d4320")
 const DIM := Color(0.055, 0.055, 0.063, 0.72)
 
@@ -206,13 +211,16 @@ static func clickable(c: Control, cb: Callable) -> Control:
 	return c
 
 
-static func button(t: String, key: String, primary: bool, cb: Callable) -> PanelContainer:
-	var p := panel(LIME if primary else LINE, 4, 12.0 if primary else 10.0, 6)
+## `bg` overrides the fill (lime when primary, else grey); the ink follows how light it is.
+static func button(t: String, key: String, primary: bool, cb: Callable, bg := Color.TRANSPARENT) -> PanelContainer:
+	var fill := bg if bg.a > 0 else (LIME if primary else LINE)
+	var light := fill.get_luminance() > 0.5
+	var p := panel(fill, 4, 12.0 if primary else 10.0, 6)
 	p.custom_minimum_size.y = 32
 	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var r := row(6, [text(t, 12, BG if primary else TEXT, "bold")])
+	var r := row(6, [text(t, 12, BG if light else TEXT, "bold")])
 	if key != "":
-		r.add_child(kbd(key, primary))
+		r.add_child(kbd(key, light))
 	p.add_child(r)
 	clickable(p, cb)
 	return p

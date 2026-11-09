@@ -138,6 +138,9 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      export";
    - the colour keys in **two rows** (QWER light / ASDF dark), which the user
      likes;
+   - the colour keys left of the player's centre line and the tray and parts
+     right of it, so on a wide window they stay centred as a pair over the
+     controls tray (the user);
    - beside the colour keys, level with the bottom row, **the parts of the track**: ←
      then a button per part numbered as on the waveform, the part playing
      lit, →;
@@ -162,9 +165,12 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
        with Export staying at its right end (the user: it frees a row for the
        list); in the collection under the colour keys: **Undo** (U), a button
        of its own, leftmost | Stop (ESC) and Play/Pause (SPACE) | Skip or
-       Requeue and Confirm. Stop is filled in
-       rekordbox's orange and Play/Pause in its green, dark ink as on Confirm
-       (the user). Play/Pause and
+       Requeue and Confirm. Coloured by role, so each is spotted at once
+       (the user picked this from five schemes): moving through tracks slate
+       `#4a5468` (Undo, Skip/Requeue), playback light grey `#d6d7db` (Stop,
+       Play/Pause), deciding lime (Confirm), output aqua `#25e0d0` (Export).
+       Rekordbox's own colours were dropped from Stop (orange) and Play
+       (green): next to the colour keys they read as labels. Play/Pause and
        Skip/Requeue keep a fixed width so the tray doesn't shift.
      - With no track open the trays are hidden.
    - The artist line in the header takes the room left and trims with …, so a

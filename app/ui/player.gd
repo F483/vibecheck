@@ -104,7 +104,14 @@ func _init(bg: Color, s) -> void:
 	side.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# the main controls (undo | stop, play | skip, confirm) centred in a tray under the keys
 	_trays = [meta, _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
-	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), UI.row(20, [_keys, side]), _trays[1]]))
+	# keys left of the centre, tray and parts right of it: two equal halves, each pushed
+	# against the middle; narrower than both, they just sit side by side
+	var left := UI.row(0, [_keys])
+	left.alignment = BoxContainer.ALIGNMENT_END
+	var right := UI.row(0, [side])
+	for h: HBoxContainer in [left, right]:
+		h.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), UI.row(20, [left, right]), _trays[1]]))
 
 
 ## The title at its full width while it fits, else trimmed with …, leaving the artist line some
@@ -270,8 +277,8 @@ func _refresh_transport() -> void:
 	_lit = _section()
 	for b: Control in _parts():
 		_parts_row.add_child(b)
-	_transport.add_child(_control("stop", "Stop", "ESC", stop, UI.COLOURS[0].c))
-	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing), UI.COLOURS[5].c)
+	_transport.add_child(_control("stop", "Stop", "ESC", stop, UI.PLAYBACK))
+	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing), UI.PLAYBACK)
 	p.custom_minimum_size.x = 132
 	(p.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	_transport.add_child(p)
@@ -491,8 +498,8 @@ func _refresh() -> void:
 		t.visible = true
 	for c in _undo_box.get_children():
 		c.queue_free()
-	_undo_box.add_child(UI.button("Undo", "U", false, undo))
-	var sk := UI.button(cfg.skip, "⇧ENTER", false, func() -> void: skip.emit())
+	_undo_box.add_child(UI.button("Undo", "U", false, undo, UI.MOVE))
+	var sk := UI.button(cfg.skip, "⇧ENTER", false, func() -> void: skip.emit(), UI.MOVE)
 	sk.custom_minimum_size.x = 150
 	(sk.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	_actions.add_child(sk)
