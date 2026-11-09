@@ -56,6 +56,10 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
             let paths: Vec<String> = serde_json::from_value(a.get("paths").cloned().unwrap_or(json!([])))?;
             json!(app::embed(&root, &paths)?)
         }
+        "rest" => {
+            app::rest();
+            json!(true)
+        }
         "guess" => {
             let paths: Vec<String> = serde_json::from_value(a.get("paths").cloned().unwrap_or(json!([])))?;
             json!(app::guess(&root, &cfg()?, &paths)?)
@@ -73,6 +77,7 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         "export" => json!(app::export(&root, &xml, &cfg()?)?),
         "sync" => json!(app::sync(&root, &xml)?),
         "stats" => json!(app::stats(&root, &cfg()?)?),
+        "curve" => json!(app::curve(&root, &cfg()?)?),
         "wave" => json!(app::wave(&root, s(a, "path"), n(a, "bins", 600) as usize)?),
         "parts" => json!(app::parts(&root, &xml, &cfg()?, s(a, "path"))?),
         "settings" => app::settings(&cfg()?),

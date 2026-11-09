@@ -10,6 +10,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 
 use ort::session::Session;
@@ -129,7 +130,8 @@ impl Embedder {
     /// One unit vector per window.
     pub fn windows(&mut self, windows: &[&[f32]]) -> Res<Vec<[f32; DIM]>> {
         let mut out = Vec::with_capacity(windows.len());
-        for chunk in windows.chunks(std::env::var("VIBECHECK_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(2)) {
+        // one window per run: each in a batch adds about 1 GB of working memory, for 9% more speed
+        for chunk in windows.chunks(std::env::var("VIBECHECK_BATCH").ok().and_then(|v| v.parse().ok()).unwrap_or(1)) {
             if crate::stopping() {
                 return Err("stopped".into());
             }
@@ -220,22 +222,39 @@ pub fn embed_all(root: &Path, paths: &[String]) -> Res<Stats> {
     if todo.is_empty() {
         return Ok(st);
     }
-    // loading the model takes seconds: keep the loaded ones for the next batch, one per caller
-    // running at once (the app listens in the background while it guesses a dropped track)
-    static IDLE: Mutex<Vec<Embedder>> = Mutex::new(vec![]);
-    let taken = IDLE.lock().unwrap().pop();
-    let mut emb = match taken {
-        Some(e) => e,
-        None => Embedder::load()?,
-    };
-    let r = embed_with(&mut emb, root, &todo, &cache, &hb, &mut st);
-    IDLE.lock().unwrap().push(emb);
-    r?;
+    embed_with(root, &todo, &cache, &hb, &mut st)?;
     Ok(st)
 }
 
+/// The one loaded model, shared by every caller (the app listens in the background while
+/// it guesses a dropped track): loading takes 3 s and it holds over 1 GB, so one copy,
+/// kept until `unload`.
+static MODEL: Mutex<Option<Embedder>> = Mutex::new(None);
+static WAITING: AtomicUsize = AtomicUsize::new(0);
+
+/// Run `f` on the model, loading it first if need be. Taken one track at a time, and a
+/// caller back for more lets anyone already waiting go first, so a dropped track's guess
+/// waits for one track of listening, not a whole batch.
+fn with_model<T>(f: impl FnOnce(&mut Embedder) -> Res<T>) -> Res<T> {
+    while WAITING.load(Ordering::Acquire) > 0 {
+        std::thread::yield_now();
+    }
+    WAITING.fetch_add(1, Ordering::AcqRel);
+    let mut m = MODEL.lock().unwrap();
+    WAITING.fetch_sub(1, Ordering::AcqRel);
+    if m.is_none() {
+        *m = Some(Embedder::load()?);
+    }
+    f(m.as_mut().unwrap())
+}
+
+/// Drop the model when nothing is left to listen to: its memory goes back to the system,
+/// and the next track to hear loads it again.
+pub fn unload() {
+    MODEL.lock().unwrap().take();
+}
+
 fn embed_with(
-    emb: &mut Embedder,
     root: &Path,
     todo: &[&String],
     cache: &Connection,
@@ -244,37 +263,25 @@ fn embed_with(
 ) -> Res<()> {
     let t0 = Instant::now();
     let mut last = t0;
-    // decode ahead on worker threads while the model works
-    let (tx, rx) = std::sync::mpsc::sync_channel::<(usize, Res<audio::Decoded>)>(4);
-    let next = Mutex::new(0usize);
+    // decode the next track while the model works on this one: decoding takes 0.3 s to the
+    // model's 5, so one decoder and no queue is enough, and holds two tracks, not seven
+    let (tx, rx) = std::sync::mpsc::sync_channel::<(usize, Res<audio::Decoded>)>(0);
     std::thread::scope(|s| -> Res<()> {
-        for _ in 0..3 {
-            let tx = tx.clone();
-            let (next, todo) = (&next, &todo);
-            s.spawn(move || {
-                loop {
-                    let i = {
-                        let mut n = next.lock().unwrap();
-                        *n += 1;
-                        *n - 1
-                    };
-                    let Some(rel) = todo.get(i) else { break };
-                    let r = audio::decode(&root.join(rel.as_str()), RATE);
-                    if tx.send((i, r)).is_err() {
-                        break;
-                    }
+        s.spawn(move || {
+            for (i, rel) in todo.iter().enumerate() {
+                if tx.send((i, audio::decode(&root.join(rel.as_str()), RATE))).is_err() {
+                    break;
                 }
-            });
-        }
-        drop(tx);
+            }
+        });
         for (k, (i, pcm)) in rx.into_iter().enumerate() {
             if crate::stopping() {
-                break; // dropping the receiver stops the decoders too
+                break; // dropping the receiver stops the decoder too
             }
             let rel = todo[i];
             let vec = pcm.and_then(|d| {
                 let ws = audio::excerpts(&d, WINDOWS, SECONDS);
-                let mut v = emb.windows(&ws)?;
+                let mut v = with_model(|e| e.windows(&ws))?;
                 if v.is_empty() {
                     return Err("no windows".into());
                 }

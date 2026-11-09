@@ -36,10 +36,7 @@ func _measure() -> void:
 	if not is_visible_in_tree() or not state.loaded or _measured_at == state.labels:
 		return
 	_measured_at = state.labels
-	_body.modulate.a = 0.5
-	state.load_stats(func(_s: Variant) -> void:
-		_body.modulate.a = 1.0
-		refresh())
+	state.load_stats(func(_s: Variant) -> void: refresh())
 
 
 func _pct(r: Array) -> String:
@@ -82,11 +79,16 @@ func refresh() -> void:
 	if now.confused.is_empty():
 		_body.add_child(UI.text("nothing measured yet", 12, UI.MUTED))
 	_body.add_child(grid)
-	_body.add_child(UI.caps("Colour right vs labels trained on"))
+	# the last curve measured stays up, dimmed, while the one for your labels now is measured
+	_body.add_child(UI.row(8, [UI.caps("Colour right vs labels trained on"),
+		UI.text("" if st.fresh else "measuring…", 11, UI.MUTED)]))
 	var pts: Array[Vector2] = []
 	for p: Array in st.curve:
 		pts.append(Vector2(p[0], p[1] * 100))
-	_body.add_child(LearningCurve.new(pts))
+	var lc := LearningCurve.new(pts)
+	if not st.fresh:
+		lc.modulate.a = 0.5
+	_body.add_child(lc)
 	_body.add_child(UI.caps("Trust"))
 	var counts := [0, 0, 0, 0]
 	for t: Dictionary in state.library:

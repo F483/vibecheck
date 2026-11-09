@@ -391,14 +391,9 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
 /// The model trained on your labels, cached in memory and in cache.db. With
 /// `stale_ok`, the last one trained on fewer of your labels will do (and the
 /// second value says so): the app starts on it and retrains behind it.
-fn model(root: &Path, cfg: &Config, l: &Labelled, stale_ok: bool) -> Res<(Arc<(predict::Model, Score)>, bool)> {
-    #[derive(Serialize, Deserialize)]
-    struct Saved {
-        models: HashMap<String, predict::Lr>,
-        score: Score,
-    }
-    type Cached = Option<(String, Arc<(predict::Model, Score)>)>;
-    static CACHE: Mutex<Cached> = Mutex::new(None);
+/// What a model trained now would be cached under: its kind (settings and embedding), and
+/// the kind with your labels as they are.
+fn model_key(root: &Path, cfg: &Config, l: &Labelled) -> Res<(String, String)> {
     let con = store::labels_db(root)?;
     // only your labels change it: the model's guesses don't count
     let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels WHERE source = 'user'", [], |r| r.get(0))?;
@@ -412,6 +407,19 @@ fn model(root: &Path, cfg: &Config, l: &Labelled, stale_ok: bool) -> Res<(Arc<(p
         embed::fingerprint()
     );
     let key = format!("{kind}#{last}|{}", l.y.len());
+    Ok((kind, key))
+}
+
+fn model(root: &Path, cfg: &Config, l: &Labelled, stale_ok: bool) -> Res<(Arc<(predict::Model, Score)>, bool)> {
+    #[derive(Serialize, Deserialize)]
+    struct Saved {
+        models: HashMap<String, predict::Lr>,
+        score: Score,
+    }
+    type Cached = Option<(String, Arc<(predict::Model, Score)>)>;
+    static CACHE: Mutex<Cached> = Mutex::new(None);
+    let (kind, key) = model_key(root, cfg, l)?;
+    let ax = axes(cfg);
     if let Some((k, m)) = CACHE.lock().unwrap().as_ref()
         && (*k == key || stale_ok && k.starts_with(&format!("{kind}#")))
     {
@@ -683,6 +691,11 @@ pub fn embed(root: &Path, paths: &[String]) -> Res<usize> {
     Ok(embed::embed_all(root, paths)?.done)
 }
 
+/// Nothing left to listen to or guess: free the listening model's memory.
+pub fn rest() {
+    embed::unload();
+}
+
 /// Up to `n` live tracks with no vector yet, in a fixed random order.
 /// Files dropped on the app (absolute, as Finder or rekordbox give them) as the
 /// library's own paths; None for a file outside the collection or not in it.
@@ -898,29 +911,33 @@ fn their_corrections(root: &Path, e: &Export, x: &HashMap<String, Track>) -> Res
 pub struct Stats {
     pub labels: usize,
     pub now: Score,
-    /// (labels trained on, colour right) on the same holdout
+    /// (labels trained on, colour right) on the same holdout; the last one measured, which
+    /// may be from fewer labels (see `fresh`), or empty before the first
     pub curve: Vec<(usize, f64)>,
+    /// whether `now` and `curve` are measured on your labels as they are
+    pub fresh: bool,
     /// tracks you labelled twice, and how often the colour stayed
     pub again: usize,
     pub agreed: usize,
 }
 
+/// What the stats page shows, from what is cached: quick. The learning curve trains a model
+/// per point (seconds), so it is measured by `curve` and kept in the cache by your labels.
 pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
     let l = labelled(root)?;
-    let ax = axes(cfg);
-    let n_train = l.hashes.iter().filter(|h| evaluate::part(h) == "train").count();
-    let (ms, _) = model(root, cfg, &l, false)?;
+    let (kind, key) = model_key(root, cfg, &l)?;
+    let (ms, stale) = model(root, cfg, &l, true)?;
     let mut s = Stats { labels: l.y.len(), now: ms.1.clone(), ..Default::default() };
-    let mut k = 25;
-    while k < n_train && !crate::stopping() {
-        let (_, sc) = fit(&l, &ax, k);
-        if sc.colour_n > 0 {
-            s.curve.push((k, (sc.colour[0] + sc.colour[1]) / 2.0));
-        }
-        k *= 2;
-    }
-    if s.now.colour_n > 0 {
-        s.curve.push((n_train, (s.now.colour[0] + s.now.colour[1]) / 2.0));
+    let cache = store::cache_db(root)?;
+    curves_table(&cache)?;
+    let kept: Option<(String, String)> = cache
+        .query_row("SELECT key, data FROM curves WHERE substr(key, 1, ?2) = ?1", rusqlite::params![format!("{kind}#"), (kind.len() + 1) as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .ok();
+    if let Some((k, d)) = kept {
+        s.curve = serde_json::from_str(&d)?;
+        s.fresh = k == key && !stale;
     }
     let con = store::labels_db(root)?;
     let mut st = con.prepare("SELECT track_id, colour_id FROM labels WHERE source = 'user' AND colour_id IS NOT NULL ORDER BY id")?;
@@ -934,6 +951,45 @@ pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
         s.agreed += (v[v.len() - 1] == v[v.len() - 2]) as usize;
     }
     Ok(s)
+}
+
+/// Measure the learning curve on your labels as they are, unless the cache has it, then
+/// the stats with it.
+pub fn curve(root: &Path, cfg: &Config) -> Res<Stats> {
+    let s = stats(root, cfg)?;
+    if s.fresh {
+        return Ok(s);
+    }
+    let l = labelled(root)?;
+    let (_, key) = model_key(root, cfg, &l)?;
+    let ax = axes(cfg);
+    let n_train = l.hashes.iter().filter(|h| evaluate::part(h) == "train").count();
+    let (ms, _) = model(root, cfg, &l, false)?;
+    let mut curve = vec![];
+    let mut k = 25;
+    while k < n_train {
+        if crate::stopping() {
+            return Err("stopped".into());
+        }
+        let (_, sc) = fit(&l, &ax, k);
+        if sc.colour_n > 0 {
+            curve.push((k, (sc.colour[0] + sc.colour[1]) / 2.0));
+        }
+        k *= 2;
+    }
+    if ms.1.colour_n > 0 {
+        curve.push((n_train, (ms.1.colour[0] + ms.1.colour[1]) / 2.0));
+    }
+    let cache = store::cache_db(root)?;
+    curves_table(&cache)?;
+    cache.execute("DELETE FROM curves", [])?;
+    cache.execute("INSERT INTO curves (key, data, ts) VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(&curve)?, now()])?;
+    Ok(Stats { now: ms.1.clone(), curve, fresh: true, ..s })
+}
+
+fn curves_table(cache: &rusqlite::Connection) -> Res<()> {
+    cache.execute_batch("CREATE TABLE IF NOT EXISTS curves (key TEXT PRIMARY KEY, data TEXT NOT NULL, ts INTEGER NOT NULL)")?;
+    Ok(())
 }
 
 // --- one track -----------------------------------------------------------------------

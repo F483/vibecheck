@@ -77,6 +77,11 @@ How the app maps onto the core:
   `rekordbox.xml`; vibe, library and stats stay greyed out until both are
   set. It is the same page afterwards. Keep "Start ENTER" for now.
 - Stats and collection are one click away from every screen.
+- Stats opens at once: its tiles come from the cached model. The "colour right vs
+  labels trained on" curve trains a model per point (seconds), so it is measured
+  after each retrain in the background and kept by your labels; when your labels
+  are ahead of it, the last curve shows dimmed with "measuring…" until the new
+  one is in (the user found the page slow to open).
 
 ## Vibe workspace: one screen
 

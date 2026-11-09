@@ -38,6 +38,7 @@ var last_export := {}
 var last_sync := {}
 var stats := {}
 var listening := ""
+var _hearing := false  # the background listening chain is running
 var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
 	"listen": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_lead": 0,
@@ -296,7 +297,8 @@ func _apply_queue(q: Dictionary, before: Dictionary, count_new: bool) -> void:
 	if q.get("stale", false):
 		_call(_model, "train", {}, func(r: Variant) -> void:
 			if r != null:
-				refresh_queue())
+				refresh_queue()
+				_measure_ahead())
 	changed.emit()
 
 
@@ -417,6 +419,7 @@ func _guess(ts: Array) -> void:
 	guessing += paths.size()
 	_call(_ask, "guess", {"paths": paths}, func(gs: Variant) -> void:
 		guessing -= paths.size()
+		_rest()
 		for p: String in paths:
 			by_path.get(p, {}).erase("guessing")
 		if gs == null:
@@ -564,22 +567,45 @@ func cover(t: Dictionary, px := 96) -> Texture2D:
 	return tex
 
 
+## The stats from the cache, at once; then, when your labels changed since the learning curve
+## was measured, again with it measured (seconds). `done` gets each.
 func load_stats(done: Callable) -> void:
 	_call(_stats, "stats", {}, func(s: Variant) -> void:
-		if s != null:
-			stats = s
-		done.call(s), "Measuring the model…")
+		if s == null:
+			return
+		stats = s
+		done.call(s)
+		if not s.fresh:
+			_call(_stats, "curve", {}, func(c: Variant) -> void:
+				if c != null:
+					stats = c
+					done.call(c), "Measuring the model…"))
+
+
+## After retraining, measure the learning curve too, so the stats page has it when opened.
+func _measure_ahead() -> void:
+	if _stats.busy == 0:
+		_call(_stats, "curve", {}, func(c: Variant) -> void:
+			if c != null:
+				stats = c)
 
 
 # --- listening in the background -------------------------------------------------------
 
 ## Tracks without a vector can't be learned from or asked: listen to them, a few at a time.
 func _listen() -> void:
-	if not settings.listen or _bg.busy > 0:
+	if not settings.listen:
+		_hearing = false
+		_rest()
 		return
+	if _bg.busy > 0:
+		return
+	_hearing = true
 	_call(_bg, "unheard", {"n": 4}, func(paths: Variant) -> void:
 		if paths == null or paths.is_empty():
 			listening = ""
+			_hearing = false
+			_rest()
 			if paths != null:
 				_say_listening(true)
 			return
@@ -600,6 +626,8 @@ func _listen_to(ts: Array[Dictionary], then := Callable()) -> void:
 		listening = ""
 		if n == null:
 			settings.listen = false
+			_hearing = false
+			_rest()
 			return
 		for t in ts:
 			if not t.embedded:
@@ -613,7 +641,16 @@ func _listen_to(ts: Array[Dictionary], then := Callable()) -> void:
 			_say_listening()
 		changed.emit()
 		if then.is_valid():
-			then.call())
+			then.call()
+		else:
+			_rest())
+
+
+## Nothing left to hear or guess: the listening model's memory (over 1 GB) goes back to the
+## system, until a track needs hearing again (3 s to load).
+func _rest() -> void:
+	if not _hearing and guessing == 0:
+		_call(_bg, "rest", {}, func(_r: Variant) -> void: pass)
 
 
 ## Background listening as one line: what, the fraction heard, then "8% · 1,236 / 15,002 ·
