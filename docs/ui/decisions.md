@@ -150,8 +150,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      - beside the colour keys, level with the top row (above the parts), **what you say about the
        track**. It had a row of its own between the waveform and the keys; moved up
        beside them for space (the user: the export list gets two more rows).
-       The **BPM** from rekordbox's grid
-       first (read only, so no box; moved here from beside the time), stars
+       Stars
        (five ★/☆, filled up to the rating; click or ⇧1–5), **Energy** and **Key**,
        each a value that pops out a picker (the user preferred this to − and
        + buttons): energy 1–10 in a row (N; ←→ step, a digit picks, 0 is 10),
@@ -160,7 +159,10 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
        same as the control when clicked: the user clicked N and K expecting
        that. A corrected value turns lime. The player shows what an export
        would write: your correction, else the analysis. Thin dividers between
-       BPM | stars | energy | key, as in the controls tray (the user);
+       stars | energy | key, as in the controls tray (the user). The **BPM** from
+       rekordbox's grid is read only, so it sits in the header in front of the
+       time ("126 BPM 2:41 / 6:58"); it was in this tray for a while, the user
+       moved it back;
      - **the main controls**, centred: on vibe on the export list's strip,
        with Export staying at its right end (the user: it frees a row for the
        list); in the collection under the colour keys: **Undo** (U), a button
@@ -168,7 +170,8 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
        Requeue and Confirm. Coloured by role, so each is spotted at once
        (the user picked this from five schemes): moving through tracks slate
        `#4a5468` (Undo, Skip/Requeue), playback light grey `#d6d7db` (Stop,
-       Play/Pause), deciding lime (Confirm), output aqua `#25e0d0` (Export).
+       Play/Pause), deciding green `#3ddc5a` (Confirm; lime at first, the
+       user asked for green), output aqua `#25e0d0` (Export).
        Rekordbox's own colours were dropped from Stop (orange) and Play
        (green): next to the colour keys they read as labels. Play/Pause and
        Skip/Requeue keep a fixed width so the tray doesn't shift.

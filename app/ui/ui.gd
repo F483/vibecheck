@@ -11,8 +11,9 @@ const MUTED := Color("#a0a1a8")
 const LIME := Color("#c8f13c")
 const AMBER := Color("#e0b04a")
 ## The main controls, coloured by role (the user): moving through tracks slate (Undo,
-## Skip/Requeue), playback light grey (Stop, Play), deciding lime (Confirm), output aqua (Export).
+## Skip/Requeue), playback light grey (Stop, Play), deciding green (Confirm), output aqua (Export).
 const MOVE := Color("#4a5468")
+const DECIDE := Color("#3ddc5a")
 const PLAYBACK := Color("#d6d7db")
 const OUTPUT := Color("#25e0d0")
 const SEL := Color("#3d4320")

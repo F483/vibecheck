@@ -1,6 +1,6 @@
 extends PanelContainer
 ## The player: one track, its waveform, the colour keys with beside them a tray of what you
-## say about the track (bpm, stars, energy, key) level with the top row and the parts of the
+## say about the track (stars, energy, key) level with the top row and the parts of the
 ## track level with the bottom one, then a centred tray of the main controls: undo | stop, play | the two buttons that keep their place and keys
 ## everywhere, Skip or Requeue (⇧ENTER) and Confirm (ENTER), which makes what is shown your
 ## label and moves on.
@@ -49,8 +49,6 @@ var _wave: Wave
 var _art: TextureRect
 var _keys: GridContainer
 var _stars: HBoxContainer
-## bpm and the divider after it; hidden when rekordbox has no bpm
-var _bpm: HBoxContainer
 var _meta: HBoxContainer
 var _picker: PopupPanel
 var _boxes := {}
@@ -90,15 +88,14 @@ func _init(bg: Color, s) -> void:
 	_keys.add_theme_constant_override("v_separation", KEY_GAP)
 	_stars = UI.row(4)
 	_meta = UI.row(12)
-	_bpm = UI.row(12)
 	_transport = UI.row(6)
 	_parts_row = UI.row(4)
 	_actions = UI.row(8)
 	_undo_box = UI.row(0)
-	# beside the colour keys, a row each: what you say about the track (bpm, stars, energy,
-	# key) in a tray level with the top keys, the parts of the track with the bottom ones
+	# beside the colour keys, a row each: what you say about the track (stars, energy, key)
+	# in a tray level with the top keys, the parts of the track with the bottom ones
 	_parts_row.custom_minimum_size.y = KEY_H
-	var meta := _tray(UI.row(12, [_bpm, _stars, _vline(), _meta]), false)
+	var meta := _tray(UI.row(12, [_stars, _vline(), _meta]), false)
 	meta.custom_minimum_size.y = KEY_H
 	var side := UI.col(KEY_GAP, [meta, _parts_row])
 	side.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
@@ -242,7 +239,7 @@ func clear(text := "Queue is empty: sync from rekordbox or add tracks from the l
 		c.queue_free()
 	for t in _trays:
 		t.visible = false
-	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars, _bpm]:
+	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars]:
 		for c in r.get_children():
 			c.queue_free()
 	_head.add_child(UI.text(text, 14, UI.MUTED))
@@ -480,16 +477,13 @@ func _refresh() -> void:
 	_head.add_child(by)
 	if cfg.hint != "":
 		_head.add_child(UI.margin(UI.text(cfg.hint, 11, UI.MUTED), 0, 0, 16, 0))
+	# what rekordbox measured, read only, in front of the time
+	if float(track.bpm) > 0:
+		var bpm := UI.row(4, [UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono"), UI.text("BPM", 11, UI.MUTED, "mono")])
+		_head.add_child(UI.margin(bpm, 0, 0, 16, 0))
 	_head.add_child(UI.text("", 12, UI.MUTED, "mono"))
 	_art.texture = UI.cover_texture(track, state.cover(track, 192))
 	_refresh_keys()
-	# first, read only, so no box: what rekordbox measured
-	for c in _bpm.get_children():
-		c.queue_free()
-	_bpm.visible = float(track.bpm) > 0
-	if _bpm.visible:
-		_bpm.add_child(UI.row(6, [UI.caps("BPM"), UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono")]))
-		_bpm.add_child(_vline())
 	_refresh_stars()
 	_refresh_meta()
 	for c in _actions.get_children():
@@ -503,7 +497,7 @@ func _refresh() -> void:
 	sk.custom_minimum_size.x = 150
 	(sk.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	_actions.add_child(sk)
-	_actions.add_child(UI.button("Confirm", "ENTER", true, _next))
+	_actions.add_child(UI.button("Confirm", "ENTER", true, _next, UI.DECIDE))
 	_refresh_transport()
 	_tick()
 	_fit_title.call_deferred()
