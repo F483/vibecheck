@@ -112,7 +112,6 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    - "model guesses right 40–70%", always shown as a range, so the user sees
      everything from the start.
 4. **Player** (dark). Call it "player", never "card". It holds:
-   - the **BPM** next to the time at the top right, from rekordbox's grid;
    - the track's **cover in front of the waveform**, as tall as the peaks (a
      gradient in the track's colours when the file has none);
    - the full-track waveform with section labels, click and jump, and the
@@ -124,23 +123,30 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      export";
    - the colour keys in **two rows** (QWER light / ASDF dark), which the user
      likes;
-   - two rows exactly the height of the colour keys, so everything lines up
-     with them:
-     - **upper row, what you say about the track**, level with the light keys:
-       stars (five ★/☆, filled up to the rating; click or ⇧1–5), **Energy** and **Key**, each a value that pops
-       out a picker (the user preferred this to − and + buttons): energy 1–10
-       in a row (N; ←→ step, a digit picks, 0 is 10), key all 24, minor on
-       top and major below, round the wheel (K; ←→ round the wheel, ↑↓
-       minor/major); and U undo. A key badge next to a control does the same
-       as the control when clicked: the user clicked N and K expecting that. A corrected value
-       turns lime. The player shows what an export would write: your
-       correction, else the analysis;
-     - **lower row, the parts of the track**, level with the dark keys: ←
-       then a button per part numbered as on the waveform, the part playing
-       lit, →;
-   - below the colour keys, the main controls on their own level: Stop (ESC)
-     and Play/Pause (SPACE) on the left, Skip or Requeue and Confirm on the right. They
-     moved out of the dark-key row because it no longer fit the window.
+   - beside the colour keys, centred on them, **the parts of the track**: ←
+     then a button per part numbered as on the waveform, the part playing
+     lit, →;
+   - two centred trays (dark, thin border, rounded), each on its own level,
+     so the groups read at a glance (the user asked for both; before, what
+     you say sat level with the light keys and the controls on the two
+     sides):
+     - under the waveform, above the colour keys, **what you say about the
+       track**: stars (five ★/☆, filled up to the
+       rating; click or ⇧1–5), the **BPM** from rekordbox's grid (read only,
+       so no box; moved here from beside the time), **Energy** and **Key**,
+       each a value that pops out a picker (the user preferred this to − and
+       + buttons): energy 1–10 in a row (N; ←→ step, a digit picks, 0 is 10),
+       key all 24, minor on top and major below, round the wheel (K; ←→ round
+       the wheel, ↑↓ minor/major). A key badge next to a control does the
+       same as the control when clicked: the user clicked N and K expecting
+       that. A corrected value turns lime. The player shows what an export
+       would write: your correction, else the analysis;
+     - under the colour keys, **the main controls**: Stop (ESC) and Play/Pause (SPACE) | **Undo** (U),
+       a button of its own | Skip or Requeue and Confirm. Play/Pause and
+       Skip/Requeue keep a fixed width so the tray doesn't shift.
+     - With no track open the trays are hidden.
+   - The artist line in the header takes the room left and trims with …, so a
+     long one never pushes the player past the window.
    - In the library the hint "Confirm adds it to the next Export" sits on the
      title line, before the time, because the upper row is full.
 5. **Export list strip** (light). It shows "↓ Export list 47" and an **"Export → X"**

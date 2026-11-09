@@ -1,8 +1,9 @@
 extends PanelContainer
-## The player: one track, its waveform and the colour keys, then two rows level with
-## the keys. Upper: what you say about the track (stars, energy, key). Lower: time
-## (stop, parts, play) and the two buttons that keep their place and keys everywhere,
-## Skip or Requeue (⇧ENTER) and Confirm (ENTER), which makes what is shown your label and moves on.
+## The player: one track, its waveform, a centred tray of what you say about the track
+## (stars, bpm, energy, key), the colour keys with the parts of the track beside them, then
+## a centred tray of the main controls: stop, play | undo | the two buttons that keep their place and keys
+## everywhere, Skip or Requeue (⇧ENTER) and Confirm (ENTER), which makes what is shown your
+## label and moves on.
 ## Used by vibe and library.
 
 const UI := preload("res://ui/ui.gd")
@@ -52,6 +53,9 @@ var _pick_pos := Vector2i.ZERO
 var _transport: HBoxContainer
 var _parts_row: HBoxContainer
 var _actions: HBoxContainer
+var _undo_box: HBoxContainer
+## hidden with no track open, so no empty outlines show
+var _trays: Array[Control] = []
 
 
 func _init(bg: Color, s) -> void:
@@ -83,16 +87,33 @@ func _init(bg: Color, s) -> void:
 	_transport = UI.row(6)
 	_parts_row = UI.row(4)
 	_actions = UI.row(8)
-	# two rows the height of the colour keys, so everything lines up with them: what you say
-	# about the track with the light row, the parts of the track with the dark one
-	var top := UI.row(24, [_stars, _meta, UI.row(6, [UI.kbd("U"), UI.text("undo", 11, UI.MUTED)])])
-	for r: Control in [top, _parts_row]:
-		r.custom_minimum_size.y = KEY_H
-	var side := UI.col(KEY_GAP, [top, _parts_row])
-	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# below, on their own level: stop and play, and the two buttons that move on
-	var controls := UI.row(8, [_transport, UI.spacer(), _actions])
-	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), UI.row(20, [_keys, side]), controls]))
+	_undo_box = UI.row(0)
+	# beside the colour keys, the parts of the track, centred on them
+	_parts_row.custom_minimum_size.y = KEY_H
+	_parts_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# each on its own level and centred in a tray: what you say about the track (stars, bpm,
+	# energy, key) under the waveform, the main controls (stop, play | undo | skip, confirm)
+	# under the keys
+	_trays = [_tray(UI.row(0, [_stars, _meta])), _tray(UI.row(12, [_transport, _vline(), _undo_box, _vline(), _actions]))]
+	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), _trays[0], UI.row(20, [_keys, _parts_row]), _trays[1]]))
+
+
+## A centred group: dark, thin border, rounded.
+func _tray(c: Control) -> Control:
+	var t := PanelContainer.new()
+	t.add_theme_stylebox_override("panel", UI.pad(UI.style(UI.DARK, 8, UI.LINE, 1), 14, 8))
+	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	t.add_child(c)
+	return UI.row(0, [UI.spacer(), t, UI.spacer()])
+
+
+func _vline() -> ColorRect:
+	var l := ColorRect.new()
+	l.color = UI.LINE
+	l.custom_minimum_size = Vector2(1, 24)
+	l.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return l
 
 
 func _bg(c: Color) -> StyleBoxFlat:
@@ -166,7 +187,9 @@ func clear(text := "Queue is empty: sync from rekordbox or add tracks from the l
 	_art.texture = null
 	for c in _head.get_children():
 		c.queue_free()
-	for r: Control in [_actions, _transport, _parts_row, _meta, _stars]:
+	for t in _trays:
+		t.visible = false
+	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars]:
 		for c in r.get_children():
 			c.queue_free()
 	_head.add_child(UI.text(text, 14, UI.MUTED))
@@ -202,7 +225,10 @@ func _refresh_transport() -> void:
 	for b: Control in _parts():
 		_parts_row.add_child(b)
 	_transport.add_child(_control("stop", "Stop", "ESC", stop))
-	_transport.add_child(_control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing)))
+	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing))
+	p.custom_minimum_size.x = 132
+	(p.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+	_transport.add_child(p)
 
 
 func _parts() -> Array:
@@ -233,6 +259,9 @@ func _refresh_meta() -> void:
 		c.queue_free()
 	if track.is_empty():
 		return
+	# read only, so no box: what rekordbox measured, between the stars and energy
+	if float(track.bpm) > 0:
+		_meta.add_child(UI.margin(UI.row(6, [UI.caps("BPM"), UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono")]), 16, 0, 0, 0))
 	_meta.add_child(_field("Energy", str(energy) if energy > 0 else "—", energy != _energy0, "N", pick_energy))
 	_meta.add_child(_field("Key", key if key != "" else "—", key != _key0, "K", pick_key))
 
@@ -390,13 +419,13 @@ func _refresh() -> void:
 	if tg != "":
 		_head.add_child(UI.tag(tg))
 	_head.add_child(UI.text(track.title, 22, UI.TEXT, "heavy"))
-	_head.add_child(UI.text(" · ".join(PackedStringArray([track.artist, track.mix].filter(func(x: String) -> bool: return x != ""))), 13, UI.MUTED))
-	_head.add_child(UI.spacer())
+	# the artist line takes the room left and trims with … so the player never outgrows the window
+	var by := UI.text(" · ".join(PackedStringArray([track.artist, track.mix].filter(func(x: String) -> bool: return x != ""))), 13, UI.MUTED)
+	by.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	by.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_head.add_child(by)
 	if cfg.hint != "":
 		_head.add_child(UI.margin(UI.text(cfg.hint, 11, UI.MUTED), 0, 0, 16, 0))
-	if float(track.bpm) > 0:
-		var bpm := UI.row(4, [UI.text("%.0f" % float(track.bpm), 13, UI.TEXT, "mono"), UI.text("BPM", 11, UI.MUTED, "mono")])
-		_head.add_child(UI.margin(bpm, 0, 0, 16, 0))
 	_head.add_child(UI.text("", 12, UI.MUTED, "mono"))
 	_art.texture = UI.cover_texture(track, state.cover(track, 192))
 	_refresh_keys()
@@ -404,7 +433,15 @@ func _refresh() -> void:
 	_refresh_meta()
 	for c in _actions.get_children():
 		c.queue_free()
-	_actions.add_child(UI.button(cfg.skip, "⇧ENTER", false, func() -> void: skip.emit()))
+	for t in _trays:
+		t.visible = true
+	for c in _undo_box.get_children():
+		c.queue_free()
+	_undo_box.add_child(UI.button("Undo", "U", false, undo))
+	var sk := UI.button(cfg.skip, "⇧ENTER", false, func() -> void: skip.emit())
+	sk.custom_minimum_size.x = 150
+	(sk.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
+	_actions.add_child(sk)
 	_actions.add_child(UI.button("Confirm", "ENTER", true, _next))
 	_refresh_transport()
 	_tick()
