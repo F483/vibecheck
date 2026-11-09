@@ -295,7 +295,8 @@ fn embed_with(
                 Err(_) => st.failed += 1,
             }
             let n = k + 1;
-            if last.elapsed().as_secs_f64() >= 15.0 || n == todo.len() {
+            // a bar for long runs (the CLI); the app's few at a time say nothing
+            if todo.len() > 50 && (last.elapsed().as_secs_f64() >= 15.0 || n == todo.len()) {
                 last = Instant::now();
                 let el = t0.elapsed().as_secs_f64();
                 let rate = n as f64 / el;

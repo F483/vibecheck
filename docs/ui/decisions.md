@@ -97,9 +97,12 @@ screen: content dark; the rail, strips, toolbars and cards lighter; the
 waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 1. **Queue** (dark). Cards show a 48 px cover, the tag, the title in bold and
-   the artist in grey. The queue holds the next 200, rebuilt as the model learns; the
-   last card says how many more are queued and how many could be asked in
-   all ("+197 of 8,412": tracks listened to and not labelled by you). Tags: next, conflict, calibration, unsure, re-ask, old
+   the artist in grey. The first card is outlined only while its track is in the
+   player, not while you relisten to the export list (the user). The queue holds the next 200, rebuilt as the model learns; its
+   title line says how many are queued and how many could be asked in all
+   ("Queue 200 of 8,412": tracks listened to and not labelled by you). That was a
+   "+197 of 8,412" box after the last card; moved up so the row fits one more card
+   (the user). Tags: next, conflict, calibration, unsure, re-ask, old
    label. The queue is ordered by what teaches the model most.
 2. **rekordbox widget**, one line at the right of the queue's title line
    ("Queue 53 ordered by …"), because it is where the queue's tracks come
@@ -113,14 +116,20 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    exports.
 3. **Model strip** (light), between the queue and the player, because the tracks
    pass through the model. It shows:
-   - "early calibration" plus "learning your taste, guess hidden (blind)";
-   - progress, e.g. "47 / 100 labels";
-   - "model guesses right 40–70%", always shown as a range, so the user sees
-     everything from the start.
+   - at the left, what it does in the background, as one line the console
+     prints too (at most once a minute): "listening ▬▬▬ 62% · 1,940 / 3,120 ·
+     ~2 h left", "listening off …" or "all 3,120 heard". Only tracks it has
+     heard can be asked about, so how far along it is and how long it will take
+     is what is worth knowing (the user). The "early calibration" / "mixing
+     in" tags and their explanations were dropped: not useful;
+   - at the right, the labels ("calibrating 47 / 100 labels" below the
+     threshold, else "1,119 labels") and "model guesses right 40–70%", always
+     shown as a range, so the user sees everything from the start.
 4. **Player** (dark). Call it "player", never "card". It holds:
    - the track's **cover in front of the waveform**, as tall as the peaks (a
      gradient in the track's colours when the file has none);
-   - the full-track waveform with section labels, click and jump, and the
+   - the full-track waveform with section labels (parts too close together
+     keep only their number, or no label, rather than overlap), click and jump, and the
      **cue points drawn as rekordbox draws them**, so it is clear where they
      will end up: lettered hot cues along the top (green cue, orange loop with
      its length shaded), red memory-cue triangles along the bottom. They are
@@ -129,15 +138,16 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      export";
    - the colour keys in **two rows** (QWER light / ASDF dark), which the user
      likes;
-   - beside the colour keys, centred on them, **the parts of the track**: ←
+   - beside the colour keys, level with the bottom row, **the parts of the track**: ←
      then a button per part numbered as on the waveform, the part playing
      lit, →;
-   - two centred trays (dark, thin border, rounded), each on its own level,
-     so the groups read at a glance (the user asked for both; before, what
-     you say sat level with the light keys and the controls on the two
-     sides):
-     - under the waveform, above the colour keys, **what you say about the
-       track**: the **BPM** from rekordbox's grid
+   - two trays (dark, thin border, rounded), so the groups read at a glance
+     (the user asked for both; before, what you say sat level with the light
+     keys and the controls on the two sides):
+     - beside the colour keys, level with the top row (above the parts), **what you say about the
+       track**. It had a row of its own between the waveform and the keys; moved up
+       beside them for space (the user: the export list gets two more rows).
+       The **BPM** from rekordbox's grid
        first (read only, so no box; moved here from beside the time), stars
        (five ★/☆, filled up to the rating; click or ⇧1–5), **Energy** and **Key**,
        each a value that pops out a picker (the user preferred this to − and
@@ -148,7 +158,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
        that. A corrected value turns lime. The player shows what an export
        would write: your correction, else the analysis. Thin dividers between
        BPM | stars | energy | key, as in the controls tray (the user);
-     - **the main controls**, on vibe on the export list's strip, centred,
+     - **the main controls**, centred: on vibe on the export list's strip,
        with Export staying at its right end (the user: it frees a row for the
        list); in the collection under the colour keys: **Undo** (U), a button
        of its own, leftmost | Stop (ESC) and Play/Pause (SPACE) | Skip or

@@ -89,29 +89,16 @@ func refresh() -> void:
 func _build_queue() -> void:
 	for c in _queue.get_children():
 		c.queue_free()
+	# the queue holds the next 200; the pool is everything that could be asked
 	_queue.add_child(UI.row(8, [UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
+		UI.text("of %s" % UI.thousands(maxi(state.pool, state.queue.size())), 12, UI.MUTED, "mono"),
 		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.spacer(), UI.text(_status, 11, UI.LIME, "mono"),
 		UI.margin(_widget(), 16, 0, 0, 0)]))
 	var cards := UI.row(8)
 	var n := _fit()
 	_shown = n
 	for i in n:
-		cards.add_child(_card(state.queue[i], i == 0))
-	if state.queue.size() > n:
-		var more := UI.panel(UI.DARK, 4)
-		var s: StyleBoxFlat = more.get_theme_stylebox("panel")
-		s.border_color = Color("#4a4b50")
-		s.set_border_width_all(1)
-		more.custom_minimum_size = Vector2(72, 64)
-		# the queue holds the next 200; the pool is everything that could be asked
-		var l := UI.text("+%d" % (state.queue.size() - n), 12, UI.MUTED)
-		var of := UI.text("of %s" % UI.thousands(maxi(state.pool, state.queue.size())), 10, UI.MUTED, "mono")
-		for x: Label in [l, of]:
-			x.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		var c := UI.col(0, [l, of])
-		c.alignment = BoxContainer.ALIGNMENT_CENTER
-		more.add_child(c)
-		cards.add_child(more)
+		cards.add_child(_card(state.queue[i], i == 0, not relisten and state.queue[i].path == player.track.get("path")))
 	# held in a clipping box: how many cards show follows the width (_fit), so they don't
 	# count towards how narrow the window can get
 	var hold := Control.new()
@@ -123,9 +110,10 @@ func _build_queue() -> void:
 	_queue.add_child(hold)
 
 
-func _card(t: Dictionary, first: bool) -> Control:
+## Outlined while it is in the player, not while you relisten to the export list.
+func _card(t: Dictionary, first: bool, playing: bool) -> Control:
 	var p := UI.panel(UI.CARD, 4, 7, 7)
-	if first:
+	if playing:
 		var s: StyleBoxFlat = p.get_theme_stylebox("panel")
 		s.border_color = UI.LIME
 		s.set_border_width_all(1)
@@ -145,11 +133,11 @@ func _card(t: Dictionary, first: bool) -> Control:
 	return p
 
 
-## How many queue cards fit next to the +N box.
+## How many queue cards fit.
 ## Measured from the window, not from this screen, so cards never push the layout wider.
 func _fit() -> int:
 	var w := get_viewport_rect().size.x - 64 if is_inside_tree() else 1216.0
-	var room := w - 32 - 72 - 8  # margins, +N box, gap
+	var room := w - 32  # margins
 	return mini(maxi(int((room + 8) / 192), 1), state.queue.size())
 
 
@@ -188,14 +176,20 @@ func _build_model() -> void:
 	var th: int = state.settings.threshold
 	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Model")]
 	if not state.loaded:
-		parts += [UI.text("reading your labels…", 12, UI.MUTED)]
-	elif state.calibrating():
-		parts += [UI.tag("early calibration"), UI.text("learning your taste, guess hidden (blind)", 12, UI.MUTED),
-			UI.Bar.new(160, float(state.labels) / th, UI.LIME), UI.text("%d / %d labels" % [state.labels, th], 12, UI.TEXT, "mono")]
+		parts += [UI.text("reading your labels…", 12, UI.MUTED), UI.spacer()]
 	else:
-		parts += [UI.tag("mixing in"), UI.text("unsure tracks, conflicts and old labels join the queue", 12, UI.MUTED),
-			UI.text("%d labels" % state.labels, 12, UI.TEXT, "mono")]
-	parts += [UI.spacer(), UI.text("model guesses right", 12, UI.MUTED)]
+		# what it is doing in the background, as the console has it
+		var s: Array = state.listening_status()
+		parts += [UI.text(s[0], 12, UI.TEXT)]
+		if s[1] < 1.0:
+			parts += [UI.Bar.new(160, s[1], UI.LIME)]
+		parts += [UI.text(s[2], 12, UI.MUTED, "mono"), UI.spacer()]
+		if state.calibrating():
+			parts += [UI.text("calibrating", 12, UI.MUTED), UI.text("%d / %d labels" % [state.labels, th], 12, UI.TEXT, "mono")]
+		else:
+			parts += [UI.text("%s labels" % UI.thousands(state.labels), 12, UI.TEXT, "mono")]
+		parts += [UI.text("·", 12, UI.MUTED)]
+	parts += [UI.text("model guesses right", 12, UI.MUTED)]
 	if state.measured > 0:
 		parts += [UI.text("%d–%d%%" % [acc.x, acc.y], 14, UI.LIME, "mono"),
 			UI.text("on %d held-back labels" % state.measured, 11, UI.MUTED)]
@@ -274,10 +268,13 @@ func _next_dropped() -> Dictionary:
 
 
 func _on_row(t: Dictionary) -> void:
+	var was := relisten
 	relisten = true
 	if t.erase("fresh"):
 		table.queue_redraw()
 	player.show_track(t, "dropped" if t.get("dropped", false) else "relisten")
+	if not was:
+		_build_queue()  # the queue's track left the player
 
 
 ## Open a table row in the player, as a click on it does.

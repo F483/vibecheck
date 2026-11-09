@@ -1,7 +1,7 @@
 extends PanelContainer
-## The player: one track, its waveform, a centred tray of what you say about the track
-## (stars, bpm, energy, key), the colour keys with the parts of the track beside them, then
-## a centred tray of the main controls: undo | stop, play | the two buttons that keep their place and keys
+## The player: one track, its waveform, the colour keys with beside them a tray of what you
+## say about the track (bpm, stars, energy, key) level with the top row and the parts of the
+## track level with the bottom one, then a centred tray of the main controls: undo | stop, play | the two buttons that keep their place and keys
 ## everywhere, Skip or Requeue (⇧ENTER) and Confirm (ENTER), which makes what is shown your
 ## label and moves on.
 ## Used by vibe and library.
@@ -95,14 +95,16 @@ func _init(bg: Color, s) -> void:
 	_parts_row = UI.row(4)
 	_actions = UI.row(8)
 	_undo_box = UI.row(0)
-	# beside the colour keys, the parts of the track, centred on them
+	# beside the colour keys, a row each: what you say about the track (bpm, stars, energy,
+	# key) in a tray level with the top keys, the parts of the track with the bottom ones
 	_parts_row.custom_minimum_size.y = KEY_H
-	_parts_row.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	# each on its own level and centred in a tray: what you say about the track (stars, bpm,
-	# energy, key) under the waveform, the main controls (undo | stop, play | skip, confirm)
-	# under the keys
-	_trays = [_tray(UI.row(12, [_bpm, _stars, _vline(), _meta])), _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
-	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), _trays[0], UI.row(20, [_keys, _parts_row]), _trays[1]]))
+	var meta := _tray(UI.row(12, [_bpm, _stars, _vline(), _meta]), false)
+	meta.custom_minimum_size.y = KEY_H
+	var side := UI.col(KEY_GAP, [meta, _parts_row])
+	side.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	# the main controls (undo | stop, play | skip, confirm) centred in a tray under the keys
+	_trays = [meta, _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
+	add_child(UI.col(10, [_head, UI.row(10, [_art, _wave]), UI.row(20, [_keys, side]), _trays[1]]))
 
 
 ## The title at its full width while it fits, else trimmed with …, leaving the artist line some
@@ -136,12 +138,13 @@ func take_controls() -> Control:
 
 
 ## A centred group: dark, thin border, rounded.
-func _tray(c: Control) -> Control:
+func _tray(c: Control, centred := true) -> Control:
 	var t := PanelContainer.new()
 	t.add_theme_stylebox_override("panel", UI.pad(UI.style(UI.DARK, 8, UI.LINE, 1), 14, 8))
 	t.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	t.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	t.add_child(c)
-	return UI.row(0, [UI.spacer(), t, UI.spacer()])
+	return UI.row(0, [UI.spacer(), t, UI.spacer()]) if centred else t
 
 
 func _vline() -> ColorRect:
@@ -734,7 +737,12 @@ class Wave extends Control:
 			var x: float = starts[j] / length * size.x
 			if j > 0:
 				draw_line(Vector2(x, 0), Vector2(x, h), Color("#1c1d20"), 2)
-			draw_string(font, Vector2(x + 4, size.y - 3), "%d %s" % [j + 1, names[j].to_upper()], HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("#a0a1a8"))
+			# up to the next part: parts close together keep only their number, or nothing
+			var room := (starts[j + 1] / length * size.x if j + 1 < starts.size() else size.x) - x - 8
+			for t: String in ["%d %s" % [j + 1, names[j].to_upper()], str(j + 1)]:
+				if font.get_string_size(t, HORIZONTAL_ALIGNMENT_LEFT, -1, 10).x <= room:
+					draw_string(font, Vector2(x + 4, size.y - 3), t, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color("#a0a1a8"))
+					break
 		_draw_cues(h)
 		draw_line(Vector2(frac * size.x, 0), Vector2(frac * size.x, h), Color.WHITE, 1.5)
 

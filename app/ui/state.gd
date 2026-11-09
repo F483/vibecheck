@@ -57,6 +57,8 @@ var _answered := {}
 var _skipped: Array[Dictionary] = []
 var _front := {}  # paths you put at the front of the queue: kept there when it is rebuilt
 var _covers := {}
+var _per_track := 0.0  # seconds background listening takes a track, smoothed
+var _said_at := -1  # when the console last got the listening line, msec
 ## Waveforms and parts of the player's track and the ones it may load next, as they come:
 ## path -> {"wave": …, "parts": …}. Others are forgotten; the core keeps them in its cache.
 var _wv := {}
@@ -578,6 +580,8 @@ func _listen() -> void:
 	_call(_bg, "unheard", {"n": 4}, func(paths: Variant) -> void:
 		if paths == null or paths.is_empty():
 			listening = ""
+			if paths != null:
+				_say_listening(true)
 			return
 		var ts: Array[Dictionary] = []
 		for p: String in paths:
@@ -591,6 +595,7 @@ func _listen_to(ts: Array[Dictionary], then := Callable()) -> void:
 		return
 	listening = ts[0].title
 	var paths := ts.map(func(t: Dictionary) -> String: return t.path)
+	var t0 := Time.get_ticks_msec()
 	_call(_bg, "embed", {"paths": paths}, func(n: Variant) -> void:
 		listening = ""
 		if n == null:
@@ -601,9 +606,43 @@ func _listen_to(ts: Array[Dictionary], then := Callable()) -> void:
 				t.embedded = true
 				embedded += 1
 				pool += 1
+		if then.is_valid():
+			# timed in the background chain only: a single track may wait behind a batch
+			var per := (Time.get_ticks_msec() - t0) / 1000.0 / ts.size()
+			_per_track = per if _per_track == 0.0 else lerpf(_per_track, per, 0.3)
+			_say_listening()
 		changed.emit()
 		if then.is_valid():
 			then.call())
+
+
+## Background listening as one line: what, the fraction heard, then "8% · 1,236 / 15,002 ·
+## ~19 h left". Shown in the model strip, and in the console by `_say_listening`.
+func listening_status() -> Array:
+	var total := library.size()
+	var heard := mini(embedded, total)
+	if heard >= total:
+		return ["all %s heard" % UI.thousands(total), 1.0, ""]
+	var f := float(heard) / maxi(total, 1)
+	var rest := "%d%% · %s / %s" % [int(f * 100), UI.thousands(heard), UI.thousands(total)]
+	if not settings.listen:
+		return ["listening off", f, rest]
+	if _per_track > 0:
+		var s := (total - heard) * _per_track
+		rest += " · ~%s left" % ("%d h" % roundi(s / 3600) if s >= 7200 else "%d min" % maxi(roundi(s / 60), 1))
+	return ["listening", f, rest]
+
+
+## The listening line in the console, at most once a minute unless `now`.
+func _say_listening(now := false) -> void:
+	var at := Time.get_ticks_msec()
+	if not now and _said_at >= 0 and at - _said_at < 60000:
+		return
+	_said_at = at
+	var s := listening_status()
+	var n := int(s[1] * 20)
+	var bar: String = " [%s%s] " % ["#".repeat(n), ".".repeat(20 - n)] if s[1] < 1.0 else ""
+	print("%s %s%s%s" % [Time.get_time_string_from_system(), s[0], bar, s[2]])
 
 
 # --- settings ----------------------------------------------------------------------------
