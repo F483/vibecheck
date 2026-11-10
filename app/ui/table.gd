@@ -111,8 +111,10 @@ func _sort() -> void:
 	rows.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var va: Variant = _value(a, k)
 		var vb: Variant = _value(b, k)
+		# ties by title, then path: equal keys must keep one order, or Confirm stepping to the
+		# next row ping-pongs between two same-titled files that swap on every re-sort
 		if va == vb:
-			return str(a.title) < str(b.title)
+			return str(a.title) < str(b.title) if a.title != b.title else str(a.path) < str(b.path)
 		return (va > vb) if d else (va < vb))
 
 

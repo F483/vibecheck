@@ -23,6 +23,24 @@ const MODES := {
 	"dropped": {"tag": "from rekordbox", "skip": "Skip", "hint": "Confirm makes it your label"},
 }
 
+## Why a track is in front of you, as its tag says: [tag, why, what to do]. Click the tag.
+const WHY := [
+	["calibration", "few labels yet: tracks spread across your collection's sound, asked blind",
+		"Pick its colour and stars. These show the model your whole range."],
+	["unsure", "not labelled by you; the model is least sure of its colour",
+		"Confirm the guess if it's right, or pick the right colour. These teach the model most."],
+	["conflict", "your label, but the model is sure of another colour; asked blind",
+		"Pick your colour again to keep it, or another to correct it. Either way it counts as confirmed."],
+	["old label", "a colour from before vibecheck the model disagrees with; asked blind",
+		"Pick the old colour to keep it, or another to correct it. Either becomes your label."],
+	["re-ask", "you put it in the queue from the library; asked blind",
+		"Pick its colour again. It replaces your label."],
+	["from rekordbox", "you dropped it on the app",
+		"Confirm makes it your label."],
+	["relistening", "opened from the export list or the library",
+		"Change what's wrong. Confirm puts it in the next Export."],
+]
+
 var state
 var track: Dictionary = {}
 var mode := "queue"
@@ -33,6 +51,7 @@ var rating := 0
 var energy := 0
 var key := ""
 var _energy0 := 0
+var _why: PopupPanel
 var _key0 := ""
 var playing := false
 var pos := 0.0
@@ -458,6 +477,49 @@ func seek(s: float) -> void:
 	_tick()
 
 
+## The tag's popup, for screenshots (--dialog=why).
+func open_why() -> void:
+	for c in _head.get_children():
+		if c is PanelContainer:
+			c.gui_input.emit(_click())
+			return
+
+
+static func _click() -> InputEventMouseButton:
+	var e := InputEventMouseButton.new()
+	e.pressed = true
+	e.button_index = MOUSE_BUTTON_LEFT
+	return e
+
+
+## What each tag means, this track's lit, and what to do with it: like the trust popup.
+func _why_popup(chip: Control, tg: String) -> void:
+	if _why:
+		_why.queue_free()
+	_why = PopupPanel.new()
+	_why.add_theme_stylebox_override("panel", UI.pad(UI.style(UI.DARK, 6, Color("#55565c"), 1), 12, 10))
+	var v := UI.col(6, [UI.caps("Why this track is asked")])
+	var g := GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", 10)
+	g.add_theme_constant_override("v_separation", 6)
+	var todo := ""
+	for row: Array in WHY:
+		var on: bool = tg.begins_with(row[0])
+		if on:
+			todo = row[2]
+		g.add_child(UI.tag(row[0]))
+		g.add_child(UI.text(row[1], 12, UI.TEXT if on else UI.MUTED, "bold" if on else "sans"))
+	v.add_child(g)
+	if todo != "":
+		v.add_child(UI.margin(UI.text(todo, 12, UI.LIME), 0, 4, 0, 0))
+	if mode == "queue":
+		v.add_child(UI.text("Requeue asks it again later.", 11, UI.MUTED))
+	_why.add_child(v)
+	add_child(_why)
+	_why.popup(Rect2i(Vector2i(chip.get_screen_position() + Vector2(0, chip.size.y + 6)), Vector2i.ZERO))
+
+
 func _refresh() -> void:
 	for c in _head.get_children():
 		c.queue_free()
@@ -466,7 +528,9 @@ func _refresh() -> void:
 	if mode == "dropped":
 		tg += " · model's guess" if track.source == "model" else ""
 	if tg != "":
-		_head.add_child(UI.tag(tg))
+		var chip := UI.tag(tg)
+		UI.clickable(chip, _why_popup.bind(chip, tg))
+		_head.add_child(chip)
 	_title = UI.text(track.title, 22, UI.TEXT, "heavy")
 	_title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_head.add_child(_title)

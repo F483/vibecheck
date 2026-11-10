@@ -316,7 +316,7 @@ func _hidpi() -> void:
 	w.move_to_center()
 
 
-## --shot=path.png [--screen=id] [--dialog=export|sync|batch] [--wait=s] [--after=s]: once loaded, wait,
+## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why] [--wait=s] [--after=s]: once loaded, wait,
 ## show the screen, wait again, render one frame to a file and quit.
 func _shot() -> void:
 	var args := {}
@@ -336,6 +336,9 @@ func _shot() -> void:
 			export_batch()
 		"sync":
 			sync_now()
+		"why":
+			screens.vibe.player.open_why()
+			await get_tree().create_timer(0.5).timeout
 		"batch":
 			(screens.history as History).open_newest()
 			await get_tree().create_timer(1.0).timeout

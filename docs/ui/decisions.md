@@ -108,7 +108,10 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    ("Queue 200 of 8,412": tracks listened to and not labelled by you). That was a
    "+197 of 8,412" box after the last card; moved up so the row fits one more card
    (the user). Tags: next, conflict, calibration, unsure, re-ask, old
-   label. The queue is ordered by what teaches the model most.
+   label. The queue is ordered by what teaches the model most. **Click the
+   player's tag** for a popup like the trust one: every tag and why it puts a
+   track in front of you, this one lit, and what to do with it ("Pick your
+   colour again to keep it, or another to correct it") (the user).
 2. **rekordbox widget**, one line at the right of the queue's title line
    ("Queue 53 ordered by …"), because it is where the queue's tracks come
    from. It shows "rekordbox · watching rekordbox.xml · collection exported X
