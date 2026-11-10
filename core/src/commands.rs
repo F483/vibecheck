@@ -43,7 +43,7 @@ fn scope_of(root: &Path, pl: Option<&String>) -> Res<Option<HashSet<String>>> {
 }
 
 fn read_corrections(root: &Path, xml: &Path, pl: Option<&String>, adopt_all: bool, stale_ok: bool) -> Res<Corrections> {
-    workflow::read_corrections(root, xml, scope_of(root, pl)?, adopt_all, stale_ok)
+    workflow::read_corrections(root, xml, scope_of(root, pl)?, adopt_all, stale_ok, &HashSet::new())
 }
 
 /// Tracks named by a playlist, or all of `live`.

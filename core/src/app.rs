@@ -130,6 +130,18 @@ fn since(con: &rusqlite::Connection, s: &Saved) -> Res<i64> {
     Ok(con.query_row("SELECT COALESCE(MAX(started), 0) FROM rounds", [], |r| r.get(0))?)
 }
 
+/// Tracks labelled here (not read from rekordbox) since the last export, and the ones
+/// dropped on the list: waiting for the next export, so rekordbox does not know their
+/// labels yet and a sync must not take its value for them as a correction.
+fn unsent(con: &rusqlite::Connection, s: &Saved) -> Res<HashSet<String>> {
+    let mut st = con.prepare(
+        "SELECT path FROM current WHERE source IN ('user', 'model') AND origin IS NULL AND round_id IS NULL AND ts > ?1",
+    )?;
+    let mut out: HashSet<String> = st.query_map([since(con, s)?], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    out.extend(s.dropped.iter().cloned());
+    Ok(out)
+}
+
 fn batch(con: &rusqlite::Connection, after: i64) -> Res<Vec<String>> {
     let mut st = con.prepare(
         "SELECT path FROM current WHERE source IN ('user', 'model') AND round_id IS NULL AND ts > ?1 AND missing_at IS NULL ORDER BY ts",
@@ -819,8 +831,8 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
     saved.dropped.clear();
     saved.dropped_at.clear();
     save(root, &saved)?;
-    Ok(Exported {
-        name,
+    let out = Exported {
+        name: name.clone(),
         count: paths.len(),
         coloured: st.coloured,
         rated: st.rated,
@@ -829,7 +841,21 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
         cued: st.cued,
         not_in_xml: st.not_in_xml,
         mtime: rekordbox::exported(xml_path).unwrap_or(ts),
-    })
+    };
+    let rows: Vec<Kept> = paths
+        .iter()
+        .map(|p| Kept {
+            path: p.clone(),
+            what: "exported",
+            before: None,
+            after: labels.get(p).copied().or_else(|| x.get(p).and_then(|t| t.label)),
+            key: ke.get(p).map(|k| k.key.clone()),
+            energy: ke.get(p).map(|k| k.energy as i64),
+            cues: plan.as_ref().and_then(|c| c.marks.get(p)).map(|m| m.0.len() as i64),
+        })
+        .collect();
+    log_batch(&con, "out", ts, &name, None, &serde_json::to_value(&out)?, &rows)?;
+    Ok(out)
 }
 
 #[derive(Serialize, Default)]
@@ -853,11 +879,17 @@ pub struct Synced {
 /// tracks of the last export that were played since are counted.
 pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
     let mut saved = load_saved(root);
+    let con = store::labels_db(root)?;
+    let out_id = out_batch(&con, &saved)?;
+    let was = store::current(&con, None)?;
     // tracks exported with rekordbox's own colour are compared below, not taken as new labels
     let scope: Option<HashSet<String>> =
         saved.export.as_ref().map(|e| e.plays.keys().filter(|p| !e.theirs.contains_key(*p)).cloned().collect());
-    let mut n = workflow::read_corrections(root, xml_path, scope.clone(), false, false)
-        .map_err(|e| e.to_string().replace("STALE: ", "").to_string())?;
+    // stale_ok: the app saves guesses for dropped tracks at any time, so an export older
+    // than the newest guess is normal; the tracks labelled after it are skipped one by one
+    // (`newer`), which is all the command line's whole-file refusal protects
+    let hold = unsent(&con, &saved)?;
+    let mut n = workflow::read_corrections(root, xml_path, scope.clone(), false, true, &hold)?;
     let x = xml(root, xml_path)?;
     if let Some(e) = &saved.export {
         let theirs = their_corrections(root, e, &x)?;
@@ -865,22 +897,46 @@ pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
         n.paths.extend(theirs);
     }
     let mut s = Synced { added: n.added, changed: n.changed, confirmed: n.confirmed, newer: n.newer, unknown: n.unknown, ..Default::default() };
+    let is = store::current(&con, None)?;
+    let ids = store::track_ids(&con)?;
+    let mut rows: Vec<Kept> = n
+        .paths
+        .iter()
+        .map(|p| Kept::label(p, if was.contains_key(p) { "corrected" } else { "added" }, was.get(p), is.get(p)))
+        .collect();
     if let Some(e) = saved.export.as_mut() {
         let fixed: HashSet<&String> = n.paths.iter().collect();
         s.out = e.plays.len();
         for (p, before) in e.plays.iter_mut() {
             let plays = x.get(p).map(|t| t.info.plays).unwrap_or(*before);
-            if plays > *before {
+            // what became of it, for the history page: played stays played, a
+            // correction outranks untouched
+            let fate = if plays > *before {
                 s.played += 1;
                 *before = plays;
+                if !fixed.contains(p) {
+                    rows.push(Kept::label(p, "played", was.get(p), is.get(p)));
+                }
+                "played"
             } else if fixed.contains(p) {
                 s.corrected += 1;
+                "corrected"
             } else {
                 s.untouched += 1;
+                "untouched"
+            };
+            if let (Some(b), Some(t)) = (out_id, ids.get(p)) {
+                con.execute(
+                    "UPDATE batch_tracks SET fate = ?3 WHERE batch_id = ?1 AND track_id = ?2
+                     AND (fate IS NULL OR ?3 = 'played' OR (?3 = 'corrected' AND fate = 'untouched'))",
+                    rusqlite::params![b, t, fate],
+                )?;
             }
         }
         save(root, &saved)?;
     }
+    let name = xml_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
+    log_batch(&con, "in", now(), &name, rekordbox::exported(xml_path), &serde_json::to_value(&s)?, &rows)?;
     Ok(s)
 }
 
@@ -898,11 +954,169 @@ fn their_corrections(root: &Path, e: &Export, x: &HashMap<String, Track>) -> Res
             continue;
         }
         let id: i64 = con.query_row("SELECT id FROM tracks WHERE path = ?1", [p], |r| r.get(0))?;
-        store::log_label(&con, id, l, "user", None)?;
+        store::log_label_from(&con, id, l, "user", None, Some("xml"))?;
         out.push(p.clone());
     }
     con.execute_batch("COMMIT")?;
     Ok(out)
+}
+
+// --- history -----------------------------------------------------------------------
+
+/// A track of a batch, as it is kept.
+struct Kept {
+    path: String,
+    what: &'static str,
+    before: Option<Label>,
+    after: Option<Label>,
+    key: Option<String>,
+    energy: Option<i64>,
+    cues: Option<i64>,
+}
+
+impl Kept {
+    fn label(path: &str, what: &'static str, before: Option<&Label>, after: Option<&Label>) -> Kept {
+        Kept { path: path.to_string(), what, before: before.copied(), after: after.copied(), key: None, energy: None, cues: None }
+    }
+}
+
+fn log_batch(
+    con: &rusqlite::Connection,
+    dir: &str,
+    ts: i64,
+    name: &str,
+    xml_ts: Option<i64>,
+    counts: &serde_json::Value,
+    rows: &[Kept],
+) -> Res<i64> {
+    let ids = store::track_ids(con)?;
+    con.execute_batch("BEGIN")?;
+    con.execute(
+        "INSERT INTO batches (dir, ts, name, xml_ts, counts) VALUES (?1,?2,?3,?4,?5)",
+        rusqlite::params![dir, ts, name, xml_ts, counts.to_string()],
+    )?;
+    let id = con.last_insert_rowid();
+    let mut st = con.prepare(
+        "INSERT OR REPLACE INTO batch_tracks (batch_id, track_id, what, colour_before, stars_before, colour, stars, key, energy, cues)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+    )?;
+    for r in rows {
+        let Some(t) = ids.get(&r.path) else { continue };
+        st.execute(rusqlite::params![
+            id,
+            t,
+            r.what,
+            r.before.and_then(|l| l.colour).map(|c| c.id),
+            r.before.and_then(|l| l.stars),
+            r.after.and_then(|l| l.colour).map(|c| c.id),
+            r.after.and_then(|l| l.stars),
+            r.key,
+            r.energy,
+            r.cues
+        ])?;
+    }
+    con.execute_batch("COMMIT")?;
+    Ok(id)
+}
+
+/// The last export's batch. One made before history was kept is entered from what
+/// app.json remembers of it: its tracks, with their labels as they are now.
+fn out_batch(con: &rusqlite::Connection, saved: &Saved) -> Res<Option<i64>> {
+    use rusqlite::OptionalExtension;
+    let Some(e) = &saved.export else { return Ok(None) };
+    let had = con
+        .query_row("SELECT id FROM batches WHERE dir = 'out' AND name = ?1 ORDER BY id DESC LIMIT 1", [&e.name], |r| r.get(0))
+        .optional()?;
+    if had.is_some() {
+        return Ok(had);
+    }
+    let labels = store::current(con, None)?;
+    let rows: Vec<Kept> = e.plays.keys().map(|p| Kept::label(p, "exported", None, labels.get(p))).collect();
+    Ok(Some(log_batch(con, "out", e.ts, &e.name, None, &serde_json::json!({ "count": rows.len() }), &rows)?))
+}
+
+/// One sync or export on the history page.
+#[derive(Serialize)]
+pub struct Batch {
+    pub id: i64,
+    /// "in" from rekordbox, "out" to it
+    pub dir: String,
+    pub ts: i64,
+    pub name: String,
+    pub xml_ts: Option<i64>,
+    /// the summary, as `Synced` or `Exported`
+    pub counts: serde_json::Value,
+    pub tracks: usize,
+    /// out: what became of its tracks, as the syncs since saw them
+    pub played: usize,
+    pub corrected: usize,
+    pub untouched: usize,
+}
+
+/// Every sync and export, newest first.
+pub fn history(root: &Path) -> Res<Vec<Batch>> {
+    let con = store::labels_db(root)?;
+    out_batch(&con, &load_saved(root))?;
+    let mut st = con.prepare(
+        "SELECT b.id, b.dir, b.ts, b.name, b.xml_ts, b.counts, COUNT(t.track_id),
+                SUM(t.fate = 'played'), SUM(t.fate = 'corrected'), SUM(t.fate = 'untouched')
+         FROM batches b LEFT JOIN batch_tracks t ON t.batch_id = b.id
+         GROUP BY b.id ORDER BY b.ts DESC, b.id DESC",
+    )?;
+    let rows = st.query_map([], |r| {
+        let n = |i: usize| r.get::<_, Option<i64>>(i).map(|v| v.unwrap_or(0) as usize);
+        Ok(Batch {
+            id: r.get(0)?,
+            dir: r.get(1)?,
+            ts: r.get(2)?,
+            name: r.get(3)?,
+            xml_ts: r.get(4)?,
+            counts: serde_json::from_str(&r.get::<_, String>(5)?).unwrap_or_default(),
+            tracks: n(6)?,
+            played: n(7)?,
+            corrected: n(8)?,
+            untouched: n(9)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// A track of a batch, for its list.
+#[derive(Serialize)]
+pub struct BatchTrack {
+    pub path: String,
+    pub what: String,
+    pub colour_before: Option<i64>,
+    pub stars_before: Option<i64>,
+    pub colour: Option<i64>,
+    pub stars: Option<i64>,
+    pub key: Option<String>,
+    pub energy: Option<i64>,
+    pub cues: Option<i64>,
+    pub fate: Option<String>,
+}
+
+pub fn batch_tracks(root: &Path, id: i64) -> Res<Vec<BatchTrack>> {
+    let con = store::labels_db(root)?;
+    let mut st = con.prepare(
+        "SELECT k.path, t.what, t.colour_before, t.stars_before, t.colour, t.stars, t.key, t.energy, t.cues, t.fate
+         FROM batch_tracks t JOIN tracks k ON k.id = t.track_id WHERE t.batch_id = ?1 ORDER BY k.path",
+    )?;
+    let rows = st.query_map([id], |r| {
+        Ok(BatchTrack {
+            path: r.get(0)?,
+            what: r.get(1)?,
+            colour_before: r.get(2)?,
+            stars_before: r.get(3)?,
+            colour: r.get(4)?,
+            stars: r.get(5)?,
+            key: r.get(6)?,
+            energy: r.get(7)?,
+            cues: r.get(8)?,
+            fate: r.get(9)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 // --- stats -------------------------------------------------------------------------

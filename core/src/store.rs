@@ -27,8 +27,10 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (3, "baseline", include_str!("../migrations/0003_baseline.sql")),
     (4, "cue_writes", include_str!("../migrations/0004_cue_writes.sql")),
     (5, "key_energy", include_str!("../migrations/0005_key_energy.sql")),
+    (6, "batches", include_str!("../migrations/0006_batches.sql")),
+    (7, "label_origin", include_str!("../migrations/0007_label_origin.sql")),
 ];
-pub const SCHEMA_VERSION: i64 = 5;
+pub const SCHEMA_VERSION: i64 = 7;
 const BASELINE: i64 = 3;
 
 pub fn vibecheck_dir(root: &Path) -> Res<PathBuf> {
@@ -326,9 +328,21 @@ pub fn round_of(con: &Connection) -> Res<HashMap<String, i64>> {
 // --- writing -------------------------------------------------------------------
 
 pub fn log_label(con: &Connection, track_id: i64, label: Label, source: &str, round_id: Option<i64>) -> Res<()> {
+    log_label_from(con, track_id, label, source, round_id, None)
+}
+
+/// As `log_label`, saying where it came from: Some("xml") when read from rekordbox.
+pub fn log_label_from(
+    con: &Connection,
+    track_id: i64,
+    label: Label,
+    source: &str,
+    round_id: Option<i64>,
+    origin: Option<&str>,
+) -> Res<()> {
     con.execute(
-        "INSERT INTO labels (track_id, colour_id, stars, source, round_id, ts) VALUES (?1,?2,?3,?4,?5,?6)",
-        params![track_id, label.colour.map(|c| c.id), label.stars, source, round_id, now()],
+        "INSERT INTO labels (track_id, colour_id, stars, source, round_id, ts, origin) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        params![track_id, label.colour.map(|c| c.id), label.stars, source, round_id, now(), origin],
     )?;
     Ok(())
 }

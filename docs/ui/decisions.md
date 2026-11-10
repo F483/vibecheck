@@ -67,16 +67,16 @@ How the app maps onto the core:
 
 ## Screens and rail
 
-- The rail holds **vibe, library, stats, settings**, with settings directly
-  below stats. Each item is an **icon** with a small label underneath:
+- The rail holds **vibe, library, stats, history, settings**, with settings
+  last. Each item is an **icon** with a small label underneath:
   sparkles for vibe (it stands for the AI; chosen over headphones,
   a brain, a node graph and a waveform), books for library, a chart for stats,
-  a gear for settings. These replace the earlier letters (R/C/S/,). The icons are
+  a clock with an arrow running back for history, a gear for settings. These replace the earlier letters (R/C/S/,). The icons are
   18 px line drawings: grey normally, lime when active.
 - **Settings is the setup.** On first run the user fills in Music and
   `rekordbox.xml`; vibe, library and stats stay greyed out until both are
   set. It is the same page afterwards. Keep "Start ENTER" for now.
-- Stats and collection are one click away from every screen.
+- Stats, history and collection are one click away from every screen.
 - Stats opens at once: its tiles come from the cached model. The "colour right vs
   labels trained on" curve trains a model per point (seconds), so it is measured
   after each retrain in the background and kept by your labels; when your labels
@@ -300,9 +300,42 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   vibe ENTER" confirms. "Sync ⌥S" in the widget is the manual fallback.
 - Importing applies every field in the xml, so the export has to be recent.
   That is why the widget warns when it is old.
+- Before a sync, the app no longer refuses an xml exported before its newest
+  guess (the command line still does, unless `--stale-ok`): guesses for
+  dropped tracks are saved at any time, so that is normal.
+- **A sync leaves alone what rekordbox can't know yet:** a track labelled or
+  guessed here and still waiting for the next export (the export list and the
+  dropped tracks). Its value in the xml is the old one, not a correction; taking
+  it blanked labels made in the app (the user hit this). Labels read from the
+  xml are marked (`origin = 'xml'`, schema v7), so a change made in rekordbox
+  after a sync took one is still taken.
 - **Canvas layout:** export goes out at the bottom (the export strip → the
   Export done popup, bottom right), and sync comes in at the top (rekordbox →
   the Sync summary, top right → confirm → the queue).
+
+## History
+
+- A rail page of its own (the user's choice over a tab on stats) so it is
+  clear **what came in and what went out**: syncs on the left (**In · from
+  rekordbox**), exports on the right (**Out · to rekordbox**), newest first.
+- An **In** card: when it ran and when rekordbox wrote the xml; corrected
+  (ring 3), played (ring 4), added; then confirmed and "left alone, not
+  exported yet" in grey. Syncs that changed nothing fold into one grey line, "3
+  syncs, no changes", with their time span: the app syncs on every rekordbox
+  export, so most are empty.
+- An **Out** card: the playlist name and time; tracks, keys, energy
+  comments, cues written; then what became of its tracks as later syncs saw
+  them: played, corrected, untouched, with the sync summary's rings. A track
+  played stays played; a correction outranks untouched. "not synced since"
+  until a sync has looked.
+- **Click a card** for its tracks in a popup over the page: colour swatch and
+  stars (before → after for a correction), title — artist, and for an export
+  the key, cue count and fate. Close with ENTER.
+- **View only**: no undo of a batch from here (the user's choice).
+- Kept in `labels.db` (schema v6, `batches` and `batch_tracks`), so it travels
+  with the music like the labels. It starts when this was built; the last
+  export from before is taken from `app.json`, with its tracks' labels as they
+  are now.
 
 ## Collection
 

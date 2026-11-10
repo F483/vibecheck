@@ -9,9 +9,10 @@ const State := preload("res://ui/state.gd")
 const Vibe := preload("res://ui/vibe.gd")
 const Library := preload("res://ui/library.gd")
 const Stats := preload("res://ui/stats.gd")
+const History := preload("res://ui/history.gd")
 const Settings := preload("res://ui/settings.gd")
 
-const SCREENS := ["vibe", "library", "stats", "settings"]
+const SCREENS := ["vibe", "library", "stats", "history", "settings"]
 
 var state := State.new()
 var screens := {}
@@ -38,7 +39,7 @@ func _ready() -> void:
 	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(stack)
 	screens = {"vibe": Vibe.new(state, self), "library": Library.new(state, self), "stats": Stats.new(state),
-		"settings": Settings.new(state, self)}
+		"history": History.new(state, self), "settings": Settings.new(state, self)}
 	for k: String in SCREENS:
 		var s: Control = screens[k]
 		s.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -86,7 +87,7 @@ func _dropped(paths: PackedStringArray) -> void:
 	var missing: PackedStringArray = r.missing
 	if missing.is_empty():
 		return
-	var v := _dialog_box(440)
+	var v := dialog_box(440)
 	v.add_child(UI.caps("Not in your collection"))
 	v.add_child(UI.wrap("Not added, %d of %d: they aren't tracks in %s." % [missing.size(), paths.size(), state.settings.music], 12, UI.TEXT))
 	var names := Array(missing.slice(0, 8))
@@ -97,7 +98,7 @@ func _dropped(paths: PackedStringArray) -> void:
 
 
 func _failed(text: String) -> void:
-	var v := _dialog_box(440)
+	var v := dialog_box(440)
 	v.add_child(UI.caps("Something went wrong"))
 	v.add_child(UI.wrap(text, 12, UI.TEXT))
 	v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
@@ -172,7 +173,7 @@ func close_dialog() -> void:
 		dialog = null
 
 
-func _dialog_box(w: float) -> VBoxContainer:
+func dialog_box(w: float) -> VBoxContainer:
 	var p := UI.panel(UI.PANEL, 6, 18, 18)
 	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
 	s.border_color = Color("#55565c")
@@ -188,14 +189,14 @@ func export_batch() -> void:
 	if state.reviewed.is_empty():
 		_failed("Nothing to export yet: label some tracks first.")
 		return
-	var v := _dialog_box(464)
+	var v := dialog_box(464)
 	v.add_child(UI.caps("Exporting → rekordbox"))
 	v.add_child(UI.text("%d tracks" % state.reviewed.size(), 18, UI.TEXT, "heavy"))
 	v.add_child(UI.wrap("Working out key and energy and placing cue points; a minute for a long list.", 12))
 	state.export(func(e: Variant) -> void:
 		if e == null:
 			return
-		v = _dialog_box(464)
+		v = dialog_box(464)
 		v.add_child(UI.caps("Exported → rekordbox"))
 		v.add_child(UI.text("%d tracks · %s" % [e.count, e.name], 18, UI.TEXT, "heavy"))
 		var parts := ["%d colours" % e.coloured, "%d ratings" % e.rated]
@@ -225,12 +226,12 @@ func export_batch() -> void:
 func sync_now() -> void:
 	if not state.loaded:
 		return
-	var v := _dialog_box(400)
+	var v := dialog_box(400)
 	v.add_child(UI.caps("Reading rekordbox.xml…"))
 	state.sync(func(r: Variant) -> void:
 		if r == null:
 			return
-		v = _dialog_box(420)
+		v = dialog_box(420)
 		v.add_child(UI.caps("rekordbox.xml · synced"))
 		v.add_child(UI.text("Last export, %d tracks" % r.out if r.out > 0 else "No export from here yet", 18, UI.TEXT, "heavy"))
 		for line: Array in [[4, r.played, "played", "counts most"], [3, r.corrected, "corrected", "now confirmed"],
@@ -244,7 +245,7 @@ func sync_now() -> void:
 		if r.confirmed > 0:
 			more.append("%d from the command line's rounds confirmed" % r.confirmed)
 		if r.newer > 0:
-			more.append("%d left alone: you labelled them here after this export" % r.newer)
+			more.append("%d left alone: labelled here, not exported yet" % r.newer)
 		if r.unknown > 0:
 			more.append("%d colours from before vibecheck ignored" % r.unknown)
 		if not more.is_empty():
@@ -315,7 +316,7 @@ func _hidpi() -> void:
 	w.move_to_center()
 
 
-## --shot=path.png [--screen=id] [--dialog=export|sync] [--wait=s] [--after=s]: once loaded, wait,
+## --shot=path.png [--screen=id] [--dialog=export|sync|batch] [--wait=s] [--after=s]: once loaded, wait,
 ## show the screen, wait again, render one frame to a file and quit.
 func _shot() -> void:
 	var args := {}
@@ -335,6 +336,9 @@ func _shot() -> void:
 			export_batch()
 		"sync":
 			sync_now()
+		"batch":
+			(screens.history as History).open_newest()
+			await get_tree().create_timer(1.0).timeout
 	for i in 8:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw

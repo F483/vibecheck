@@ -338,6 +338,12 @@ class Icon extends Control:
 				draw_line(Vector2(8, 17) * s, Vector2(8, 13) * s, color, w, true)
 				draw_line(Vector2(13, 17) * s, Vector2(13, 7) * s, color, w, true)
 				draw_line(Vector2(18, 17) * s, Vector2(18, 10) * s, color, w, true)
+			"history":
+				# a clock with an arrow running back round it
+				var c := Vector2(12, 12) * s
+				draw_arc(c, 8.5 * s, -PI * 0.75, PI, 28, color, w, true)
+				draw_polyline(PackedVector2Array([Vector2(2.5, 3.5) * s, Vector2(6, 6) * s, Vector2(2.5, 8.5) * s]), color, w, true)
+				draw_polyline(PackedVector2Array([Vector2(12, 7) * s, c, Vector2(15.5, 14) * s]), color, w, true)
 			"settings":
 				var c := Vector2(12, 12) * s
 				draw_arc(c, 3 * s, 0, TAU, 20, color, w, true)

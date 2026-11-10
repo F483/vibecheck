@@ -492,6 +492,20 @@ func sync(done: Callable) -> void:
 		done.call(s), "Reading rekordbox.xml…")
 
 
+## The history page: every sync and export, newest first.
+func load_history(done: Callable) -> void:
+	_call(_main, "history", {}, func(h: Variant) -> void:
+		if h != null:
+			done.call(h))
+
+
+## One sync's or export's tracks, for its list.
+func load_batch(id: int, done: Callable) -> void:
+	_call(_main, "batch", {"id": id}, func(ts: Variant) -> void:
+		if ts != null:
+			done.call(ts))
+
+
 ## Called every few seconds: a new export from rekordbox starts a sync.
 func poll() -> void:
 	if not loaded or _exporting:

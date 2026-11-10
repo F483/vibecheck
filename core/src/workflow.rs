@@ -24,7 +24,8 @@ pub struct Corrections {
     pub missing: usize,
     pub unknown: usize,
     pub read: usize,
-    /// labelled after the export was made: the export cannot know about them
+    /// labelled after the export was made, or here and not exported yet: the
+    /// export cannot know about them
     pub newer: usize,
     /// the tracks given a new label, added or corrected
     pub paths: Vec<String>,
@@ -35,13 +36,15 @@ pub struct Corrections {
 /// prediction counts as confirmed only for tracks in `scope` (None: those out
 /// in an open round); a colour this app has no record of is ignored unless in
 /// scope or `adopt_all`. A track labelled after the export was made is left
-/// alone: what the export holds for it is older than what we know.
+/// alone: what the export holds for it is older than what we know. So is a track in
+/// `hold`: labelled here and not exported yet, so rekordbox cannot know its label.
 pub fn read_corrections(
     root: &Path,
     xml: &Path,
     scope: Option<HashSet<String>>,
     adopt_all: bool,
     stale_ok: bool,
+    hold: &HashSet<String>,
 ) -> Res<Corrections> {
     let con = store::labels_db(root)?;
     let ids = store::track_ids(&con)?;
@@ -104,13 +107,13 @@ pub fn read_corrections(
         if Some(now_l) == prev {
             // left as it was: confirms the command line's round; a guess the app exported stays a guess
             if in_scope && !last_user.contains_key(rel) && rid.is_some() {
-                store::log_label(&con, tid, now_l, "user", rid)?;
+                store::log_label_from(&con, tid, now_l, "user", rid, Some("xml"))?;
                 touched.extend(rid);
                 n.confirmed += 1;
             }
             continue;
         }
-        if since.get(rel).is_some_and(|t| *t > exported) {
+        if hold.contains(rel) || since.get(rel).is_some_and(|t| *t > exported) {
             n.newer += 1;
             continue;
         }
@@ -122,7 +125,7 @@ pub fn read_corrections(
         let contradicts = prev.is_some_and(|p| {
             (p.colour.is_some() && p.colour != now_l.colour) || (p.stars.is_some() && p.stars != now_l.stars)
         });
-        store::log_label(&con, tid, now_l, "user", rid)?;
+        store::log_label_from(&con, tid, now_l, "user", rid, Some("xml"))?;
         touched.extend(rid);
         if prev.is_none() {
             n.added += 1;
