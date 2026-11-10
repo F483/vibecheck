@@ -76,7 +76,8 @@ func _init() -> void:
 	for i in UI.COLOURS.size():
 		_ui_of[PALETTE.find(UI.COLOURS[i].name) + 1] = i
 	var f := ConfigFile.new()
-	if f.load(CFG) == OK:
+	# the file can hold only the rekordbox section, before any setting is saved
+	if f.load(CFG) == OK and f.has_section("app"):
 		for k: String in f.get_section_keys("app"):
 			settings[k] = f.get_value("app", k)
 	elif DirAccess.dir_exists_absolute(_abs("~/Music/Collection/.vibecheck")):
