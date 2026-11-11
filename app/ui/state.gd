@@ -27,12 +27,10 @@ var by_path := {}
 var queue: Array[Dictionary] = []
 var reviewed: Array[Dictionary] = []
 var labels := 0
-var measured := 0
 var pool := 0
 var loaded := false
 var embedded := 0
 var exported_at := 0
-var queued_by_sync := 0
 var guessing := 0  # tracks the model is listening to and guessing now: their rings spin
 var last_export := {}
 var last_sync := {}
@@ -45,7 +43,6 @@ var settings := {
 	"cues_loops": {}, "cues_memory": true,
 }
 
-var _acc := Vector2(0, 100)
 var _main := Lane.new()
 var _waves := Lane.new()
 var _stats := Lane.new()
@@ -128,11 +125,6 @@ func calibrating() -> bool:
 	return labels < settings.threshold
 
 
-## How often the model in use picks your colour, as a 95% range, in percent.
-func accuracy() -> Vector2i:
-	return Vector2i(roundi(_acc.x), roundi(_acc.y))
-
-
 func export_age_days() -> int:
 	return int((Time.get_unix_time_from_system() - exported_at) / 86400.0) if exported_at > 0 else -1
 
@@ -183,7 +175,7 @@ func load_all() -> void:
 				var p := _pending_queue
 				_pending_queue = Callable()
 				p.call())
-		refresh_queue(false, true), "Reading your collection…")
+		refresh_queue(true), "Reading your collection…")
 	_call(_main, "settings", {}, func(c: Variant) -> void:
 		if c == null:
 			return
@@ -242,7 +234,7 @@ func _row(r: Dictionary) -> Dictionary:
 ## Ask the core what to ask next. The track in the player stays first; what you skipped goes last.
 ## `start`: the first one, asked of the last trained model so the app is ready at once; when
 ## that model is behind your labels it retrains behind the queue, then asks again.
-func refresh_queue(count_new := false, start := false) -> void:
+func refresh_queue(start := false) -> void:
 	var head: Dictionary = queue[0] if not queue.is_empty() else {}
 	var skip: Array = _answered.keys()
 	for t in _skipped:
@@ -250,24 +242,19 @@ func refresh_queue(count_new := false, start := false) -> void:
 	if not head.is_empty():
 		skip.append(head.path)
 	skip.append_array(_front.keys())
-	var before := {}
-	for t in queue:
-		before[t.path] = true
 	_call(_model if start else _main, "queue", {"threshold": settings.threshold, "n": 200, "skip": skip, "stale_ok": start},
 		func(q: Variant) -> void:
 			if q == null:
 				return
 			if not _library_ready:
-				_pending_queue = _apply_queue.bind(q, before, count_new)
+				_pending_queue = _apply_queue.bind(q)
 			else:
-				_apply_queue(q, before, count_new), "Choosing what to ask…" if not loaded else "")
+				_apply_queue(q), "Choosing what to ask…" if not loaded else "")
 
 
-func _apply_queue(q: Dictionary, before: Dictionary, count_new: bool) -> void:
+func _apply_queue(q: Dictionary) -> void:
 	labels = int(q.labels)
-	measured = int(q.measured)
 	pool = int(q.pool)
-	_acc = Vector2(q.accuracy[0], q.accuracy[1]) * 100.0
 	var now_head: Dictionary = queue[0] if not queue.is_empty() else {}
 	var out: Array[Dictionary] = []
 	if not now_head.is_empty():
@@ -275,7 +262,6 @@ func _apply_queue(q: Dictionary, before: Dictionary, count_new: bool) -> void:
 	for t in queue:
 		if _front.has(t.path) and t != now_head and not _answered.has(t.path):
 			out.append(t)
-	var fresh := 0
 	for it: Dictionary in q.items:
 		var t: Dictionary = by_path.get(it.path, {})
 		if t.is_empty() or t == now_head or _answered.has(t.path) or _front.has(t.path):
@@ -284,14 +270,10 @@ func _apply_queue(q: Dictionary, before: Dictionary, count_new: bool) -> void:
 		t.guess = _ui_of.get(int(it.guess), -1)
 		t.guess_stars = int(it.stars)
 		out.append(t)
-		if it.tag in ["conflict", "old label"] and not before.has(t.path):
-			fresh += 1
 	for t in _skipped:
 		if t != now_head and not _answered.has(t.path):
 			out.append(t)
 	queue = out
-	if count_new:
-		queued_by_sync = fresh
 	var first := not loaded
 	loaded = true
 	if first:
@@ -490,7 +472,7 @@ func sync(done: Callable) -> void:
 	_call(_main, "sync", {}, func(s: Variant) -> void:
 		if s != null:
 			last_sync = s
-			_load_library(refresh_queue.bind(true))
+			_load_library(refresh_queue)
 		done.call(s), "Reading rekordbox.xml…")
 
 
@@ -670,21 +652,22 @@ func _rest() -> void:
 		_call(_bg, "rest", {}, func(_r: Variant) -> void: pass)
 
 
-## Background listening as one line: what, the fraction heard, then "8% · 1,236 / 15,002 ·
+## Background analysis as one line ("analysing", shown to the user; "listening" in the code):
+## what, the fraction analysed, then "8% · 1,236 / 15,002 ·
 ## ~19 h left". Shown in the model strip, and in the console by `_say_listening`.
 func listening_status() -> Array:
 	var total := library.size()
 	var heard := mini(embedded, total)
 	if heard >= total:
-		return ["all %s heard" % UI.thousands(total), 1.0, ""]
+		return ["all %s analysed" % UI.thousands(total), 1.0, ""]
 	var f := float(heard) / maxi(total, 1)
 	var rest := "%d%% · %s / %s" % [int(f * 100), UI.thousands(heard), UI.thousands(total)]
 	if not settings.listen:
-		return ["listening off", f, rest]
+		return ["analysis off", f, rest]
 	if _per_track > 0:
 		var s := (total - heard) * _per_track
 		rest += " · ~%s left" % ("%d h" % roundi(s / 3600) if s >= 7200 else "%d min" % maxi(roundi(s / 60), 1))
-	return ["listening", f, rest]
+	return ["analysing", f, rest]
 
 
 ## The listening line in the console, at most once a minute unless `now`.

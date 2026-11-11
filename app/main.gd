@@ -12,6 +12,8 @@ const Stats := preload("res://ui/stats.gd")
 const History := preload("res://ui/history.gd")
 const Settings := preload("res://ui/settings.gd")
 const Player := preload("res://ui/player.gd")
+const Status := preload("res://ui/status.gd")
+const Filters := preload("res://ui/filters.gd")
 
 const SCREENS := ["vibe", "library", "stats", "history", "settings"]
 
@@ -20,6 +22,7 @@ var screens := {}
 var current := ""
 var dialog: Control = null
 var _rail_items := {}
+var _status: Control
 
 
 func _ready() -> void:
@@ -36,9 +39,15 @@ func _ready() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(root)
 	root.add_child(_rail())
+	# the status row on top of every screen, then the screen
+	var right := UI.col(0)
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	root.add_child(right)
+	_status = Status.new(state, self)
+	right.add_child(_status)
 	var stack := Control.new()
-	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	root.add_child(stack)
+	stack.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	right.add_child(stack)
 	# one player: it moves to the vibe or library screen, whichever is shown
 	var player := Player.new(UI.DARK, state)
 	screens = {"vibe": Vibe.new(state, self, player), "library": Library.new(state, self, player), "stats": Stats.new(state),
@@ -297,6 +306,7 @@ func _fit_min() -> void:
 	for k: String in SCREENS:
 		need = need.max((screens[k] as Control).get_combined_minimum_size())
 	need.x += 64  # the rail
+	need.y += _status.get_combined_minimum_size().y
 	var w := get_window()
 	var px := Vector2i((need * w.content_scale_factor).ceil())
 	if px != w.min_size:
@@ -314,7 +324,7 @@ func _hidpi() -> void:
 	w.move_to_center()
 
 
-## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why] [--wait=s] [--after=s]: once loaded, wait,
+## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why|filter:colours|energy|…] [--wait=s] [--after=s]: once loaded, wait,
 ## show the screen, wait again, render one frame to a file and quit.
 func _shot() -> void:
 	var args := {}
@@ -340,6 +350,9 @@ func _shot() -> void:
 		"batch":
 			(screens.history as History).open_newest()
 			await get_tree().create_timer(1.0).timeout
+		var d when d.begins_with("filter:"):
+			(screens[args.get("screen", "library")].filters as Filters).open_filter(d.trim_prefix("filter:"))
+			await get_tree().create_timer(0.5).timeout
 	for i in 8:
 		await get_tree().process_frame
 	await RenderingServer.frame_post_draw

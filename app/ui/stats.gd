@@ -22,7 +22,6 @@ const SELF := Color("#a0a1a8")
 var state
 var _body: VBoxContainer
 var _measured_at := -1
-var _count: Label
 
 
 func _init(s) -> void:
@@ -38,11 +37,6 @@ func _init(s) -> void:
 	var m := UI.margin(_body, 16, 12, 16, 16)
 	m.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	sc.add_child(m)
-	var head := UI.section(UI.PANEL, 16, 0)
-	head.custom_minimum_size.y = 40
-	_count = UI.text("", 11, UI.MUTED, "mono")
-	head.add_child(UI.row(8, [UI.text("Stats", 13, UI.TEXT, "semi"), UI.spacer(), _count]))
-	add_child(head)
 	add_child(sc)
 	# measuring trains the model several times: only when you look, and labels changed
 	visibility_changed.connect(_measure)
@@ -68,7 +62,6 @@ func refresh() -> void:
 		_body.add_child(UI.text("Measuring…", 12, UI.MUTED))
 		return
 	var now: Dictionary = st.now
-	_count.text = "%s labels" % UI.thousands(int(st.labels))
 	# the last curve measured stays up, dimmed, while the one for your labels now is measured
 	_body.add_child(UI.row(8, [UI.caps("Right vs labels trained on"),
 		UI.text("" if st.fresh else "measuring…", 11, UI.MUTED)]))
@@ -82,12 +75,12 @@ func refresh() -> void:
 			if p.get(l[0]) != null:
 				pts.append(Vector2(p.n, float(p[l[0]]) * 100))
 		all.append([l[0], l[1], l[2], 2.5, pts])
-	# past self: how often a colour you gave again stayed, counted up to each point; dashed,
+	# your consistency: how often a colour you gave again stayed, counted up to each point; dashed,
 	# about as high as the colour line can be expected to get
 	var past: Array[Vector2] = []
 	for p: Array in st.get("past", []):
 		past.append(Vector2(p[0], float(p[1]) * 100))
-	all.append(["self", "past self", SELF, 1.5, past, true])
+	all.append(["self", "your consistency", SELF, 1.5, past, true])
 	for i in UI.COLOURS.size():
 		var id: int = _ids[i]
 		var pts: Array[Vector2] = []

@@ -1,9 +1,11 @@
 extends VBoxContainer
-## The vibe screen, top to bottom as the flow: queue → model → player → reviewed → table.
+## The vibe screen: player and its controls on top, as in the library; then queue →
+## the export list: search and filters (the library's, Export at the end), then its table.
 
 const UI := preload("res://ui/ui.gd")
 const Player := preload("res://ui/player.gd")
 const Table := preload("res://ui/table.gd")
+const Filters := preload("res://ui/filters.gd")
 
 var state
 var app
@@ -11,12 +13,11 @@ var player: Player
 var table: Table
 var relisten := false
 var _queue: VBoxContainer
-var _model: HBoxContainer
-var _reviewed: HBoxContainer
+## Search and filters over the export list, the library's row, with Export at its end.
+var filters: Filters
 var _shown := -1
 var _status := ""
-## The queue, the model line and the player: the top half, lent to the library as it is, so
-## changing screen moves nothing on it.
+## The player: lent to the library as it is, so changing screen moves nothing on it.
 var top: VBoxContainer
 var _controls: CenterContainer
 
@@ -27,14 +28,6 @@ func _init(s, a, p) -> void:
 	add_theme_constant_override("separation", 0)
 	top = UI.col(0)
 	add_child(top)
-	_queue = UI.col(8)
-	var q := UI.section(UI.DARK)
-	q.add_child(_queue)
-	top.add_child(q)
-	_model = UI.row(12)
-	var m := UI.section(UI.PANEL, 16, 8)
-	m.add_child(_model)
-	top.add_child(m)
 	# shared with the library: Confirm and Skip belong to the screen in view
 	player = p
 	player.next.connect(func(c: int, r: int, e: int, k: String) -> void:
@@ -44,14 +37,22 @@ func _init(s, a, p) -> void:
 		if is_visible_in_tree():
 			_on_skip())
 	top.add_child(player)
-	_reviewed = UI.row(10)
-	var r := UI.section(UI.PANEL, 16, 8)
-	r.add_child(_reviewed)
-	# the player's main controls ride on this strip, centred over it, with Export at its right end
+	# the player's main controls on their own strip under it, as in the library
 	_controls = CenterContainer.new()
 	_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_controls.add_child(player.take_controls())
-	r.add_child(_controls)
+	var cs := UI.section(UI.PANEL, 16, 8)
+	cs.add_child(_controls)
+	add_child(cs)
+	# the queue only here, under the controls, so the player sits at the top on both screens
+	_queue = UI.col(8)
+	var q := UI.section(UI.DARK)
+	q.add_child(_queue)
+	add_child(q)
+	filters = Filters.new([UI.button("Export →", "X", true, Callable(app, "export_batch"), UI.OUTPUT)])
+	filters.changed.connect(_fill)
+	var r := UI.section(UI.PANEL, 16, 8)
+	r.add_child(filters)
 	add_child(r)
 	table = Table.new(["now", "num", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key"])
 	table.activated.connect(_on_row)
@@ -78,7 +79,7 @@ func dock() -> void:
 	refresh()
 
 
-## The top half into `parent`, first, and the player's controls into `controls`.
+## The player into `parent`, first, and its controls into `controls`.
 func lend(parent: Control, controls: Control, w: String) -> void:
 	if top.get_parent() != parent:
 		top.reparent(parent, false)
@@ -95,16 +96,14 @@ func refresh() -> void:
 	elif here and relisten:
 		player.fill_guess(player.track)
 	_build_queue()
-	_build_model()
-	for c in _reviewed.get_children():
-		c.queue_free()
-	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Export list"), UI.text(str(state.reviewed.size()), 12, UI.TEXT, "mono")]
-	for c: Control in parts + [UI.spacer(), UI.button("Export →", "X", true, Callable(app, "export_batch"), UI.OUTPUT)]:
-		_reviewed.add_child(c)
-	var rows: Array[Dictionary] = []
-	rows.append_array(state.reviewed)
-	# the # column: the order tracks joined the list, as in a rekordbox playlist
-	var by_join := rows.duplicate()
+	_fill()
+
+
+## The export list into the table, through the filters.
+func _fill() -> void:
+	# the # column: the order tracks joined the list, as in a rekordbox playlist; over the
+	# whole list, so a filter keeps each track's number
+	var by_join: Array = state.reviewed.duplicate()
 	# ties broken by title, as the table breaks them, so sorting by # gives 1, 2, 3…
 	by_join.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
 		var ja := int(a.get("joined", 0))
@@ -113,7 +112,7 @@ func refresh() -> void:
 	for i in by_join.size():
 		by_join[i].num = i + 1
 	table.spinning = state.guessing > 0
-	table.set_rows(rows)
+	table.set_rows(filters.apply(state.reviewed))
 
 
 func _build_queue() -> void:
@@ -122,8 +121,7 @@ func _build_queue() -> void:
 	# the queue holds the next 200; the pool is everything that could be asked
 	_queue.add_child(UI.row(8, [UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
 		UI.text("of %s" % UI.thousands(maxi(state.pool, state.queue.size())), 12, UI.MUTED, "mono"),
-		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.spacer(), UI.text(_status, 11, UI.LIME, "mono"),
-		UI.margin(_widget(), 16, 0, 0, 0)]))
+		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.spacer(), UI.text(_status, 11, UI.LIME, "mono")]))
 	var cards := UI.row(8)
 	var n := _fit()
 	_shown = n
@@ -171,65 +169,6 @@ func _fit() -> int:
 	var w := get_viewport_rect().size.x - 64 if is_inside_tree() else 1216.0
 	var room := w - 32  # margins
 	return mini(maxi(int((room + 8) / 192), 1), state.queue.size())
-
-
-func _ago(days: int) -> String:
-	match days:
-		-1:
-			return "not yet"
-		0:
-			return "today"
-		1:
-			return "yesterday"
-	return "%d d ago" % days
-
-
-## Where the queue's tracks come from: rekordbox, and how fresh its export is. One line,
-## right of the queue's title, so the cards get the whole row.
-func _widget() -> Control:
-	var old: bool = state.export_old()
-	var sync := UI.panel(UI.LINE, 4, 6, 1)
-	sync.add_child(UI.row(4, [UI.text("Sync", 11, UI.TEXT, "bold"), UI.kbd("⌥S")]))
-	UI.clickable(sync, Callable(app, "sync_now"))
-	var r := UI.row(6, [UI.caps("rekordbox"), UI.rect(UI.LIME, 6, 6), UI.text("watching " + str(state.settings.xml).get_file(), 11, UI.MUTED),
-		UI.text("·", 11, UI.MUTED), UI.text("collection exported " + _ago(state.export_age_days()), 11, UI.AMBER if old else UI.TEXT)])
-	if old:
-		r.add_child(UI.text("⚠ old: export it again in rekordbox before Export", 11, UI.AMBER))
-	r.add_child(UI.text("·", 11, UI.MUTED))
-	r.add_child(UI.text("+%d queued" % state.queued_by_sync, 11, UI.LIME, "mono"))
-	r.add_child(UI.margin(sync, 6, 0, 0, 0))
-	return r
-
-
-func _build_model() -> void:
-	for c in _model.get_children():
-		c.queue_free()
-	var acc: Vector2i = state.accuracy()
-	var th: int = state.settings.threshold
-	var parts: Array = [UI.text("↓", 13, UI.MUTED), UI.caps("Model")]
-	if not state.loaded:
-		parts += [UI.text("reading your labels…", 12, UI.MUTED), UI.spacer()]
-	else:
-		# what it is doing in the background, as the console has it
-		var s: Array = state.listening_status()
-		parts += [UI.text(s[0], 12, UI.TEXT)]
-		if s[1] < 1.0:
-			parts += [UI.Bar.new(160, s[1], UI.LIME)]
-		parts += [UI.text(s[2], 12, UI.MUTED, "mono"), UI.spacer()]
-		if state.calibrating():
-			parts += [UI.text("calibrating", 12, UI.MUTED), UI.text("%d / %d labels" % [state.labels, th], 12, UI.TEXT, "mono")]
-		else:
-			parts += [UI.text("%s labels" % UI.thousands(state.labels), 12, UI.TEXT, "mono")]
-		parts += [UI.text("·", 12, UI.MUTED)]
-	parts += [UI.text("model guesses right", 12, UI.MUTED)]
-	if state.measured > 0:
-		parts += [UI.text("%d–%d%%" % [acc.x, acc.y], 14, UI.LIME, "mono"),
-			UI.text("on %d held-back labels" % state.measured, 11, UI.MUTED)]
-	else:
-		parts += [UI.text("not measured yet", 12, UI.MUTED)]
-	parts += [UI.text("↓", 13, UI.MUTED)]
-	for c: Control in parts:
-		_model.add_child(c)
 
 
 ## Load the front of the queue into the player, blind while calibrating.
@@ -323,10 +262,13 @@ func open_row(t: Dictionary) -> void:
 
 ## Whether a point in the window is on the reviewed strip or its table, for a drop.
 func is_table(at: Vector2) -> bool:
-	return at.y >= (_reviewed.get_parent() as Control).get_global_rect().position.y
+	return at.y >= (filters.get_parent() as Control).get_global_rect().position.y
 
 
 func handle_key(k: InputEventKey) -> bool:
+	if k.keycode == KEY_SLASH:
+		filters.search.grab_focus()
+		return true
 	if k.alt_pressed:
 		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm", KEY_T: "ring"}
 		if sorts.has(k.keycode):

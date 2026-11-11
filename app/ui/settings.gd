@@ -62,13 +62,13 @@ func refresh() -> void:
 	_add(tiles)
 	var left: int = total - state.embedded
 	var now: String = ("now: " + state.listening) if state.listening != "" else ("done" if left == 0 else "paused")
-	_add(UI.row(8, [UI.text("Listened to", 12), UI.spacer(),
+	_add(UI.row(8, [UI.text("Analysed", 12), UI.spacer(),
 		UI.text("%s / %s · %s" % [_n(state.embedded), _n(total), now], 12, UI.MUTED, "mono")]))
 	var bar := UI.Bar.new(0, float(state.embedded) / maxf(total, 1), UI.LIME)
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_add(bar)
-	_toggle("Listen to the rest in the background (about 5 s a track)", "listen")
-	_add(UI.wrap("Only tracks it has listened to can be asked about and learned from. A track you label is listened to right away."))
+	_toggle("Analyse the rest in the background (about 5 s a track)", "listen")
+	_add(UI.wrap("Only analysed tracks can be asked about and learned from. A track you label is analysed right away."))
 
 	_heading("Calibration")
 	var th := UI.text("%d labels" % st.threshold, 12, UI.TEXT, "mono")

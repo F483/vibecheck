@@ -164,7 +164,7 @@ func take_controls() -> Control:
 
 
 ## Docked in a screen (vibe or library): the main controls go into `controls`. The player
-## itself moves with the queue above it (vibe.lend), and keeps playing as it moves.
+## itself moves to the screen shown (vibe.lend), and keeps playing as it moves.
 func dock(controls: Control, w: String) -> void:
 	if w != where:
 		where = w

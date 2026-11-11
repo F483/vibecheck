@@ -1,22 +1,19 @@
 extends VBoxContainer
-## The whole collection: the vibe screen's top half (queue, model line, player) docked on top,
-## the same one, so changing screen keeps the track playing and moves nothing up there; then
+## The whole collection: the vibe screen's player docked on top, the same one, so changing
+## screen keeps the track playing and moves nothing up there; then
 ## search and filters, and the same flat table. Confirm puts the track into the
 ## export list and opens the row after the selected one, or the first.
 
 const UI := preload("res://ui/ui.gd")
 const Player := preload("res://ui/player.gd")
 const Table := preload("res://ui/table.gd")
-
-const FILTERS := ["All", "Played", "Pending", "Thin trust"]
+const Filters := preload("res://ui/filters.gd")
 
 var state
 var app
 var player: Player
 var table: Table
-var search: LineEdit
-var filter := "All"
-var _chips: HBoxContainer
+var filters: Filters
 var _selection: PanelContainer
 var _sel_count: Label
 var _dirty := true
@@ -27,16 +24,6 @@ func _init(s, a, p) -> void:
 	state = s
 	app = a
 	add_theme_constant_override("separation", 0)
-	search = LineEdit.new()
-	search.placeholder_text = "Search your tracks"
-	search.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	search.add_theme_stylebox_override("normal", StyleBoxEmpty.new())
-	search.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
-	search.add_theme_font_size_override("font_size", 13)
-	search.text_changed.connect(func(_t: String) -> void: _fill())
-	search.gui_input.connect(func(e: InputEvent) -> void:
-		if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
-			search.release_focus())
 	# docked here while this screen is shown: Confirm and Skip belong to the screen in view
 	player = p
 	player.next.connect(func(c: int, r: int, e: int, k: String) -> void:
@@ -45,19 +32,17 @@ func _init(s, a, p) -> void:
 	player.skip.connect(func() -> void:
 		if is_visible_in_tree():
 			table.move(1))
-	# the main controls under it, centred on a strip as on the vibe screen's export list strip
+	# the main controls under it, centred on a strip as on the vibe screen
 	_controls = CenterContainer.new()
 	_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var cb := UI.section(UI.PANEL, 16, 8)
 	cb.add_child(_controls)
 	add_child(cb)
-	# search left of the filters: the top of the screen is the vibe screen's
-	_chips = UI.row(6)
-	_chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	search.size_flags_horizontal = Control.SIZE_FILL
-	search.custom_minimum_size.x = 220
+	# search and filters, the same row as over vibe's export list
+	filters = Filters.new()
+	filters.changed.connect(_fill)
 	var cs := UI.section(UI.PANEL, 16, 8)
-	cs.add_child(UI.row(8, [UI.kbd("/"), search, UI.rect(Color("#4a4b50"), 1, 20), _chips]))
+	cs.add_child(filters)
 	add_child(cs)
 	_selection = UI.section(Color("#2f3036"), 16, 6)
 	_sel_count = UI.text("", 12, UI.TEXT, "mono")
@@ -70,7 +55,6 @@ func _init(s, a, p) -> void:
 	add_child(_selection)
 	table = Table.new(["now", "check", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key", "plays", "labelled", "added"])
 	table.activated.connect(func(t: Dictionary) -> void: player.show_track(t, "library"))
-	search.text_submitted.connect(func(_t: String) -> void: search.release_focus())
 	table.checked_changed.connect(func(n: int) -> void:
 		_selection.visible = n > 0
 		_sel_count.text = "%d selected" % n)
@@ -89,47 +73,8 @@ func _init(s, a, p) -> void:
 
 func _fill() -> void:
 	_dirty = false
-	search.placeholder_text = "Search %s tracks" % UI.thousands(state.library.size())
-	for c in _chips.get_children():
-		c.queue_free()
-	var pending := 0
-	for t in state.library:
-		if t.trust <= 1:
-			pending += 1
-	for f: String in FILTERS:
-		var label := "Pending %d" % pending if f == "Pending" else f
-		_chips.add_child(UI.chip(label, f == filter, func() -> void:
-			filter = f
-			_fill()))
-	_chips.add_child(UI.rect(Color("#4a4b50"), 1, 20))
-	var dots := UI.row(2)
-	for cd: Dictionary in UI.COLOURS:
-		dots.add_child(UI.rect(cd.c, 6, 10))
-	var allc := UI.panel(UI.LINE, 3, 9, 4)
-	allc.add_child(UI.row(5, [dots, UI.text("all colours", 11)]))
-	_chips.add_child(allc)
-	for f in ["Energy 1–10", "Rating any", "BPM any", "Export list any"]:
-		_chips.add_child(UI.chip(f, false))
-	var q := search.text.to_lower()
-	var out: Array[Dictionary] = []
-	for t: Dictionary in state.library:
-		if q != "" and not (t.title.to_lower().contains(q) or t.artist.to_lower().contains(q)):
-			continue
-		match filter:
-			"Played":
-				if t.plays == 0:
-					continue
-			"Pending":
-				if t.trust > 1:
-					continue
-			"Thin trust":
-				if t.trust > 2:
-					continue
-		out.append(t)
-	_chips.add_child(UI.spacer())
-	_chips.add_child(UI.text("%d tracks" % out.size(), 11, UI.MUTED, "mono"))
 	table.spinning = state.guessing > 0
-	table.set_rows(out)
+	table.set_rows(filters.apply(state.library))
 
 
 func dock() -> void:
@@ -168,7 +113,7 @@ func _queue_checked() -> void:
 
 func handle_key(k: InputEventKey) -> bool:
 	if k.keycode == KEY_SLASH:
-		search.grab_focus()
+		filters.search.grab_focus()
 		return true
 	if k.alt_pressed:
 		if k.keycode == KEY_Q:

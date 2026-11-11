@@ -75,6 +75,11 @@ How the app maps onto the core:
   18 px line drawings: grey normally, lime when active.
 - No "v" logo on top of the rail: it did nothing (the user). The window
   title names the app.
+- **Status row** on top of every screen, right of the rail (the user): the
+  model strip at the left, the rekordbox widget at the right, one line
+  (32 px). It gathered what sat on vibe, then for a while on Stats as two
+  strips under a "Stats" title, which went (the user). Without a
+  rekordbox.xml it reads "rekordbox not set".
 - **Settings is the setup.** On first run the user fills in Music and
   `rekordbox.xml`; vibe, library and stats stay greyed out until both are
   set. It is the same page afterwards. Keep "Start ENTER" for now.
@@ -101,7 +106,8 @@ How the app maps onto the core:
   checkboxes (no note on how noisy they are: the user). They start **unticked** (the user: there to look at, too noisy to
   show by default). Chart 320 px tall: 480 px was more than it needed (the
   user).
-- **Past self** on the chart (the user): a dashed grey line, ticked by default,
+- **Your consistency** on the chart (the user; first called "past self",
+  renamed as clearer): a dashed grey line, ticked by default,
   for how often a track you labelled again kept its colour. Like the model
   lines it is a running total (the user): each point counts every relabel made
   while you had up to that many labels outside the holdout, from 20 relabels
@@ -109,7 +115,9 @@ How the app maps onto the core:
   can't agree with you more than you agree with yourself. Open: every Confirm
   counts as a relabel, also with the colour in view, which inflates it.
 - No tiles above the chart (colour right, stars right, past self, labels):
-  the chart has them all (the user). The label count sits in the header.
+  the chart has them all (the user). No title row: the status row is on top
+  (the user). No label count or guesses-right range there either: the chart
+  has both (the user).
 - The chart comes first; the misses sit beside Trust and Colours (the
   user). "Mixed up most" with "Blue taken for Green 6%" left unclear who
   took what, and 6% was of all held-back labels. Now titled "Misses · model
@@ -135,9 +143,11 @@ becomes a rekordbox playlist), confirmed, guessed or dropped in as it is. It
 was "Reviewed" until dropped tracks and guesses made that wrong; chosen over
 Batch, Next export, Playlist and Crate.
 
-The screen reads top to bottom as the flow:
-queue → model → player → export list. Lighter strips (`#2a2b2f`) separate
-the stages, which sit on the dark background (`#222327`), and ↓ arrows sit at
+The screen reads top to bottom: player → main controls → queue → export
+list. It was queue → model → player, as the flow; the queue moved under the
+controls so the player sits at the top, in the same place, on vibe and in the
+library, and shows on vibe only; the model strip moved to the top of Stats
+(the user). Lighter strips (`#2a2b2f`) separate the stages, which sit on the dark background (`#222327`), and ↓ arrows sit at
 both ends of each strip. This was the other way round until the user asked to
 invert it app-wide: the trust rings read much better on the dark background
 (as in their popup), and so does everything else. The same holds on every
@@ -155,27 +165,31 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    player's tag** for a popup like the trust one: every tag and why it puts a
    track in front of you, this one lit, and what to do with it ("Pick your
    colour again to keep it, or another to correct it") (the user).
-2. **rekordbox widget**, one line at the right of the queue's title line
-   ("Queue 53 ordered by …"), because it is where the queue's tracks come
-   from. It shows "rekordbox · watching rekordbox.xml · collection exported X
-   ago · +N queued" and a "Sync ⌥S" button. It was a two-line box at the end
-   of the card row with a ← into the queue; moved up so the cards get the
-   whole row (the user). When the export is older than the threshold
+2. **rekordbox widget**, now the right half of the **status row** on every
+   screen (the user). It was one line at the right of the vibe queue's
+   title line, because it is where the queue's tracks come from, and before
+   that a two-line box at the end of the card row with a ← into the queue.
+   It shows "rekordbox · watching rekordbox.xml · collection exported X ago"
+   and a "Sync ⌥S" button. "+N queued" (conflicts and old labels the last
+   sync put in the queue) was dropped: History shows what each sync brought
+   (the user). When the export is older than the threshold
    (default 7 days), the date turns amber and "⚠ old: export it again in
    rekordbox before Export" follows it.
    There is only one timestamp, because the app syncs as soon as rekordbox
    exports.
-3. **Model strip** (light), between the queue and the player, because the tracks
-   pass through the model. It shows:
+3. **Model strip**, now the left half of the **status row** on every screen
+   (the user); it was between the queue and the player, then under the
+   queue, then on Stats. No ↓ arrows any more. It shows only:
    - at the left, what it does in the background, as one line the console
-     prints too (at most once a minute): "listening ▬▬▬ 62% · 1,940 / 3,120 ·
-     ~2 h left", "listening off …" or "all 3,120 heard". Only tracks it has
-     heard can be asked about, so how far along it is and how long it will take
+     prints too (at most once a minute): "analysing ▬▬▬ 62% · 1,940 / 3,120 ·
+     ~2 h left", "analysis off …" or "all 3,120 analysed" (was listening /
+     heard; "analyse" is rekordbox's word for it, the user chose it). Only
+     analysed tracks can be asked about, so how far along it is and how long it will take
      is what is worth knowing (the user). The "early calibration" / "mixing
-     in" tags and their explanations were dropped: not useful;
-   - at the right, the labels ("calibrating 47 / 100 labels" below the
-     threshold, else "1,119 labels") and "model guesses right 40–70%", always
-     shown as a range, so the user sees everything from the start.
+     in" tags and their explanations were dropped: not useful.
+   At its right were the labels ("calibrating 47 / 100 labels", "1,119
+   labels") and "model guesses right 40–70%"; dropped on Stats, as the chart
+   below shows both (the user).
 4. **Player** (dark). Call it "player", never "card". It holds:
    - the track's **cover in front of the waveform**, as tall as the peaks (a
      gradient in the track's colours when the file has none);
@@ -231,17 +245,24 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      long one never pushes the player past the window.
    - In the library the hint "Confirm adds it to the next Export" sits on the
      title line, before the time, because the upper row is full.
-   - **One player for vibe and library** (the user): it moves, with the queue
-     above it, to the screen shown, so changing screen keeps the track and
+   - **One player for vibe and library** (the user): it moves, with its
+     controls strip under it, to the screen shown, so changing screen keeps the track and
      keeps it playing. Confirm
      and Skip belong to the screen in view, whatever the track: in the
      library, Confirm puts it in the export list and opens the row after the
      selected one (the first when none is), Skip opens that row; in vibe,
      Confirm or Skip on a library track goes on with the queue. In the
      library Skip never says Requeue.
-5. **Export list strip** (light). It shows "↓ Export list 47" and an **"Export → X"**
-   button. The arrow is on the button and points right, because the tracks go
-   out of the app. Nothing else is on the strip.
+   - **Main controls strip** (light), right under the player, as in the
+     library. They rode centred on the export list strip until the queue
+     moved below them.
+5. **Export list strip** (light): the **library's search and filter row**
+   (same chips, same popups, `filters.gd`), its count the export list's
+   tracks shown ("47 tracks"), then an **"Export → X"** button at the right
+   end (the user). It was "↓ Export list 47" and the button. The filters
+   only narrow the table: Export still writes the whole list. "/" focuses
+   the search here too. The arrow is on the button and points right,
+   because the tracks go out of the app.
 6. **Export list** (dark). Its first column is **#**, the order tracks joined
    the list (dropped, confirmed or guessed), like a rekordbox playlist's
    number: sort by it to get each drop back together. Tracks dropped in are
@@ -370,8 +391,12 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 ## History
 
 - A rail page of its own (the user's choice over a tab on stats) so it is
-  clear **what came in and what went out**: syncs on the left (**In · from
-  rekordbox**), exports on the right (**Out · to rekordbox**), newest first.
+  clear **what came in and what went out**: syncs on the left (**In from
+  rekordbox**), exports on the right (**Out to rekordbox**), newest first.
+- No "History" title row (the status row is on top): each column's title is
+  the title, larger (15 px semibold, was small caps), with its count right of
+  it, "In from rekordbox  7 syncs", "Out to rekordbox  2 exports": no · dots,
+  they looked odd (the user).
 - An **In** card: when it ran and when rekordbox wrote the xml; corrected
   (ring 3), played (ring 4), added; then confirmed and "left alone, not
   exported yet" in grey. Syncs that changed nothing fold into one grey line, "3
@@ -393,12 +418,27 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 ## Collection
 
-- The top half is **vibe's own**: queue, model line and player, moved over as
-  they are, with the main controls on a strip under them where vibe has the
-  export list strip. Changing screen moves nothing up there and the track
+- The top is **vibe's own player** and its main controls strip, moved over as
+  they are, in the same place as on vibe. No queue or model line here: they
+  are vibe's only (the user). Changing screen moves nothing up there and the track
   keeps playing (the user: the player jumping was jarring). The search bar
   and its useless Columns button on top were dropped; search sits left of
   the filter chips (/ still focuses it).
+- The search is a **field**: a darker box (`#1c1d20`) with a grey border,
+  lime border and caret while typing. Bare placeholder text on the strip
+  didn't read as somewhere to type (the user). Its placeholder is just
+  "Search tracks": the count already sits at the right end of the row.
+- **Filter chips** open a popup under them, the player's energy and key
+  picker (the user: they were dead). Each is a **multi-select**, as the
+  colours (the user): a click turns a value on or off and the popup stays
+  open; "any" ("all" for colours) clears it and closes. Colours (and "no
+  colour"), energy 1–10, rating none and 1–5 stars, BPM in tens (70 holds
+  all below, 180 all above). The chip says what is picked, runs joined
+  ("Energy 4–6, 9", "BPM 120–139"; one colour by name, "Yellow", more as
+  "3 colours", the user), and is lime while set. Energy and BPM
+  were two-click ranges and rating "at least", which closed on the second
+  click. No export list filter: the vibe screen is the export list (the
+  user).
 - Below it: search and filter chips, then a selection bar ("N selected · Add to
   queue ⌥Q"), then the **same flat table** with extra columns (plays, last
   played, added).
@@ -409,7 +449,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 - Library: the Music path and the `rekordbox.xml` path, with the note that the
   one file is used both ways.
-- Track, labelled and conflict counts, and the progress of listening to a first
+- Track, labelled and conflict counts, and the progress of analysing a first
   sample.
 - The calibration threshold, 100–300.
 - Show the model's guess in the player after calibration (On).

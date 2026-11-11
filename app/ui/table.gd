@@ -339,7 +339,7 @@ func _trust_popup(t: Dictionary, at: Vector2i) -> void:
 	v.add_child(g)
 	var nxt: String = TRUST_NEXT.get(lv, "")
 	if t.get("guessing", false):
-		nxt = "The model is listening to it and guessing its colour and stars."
+		nxt = "The model is analysing it and guessing its colour and stars."
 	v.add_child(UI.margin(UI.text(nxt, 12, UI.TEXT), 0, 4, 0, 0))
 	_trust.add_child(v)
 	add_child(_trust)

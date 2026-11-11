@@ -9,7 +9,8 @@ var state
 var app
 var _in: VBoxContainer
 var _out: VBoxContainer
-var _count: Label
+var _n_in: Label
+var _n_out: Label
 var _newest := {}
 
 
@@ -17,16 +18,13 @@ func _init(s, a) -> void:
 	state = s
 	app = a
 	add_theme_constant_override("separation", 0)
-	var head := UI.section(UI.PANEL, 16, 0)
-	head.custom_minimum_size.y = 40
-	_count = UI.text("", 11, UI.MUTED, "mono")
-	head.add_child(UI.row(8, [UI.text("History", 13, UI.TEXT, "semi"), UI.spacer(), _count]))
-	add_child(head)
 	_in = UI.col(8)
 	_out = UI.col(8)
+	_n_in = UI.text("", 11, UI.MUTED, "mono")
+	_n_out = UI.text("", 11, UI.MUTED, "mono")
 	var cols := UI.row(16, [
-		_side(_in, "In · from rekordbox", "Each sync: what you changed in rekordbox, and what you played."),
-		_side(_out, "Out · to rekordbox", "Each export, and what became of its tracks since.")])
+		_side(_in, _n_in, "In from rekordbox", "Each sync: what you changed in rekordbox, and what you played."),
+		_side(_out, _n_out, "Out to rekordbox", "Each export, and what became of its tracks since.")])
 	var sc := ScrollContainer.new()
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -40,8 +38,10 @@ func _init(s, a) -> void:
 			reload())
 
 
-func _side(list: VBoxContainer, title: String, about: String) -> Control:
-	var c := UI.col(8, [UI.caps(title), UI.wrap(about), list])
+## A column: its title as the screen's title (no title row: the status row is on top), with
+## how many cards it holds right of it.
+func _side(list: VBoxContainer, count: Label, title: String, about: String) -> Control:
+	var c := UI.col(8, [UI.row(10, [UI.text(title, 15, UI.TEXT, "semi"), count]), UI.wrap(about), list])
 	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	c.size_flags_stretch_ratio = 1.0
 	return c
@@ -59,7 +59,8 @@ func _show(h: Array) -> void:
 			c.queue_free()
 	var ins := h.filter(func(b: Dictionary) -> bool: return b.dir == "in")
 	var outs := h.filter(func(b: Dictionary) -> bool: return b.dir == "out")
-	_count.text = "%d sync%s · %d export%s" % [ins.size(), "" if ins.size() == 1 else "s", outs.size(), "" if outs.size() == 1 else "s"]
+	_n_in.text = "%d sync%s" % [ins.size(), "" if ins.size() == 1 else "s"]
+	_n_out.text = "%d export%s" % [outs.size(), "" if outs.size() == 1 else "s"]
 	_newest = h[0] if not h.is_empty() else {}
 	# syncs that changed nothing fold into one line per run of them
 	var quiet: Array = []
