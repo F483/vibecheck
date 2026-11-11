@@ -120,7 +120,13 @@ func refresh() -> void:
 		rows[1 if _id_of(l[0]) >= 0 else 0].add_child(UI.row(2, [cb, UI.rect(l[2], 14, 3)]))
 	_body.add_child(rows[0])
 	_body.add_child(rows[1])
-	_body.add_child(UI.caps("Trust"))
+	# below the chart, two halves: what the library holds on the left, where it misses on the right
+	var left := UI.col(14)
+	var right := UI.col(14)
+	for c: Control in [left, right]:
+		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(UI.row(24, [left, right]))
+	left.add_child(UI.caps("Trust"))
 	var counts := [0, 0, 0, 0]
 	for t: Dictionary in state.library:
 		if t.trust > 0:
@@ -133,14 +139,14 @@ func refresh() -> void:
 		r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		r.size_flags_stretch_ratio = maxf(counts[i], 1)
 		bar.add_child(r)
-	_body.add_child(bar)
-	var legend := UI.row(14)
+	left.add_child(bar)
+	var legend := _flow()
 	for i in [3, 2, 1, 0]:
 		legend.add_child(UI.row(5, [UI.rect(colours[i], 8, 8), UI.text("%s %d" % [names[i], counts[i]], 11, UI.MUTED)]))
 	legend.add_child(UI.text("· no label %d" % (state.library.size() - counts.reduce(func(a: int, b: int) -> int: return a + b)), 11, UI.MUTED))
-	_body.add_child(legend)
+	left.add_child(legend)
 	# the library by colour, guesses included, in the label colours: what a set has to pick from
-	_body.add_child(UI.caps("Colours"))
+	left.add_child(UI.caps("Colours"))
 	var by := []
 	by.resize(UI.COLOURS.size())
 	by.fill(0)
@@ -148,7 +154,7 @@ func refresh() -> void:
 		if int(t.colour) >= 0:
 			by[int(t.colour)] += 1
 	var cbar := UI.row(2)
-	var clegend := UI.row(14)
+	var clegend := _flow()
 	for i in UI.COLOURS.size():
 		var r := UI.rect(UI.COLOURS[i].c, 0, 10)
 		r.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -156,11 +162,11 @@ func refresh() -> void:
 		cbar.add_child(r)
 		clegend.add_child(UI.row(5, [UI.rect(UI.COLOURS[i].c, 8, 8), UI.text("%s %d" % [UI.COLOURS[i].name, by[i]], 11, UI.MUTED)]))
 	clegend.add_child(UI.text("· no colour %d" % (state.library.size() - by.reduce(func(a: int, b: int) -> int: return a + b, 0)), 11, UI.MUTED))
-	_body.add_child(cbar)
-	_body.add_child(clegend)
+	left.add_child(cbar)
+	left.add_child(clegend)
 	# misses: tracks you gave one colour that it guessed as another, worst first, by the
 	# share of that colour's held-back labels; one per row, so the rank reads top down
-	_body.add_child(UI.caps("Misses · you said → it guessed"))
+	right.add_child(UI.caps("Misses · you said → it guessed"))
 	var held := {}
 	for c: Array in now.get("by_colour", []):
 		held[int(c[0])] = int(c[2])
@@ -176,8 +182,16 @@ func refresh() -> void:
 			UI.spacer(), UI.text("%d / %d · %d%%" % [m[2], m[3], roundi(100.0 * m[2] / maxi(m[3], 1))], 11, UI.MUTED, "mono")]))
 		list.add_child(p)
 	if ms.is_empty():
-		_body.add_child(UI.text("nothing measured yet", 12, UI.MUTED))
-	_body.add_child(list)
+		right.add_child(UI.text("nothing measured yet", 12, UI.MUTED))
+	right.add_child(list)
+
+
+## A legend that wraps when its half is narrow.
+func _flow() -> HFlowContainer:
+	var f := HFlowContainer.new()
+	f.add_theme_constant_override("h_separation", 14)
+	f.add_theme_constant_override("v_separation", 4)
+	return f
 
 
 func _id_of(key: String) -> int:
@@ -214,7 +228,7 @@ class LearningCurve extends Control:
 		while t <= top:
 			ticks.append(t)
 			t = t * 5 if str(t)[0] == "1" else t * 2
-		custom_minimum_size = Vector2(0, 480)
+		custom_minimum_size = Vector2(0, 320)
 
 	func _x(v: float) -> float:
 		return LEFT + log(maxf(v, FIRST) / FIRST) / log(top / FIRST) * (size.x - LEFT - 10 - LABEL_W)

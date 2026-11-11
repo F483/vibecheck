@@ -99,7 +99,8 @@ How the app maps onto the core:
   "goal 300" marks went with the old linear axis.
 - A thinner line per colour, in the label colours, with its own row of
   checkboxes (no note on how noisy they are: the user). They start **unticked** (the user: there to look at, too noisy to
-  show by default). Chart twice as tall (480 px) for up to twelve lines.
+  show by default). Chart 320 px tall: 480 px was more than it needed (the
+  user).
 - **Past self** on the chart (the user): a dashed grey line, ticked by default,
   for how often a track you labelled again kept its colour. Like the model
   lines it is a running total (the user): each point counts every relabel made
@@ -109,14 +110,18 @@ How the app maps onto the core:
   counts as a relabel, also with the colour in view, which inflates it.
 - No tiles above the chart (colour right, stars right, past self, labels):
   the chart has them all (the user). The label count sits in the header.
-- The chart comes first; the misses are last on the page, under Colours
-  (the user). "Mixed up most" with "Blue taken for Green 6%" left unclear who
+- The chart comes first; the misses sit beside Trust and Colours (the
+  user). "Mixed up most" with "Blue taken for Green 6%" left unclear who
   took what, and 6% was of all held-back labels. Now titled "Misses · you
   said → it guessed", one per row so the rank reads top down: "■ Blue →
   ■ Green" on the left, "5 / 18 · 28%" on the right (missed as that colour, of
   your held-back labels of the first, and the share). The four worst by that
-  share lead (the user); on few labels a share can be chance.
-- **Colours** at the bottom, under Trust (the user): the same split bar, one
+  share lead (the user); on few labels a share can be chance. The score
+  keeps every mix-up; the model cache key went to m3 so old scores, with
+  three, are refit once.
+- Below the chart the page splits in two halves (the user): Trust and
+  Colours on the left, the misses on the right; legends wrap.
+- **Colours** under Trust (the user): the same split bar, one
   part per colour in the label colours, from all tracks with a colour (guesses
   included), with counts below and "no colour N".
 

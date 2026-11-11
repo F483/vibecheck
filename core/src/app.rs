@@ -425,8 +425,9 @@ fn model_key(root: &Path, cfg: &Config, l: &Labelled) -> Res<(String, String)> {
     // only your labels change it: the model's guesses don't count
     let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels WHERE source = 'user'", [], |r| r.get(0))?;
     let ax = axes(cfg);
+    // m3: the score keeps every mix-up, not the top three
     let kind = format!(
-        "m2|{}|{}|{}|{}|{}",
+        "m3|{}|{}|{}|{}|{}",
         root.display(),
         ax[0].misleading_cost,
         ax[2].misleading_cost,
