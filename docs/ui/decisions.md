@@ -112,10 +112,11 @@ How the app maps onto the core:
   the chart has them all (the user). The label count sits in the header.
 - The chart comes first; the misses sit beside Trust and Colours (the
   user). "Mixed up most" with "Blue taken for Green 6%" left unclear who
-  took what, and 6% was of all held-back labels. Now titled "Misses · you
-  said → it guessed", one per row so the rank reads top down: "■ Blue →
-  ■ Green" on the left, "5 / 18 · 28%" on the right (missed as that colour, of
-  your held-back labels of the first, and the share). The four worst by that
+  took what, and 6% was of all held-back labels. Now titled "Misses · model
+  guessed → you confirmed", the words the player uses (the user), one per row
+  so the rank reads top down: "■ Green → ■ Blue" on the left, "5 / 18 · 28%"
+  on the right (guessed as the first, of your held-back labels of the second,
+  and the share). The four worst by that
   share lead (the user); on few labels a share can be chance. The score
   keeps every mix-up; the model cache key went to m3 so old scores, with
   three, are refit once.

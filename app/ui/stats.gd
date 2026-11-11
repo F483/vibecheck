@@ -166,7 +166,7 @@ func refresh() -> void:
 	left.add_child(clegend)
 	# misses: tracks you gave one colour that it guessed as another, worst first, by the
 	# share of that colour's held-back labels; one per row, so the rank reads top down
-	right.add_child(UI.caps("Misses · you said → it guessed"))
+	right.add_child(UI.caps("Misses · model guessed → you confirmed"))
 	var held := {}
 	for c: Array in now.get("by_colour", []):
 		held[int(c[0])] = int(c[2])
@@ -175,8 +175,9 @@ func refresh() -> void:
 	ms.sort_custom(func(x: Array, y: Array) -> bool: return x[2] * y[3] > y[2] * x[3] or x[2] * y[3] == y[2] * x[3] and x[2] > y[2])
 	var list := UI.col(6)
 	for m: Array in ms.slice(0, 4):
-		var a: Dictionary = UI.COLOURS[_ui(m[0])]
-		var b: Dictionary = UI.COLOURS[_ui(m[1])]
+		# the guess first, then your colour, as in the player
+		var a: Dictionary = UI.COLOURS[_ui(m[1])]
+		var b: Dictionary = UI.COLOURS[_ui(m[0])]
 		var p := UI.panel(UI.PANEL, 4, 10, 6)
 		p.add_child(UI.row(6, [UI.rect(a.c, 8, 16), UI.text(a.name, 12), UI.text("→", 12, UI.MUTED), UI.rect(b.c, 8, 16), UI.text(b.name, 12),
 			UI.spacer(), UI.text("%d / %d · %d%%" % [m[2], m[3], roundi(100.0 * m[2] / maxi(m[3], 1))], 11, UI.MUTED, "mono")]))
