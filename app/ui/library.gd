@@ -1,6 +1,8 @@
 extends VBoxContainer
-## The whole collection: the same player docked on top, filters, and the same flat table.
-## Confirm puts a track into the reviewed table, so it goes out with the next Export.
+## The whole collection: the vibe screen's top half (queue, model line, player) docked on top,
+## the same one, so changing screen keeps the track playing and moves nothing up there; then
+## search and filters, and the same flat table. Confirm puts the track into the
+## export list and opens the row after the selected one, or the first.
 
 const UI := preload("res://ui/ui.gd")
 const Player := preload("res://ui/player.gd")
@@ -18,9 +20,10 @@ var _chips: HBoxContainer
 var _selection: PanelContainer
 var _sel_count: Label
 var _dirty := true
+var _controls: CenterContainer
 
 
-func _init(s, a) -> void:
+func _init(s, a, p) -> void:
 	state = s
 	app = a
 	add_theme_constant_override("separation", 0)
@@ -34,21 +37,27 @@ func _init(s, a) -> void:
 	search.gui_input.connect(func(e: InputEvent) -> void:
 		if e is InputEventKey and e.pressed and e.keycode == KEY_ESCAPE:
 			search.release_focus())
-	var head := UI.section(UI.PANEL, 16, 4)
-	head.custom_minimum_size.y = 40
-	head.add_child(UI.row(8, [UI.kbd("/"), search, UI.button("Columns", "", false, func() -> void: pass)]))
-	add_child(head)
-	player = Player.new(UI.DARK, state)
-	player.next.connect(_on_next)
-	player.skip.connect(func() -> void: table.move(1))
-	# Confirm, Skip and ↓ all load the next row
-	player.ahead = func() -> Array:
-		var i := table.rows.find(player.track)
-		return [table.rows[i + 1]] if i >= 0 and i + 1 < table.rows.size() else []
-	add_child(player)
+	# docked here while this screen is shown: Confirm and Skip belong to the screen in view
+	player = p
+	player.next.connect(func(c: int, r: int, e: int, k: String) -> void:
+		if is_visible_in_tree():
+			_on_next(c, r, e, k))
+	player.skip.connect(func() -> void:
+		if is_visible_in_tree():
+			table.move(1))
+	# the main controls under it, centred on a strip as on the vibe screen's export list strip
+	_controls = CenterContainer.new()
+	_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var cb := UI.section(UI.PANEL, 16, 8)
+	cb.add_child(_controls)
+	add_child(cb)
+	# search left of the filters: the top of the screen is the vibe screen's
 	_chips = UI.row(6)
+	_chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	search.size_flags_horizontal = Control.SIZE_FILL
+	search.custom_minimum_size.x = 220
 	var cs := UI.section(UI.PANEL, 16, 8)
-	cs.add_child(_chips)
+	cs.add_child(UI.row(8, [UI.kbd("/"), search, UI.rect(Color("#4a4b50"), 1, 20), _chips]))
 	add_child(cs)
 	_selection = UI.section(Color("#2f3036"), 16, 6)
 	_sel_count = UI.text("", 12, UI.TEXT, "mono")
@@ -68,7 +77,6 @@ func _init(s, a) -> void:
 	var tm := UI.margin(table, 16, 6, 16, 10)
 	tm.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(tm)
-	player.clear("Pick a track below, or step through with ↑↓")
 	# 15,000 rows: refilter only when this screen is in view
 	state.changed.connect(func() -> void:
 		_dirty = true
@@ -124,11 +132,31 @@ func _fill() -> void:
 	table.set_rows(out)
 
 
+func dock() -> void:
+	app.screens.vibe.lend(self, _controls, "library")
+	# Confirm, Skip and ↓ all load the row after the selected one
+	player.ahead = func() -> Array:
+		var n := _after()
+		return [] if n.is_empty() else [n]
+
+
+## The row after the selected one as the table is now, the first when none is.
+func _after() -> Dictionary:
+	if table.rows.is_empty():
+		return {}
+	var i := -1
+	for j in table.rows.size():
+		if table.rows[j].path == table.selected:
+			i = j
+	return table.rows[mini(i + 1, table.rows.size() - 1)]
+
+
 func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
-	# the next row as it is now: a new colour re-sorts the saved track elsewhere
-	var i := table.rows.find(player.track)
-	var nxt: Dictionary = table.rows[mini(i + 1, table.rows.size() - 1)]
+	# picked before saving: a new colour re-sorts the saved track elsewhere
+	var nxt := _after()
 	state.decide(player.track, colour, rating, "library", energy, key)
+	if nxt.is_empty():
+		return
 	table.select(nxt.path)
 	player.show_track(nxt, "library")
 

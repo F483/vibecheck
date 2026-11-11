@@ -80,7 +80,9 @@ func _init() -> void:
 	if f.load(CFG) == OK and f.has_section("app"):
 		for k: String in f.get_section_keys("app"):
 			settings[k] = f.get_value("app", k)
-	elif DirAccess.dir_exists_absolute(_abs("~/Music/Collection/.vibecheck")):
+	# not chosen yet: the usual folder, if it has been used. Also with other settings saved,
+	# or saving any of them would lose it
+	if settings.music == "" and DirAccess.dir_exists_absolute(_abs("~/Music/Collection/.vibecheck")):
 		settings.music = "~/Music/Collection"
 	# --music= and --xml= try other files without touching the saved settings
 	for a in OS.get_cmdline_user_args():

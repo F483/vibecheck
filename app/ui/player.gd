@@ -52,6 +52,9 @@ var energy := 0
 var key := ""
 var _energy0 := 0
 var _why: PopupPanel
+## The screen the player is docked in: in the library, Skip goes to the next row whatever
+## the track, so it never says Requeue.
+var where := "vibe"
 var _key0 := ""
 var playing := false
 var pos := 0.0
@@ -158,6 +161,17 @@ func take_controls() -> Control:
 	wrap.queue_free()
 	_trays[1] = t
 	return t
+
+
+## Docked in a screen (vibe or library): the main controls go into `controls`. The player
+## itself moves with the queue above it (vibe.lend), and keeps playing as it moves.
+func dock(controls: Control, w: String) -> void:
+	if w != where:
+		where = w
+		if not track.is_empty():
+			_refresh()
+	if _trays[1].get_parent() != controls:
+		_trays[1].reparent(controls, false)
 
 
 ## A centred group: dark, thin border, rounded.
@@ -557,7 +571,7 @@ func _refresh() -> void:
 	for c in _undo_box.get_children():
 		c.queue_free()
 	_undo_box.add_child(UI.button("Undo", "U", false, undo, UI.MOVE))
-	var sk := UI.button(cfg.skip, "⇧ENTER", false, func() -> void: skip.emit(), UI.MOVE)
+	var sk := UI.button("Skip" if where == "library" else cfg.skip, "⇧ENTER", false, func() -> void: skip.emit(), UI.MOVE)
 	sk.custom_minimum_size.x = 150
 	(sk.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	_actions.add_child(sk)

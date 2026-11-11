@@ -343,9 +343,16 @@ pub struct Score {
     /// colour picked right, as a 95% range
     pub colour: [f64; 2],
     pub colour_n: usize,
+    /// its column (warm, acidic, cool, vibrant) and its row (dark, light) right, on the same
+    /// labels: a wrong colour can still have one of them right. No serde default: a model
+    /// cached without them is retrained once.
+    pub hue: [f64; 2],
+    pub tone: [f64; 2],
+    /// per colour you gave: (palette id, guessed right, held back)
+    pub by_colour: Vec<(i64, usize, usize)>,
     pub stars: [f64; 2],
     pub stars_n: usize,
-    /// (truth, picked, times) for the commonest mix-ups, palette ids
+    /// (truth, picked, times) for every mix-up, commonest first, palette ids
     pub confused: Vec<(i64, i64, usize)>,
 }
 
@@ -367,16 +374,22 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
         }
     }
     let mut m = predict::Model::new(ax.to_vec());
-    let mut s = Score { colour: [0.0, 1.0], stars: [0.0, 1.0], ..Default::default() };
+    let mut s = Score { colour: [0.0, 1.0], hue: [0.0, 1.0], tone: [0.0, 1.0], stars: [0.0, 1.0], ..Default::default() };
     if xt.len() < 2 {
         return (m, s);
     }
     m.train(&xt, &yt);
-    let (mut ck, mut sk) = (0, 0);
+    let (mut ck, mut hk, mut tk, mut sk) = (0, 0, 0, 0);
     let mut mix: HashMap<(i64, i64), usize> = HashMap::new();
+    let mut per: std::collections::BTreeMap<i64, (usize, usize)> = Default::default();
     for (p, y) in m.predict(&xv).iter().zip(&yv) {
         if let (Some(c), Some((g, _))) = (y.colour, best_colour(p)) {
             s.colour_n += 1;
+            let e = per.entry(c.id).or_default();
+            e.0 += (c.id == g) as usize;
+            e.1 += 1;
+            hk += (p.top.get(HUE).map(|h| h.0.as_str()) == Some(c.hue)) as usize;
+            tk += (p.top.get(TONE).map(|t| t.0.as_str()) == Some(c.tone)) as usize;
             if c.id == g {
                 ck += 1;
             } else {
@@ -389,10 +402,12 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
         }
     }
     s.colour = wilson(ck, s.colour_n);
+    s.hue = wilson(hk, s.colour_n);
+    s.tone = wilson(tk, s.colour_n);
+    s.by_colour = per.into_iter().map(|(id, (k, n))| (id, k, n)).collect();
     s.stars = wilson(sk, s.stars_n);
     let mut mx: Vec<_> = mix.into_iter().map(|((a, b), n)| (a, b, n)).collect();
     mx.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
-    mx.truncate(3);
     s.confused = mx;
     (m, s)
 }
@@ -1125,14 +1140,44 @@ pub fn batch_tracks(root: &Path, id: i64) -> Res<Vec<BatchTrack>> {
 pub struct Stats {
     pub labels: usize,
     pub now: Score,
-    /// (labels trained on, colour right) on the same holdout; the last one measured, which
-    /// may be from fewer labels (see `fresh`), or empty before the first
-    pub curve: Vec<(usize, f64)>,
+    /// what the model gets right by labels trained on, on the same holdout; the last one
+    /// measured, which may be from fewer labels (see `fresh`), or empty before the first
+    pub curve: Vec<Point>,
     /// whether `now` and `curve` are measured on your labels as they are
     pub fresh: bool,
-    /// tracks you labelled twice, and how often the colour stayed
+    /// times you labelled a track again, and how often the colour stayed
     pub again: usize,
     pub agreed: usize,
+    /// that share as it was when the model could have trained on `n` of your labels, at
+    /// the curve's points: (n, the middle of its 95% range); from 20 times on
+    pub past: Vec<(usize, f64)>,
+}
+
+/// One point of the learning curve: trained on `n` labels, the share right (the middle of
+/// the 95% range) of colour, hue, tone and stars; stars None with no rated labels held back.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct Point {
+    pub n: usize,
+    pub colour: f64,
+    pub hue: f64,
+    pub tone: f64,
+    pub stars: Option<f64>,
+    /// (palette id, share right) per colour you gave, on its few held-back labels: noisy
+    pub by_colour: Vec<(i64, f64)>,
+}
+
+impl Point {
+    fn of(n: usize, s: &Score) -> Option<Point> {
+        let mid = |r: [f64; 2]| (r[0] + r[1]) / 2.0;
+        (s.colour_n > 0).then(|| Point {
+            n,
+            colour: mid(s.colour),
+            hue: mid(s.hue),
+            tone: mid(s.tone),
+            stars: (s.stars_n > 0).then(|| mid(s.stars)),
+            by_colour: s.by_colour.iter().map(|&(id, k, n)| (id, mid(wilson(k, n)))).collect(),
+        })
+    }
 }
 
 /// What the stats page shows, from what is cached: quick. The learning curve trains a model
@@ -1149,20 +1194,44 @@ pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
             Ok((r.get(0)?, r.get(1)?))
         })
         .ok();
-    if let Some((k, d)) = kept {
-        s.curve = serde_json::from_str(&d)?;
+    // a curve kept in an older form is measured again
+    if let Some((k, Ok(c))) = kept.map(|(k, d)| (k, serde_json::from_str::<Vec<Point>>(&d))) {
+        s.curve = c;
         s.fresh = k == key && !stale;
     }
+    // past self: each time you labelled a track again, whether the colour stayed, with how
+    // many labels outside the holdout you had then; counted up to each point, like the curve
     let con = store::labels_db(root)?;
-    let mut st = con.prepare("SELECT track_id, colour_id FROM labels WHERE source = 'user' AND colour_id IS NOT NULL ORDER BY id")?;
-    let mut last: HashMap<i64, Vec<i64>> = HashMap::new();
-    for r in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))? {
-        let (t, c) = r?;
-        last.entry(t).or_default().push(c);
+    let mut st = con.prepare(
+        "SELECT l.track_id, l.colour_id, t.hash FROM labels l JOIN tracks t ON t.id = l.track_id
+         WHERE l.source = 'user' AND l.colour_id IS NOT NULL ORDER BY l.id",
+    )?;
+    let mut last: HashMap<i64, i64> = HashMap::new();
+    let mut had = 0;
+    let mut times: Vec<(usize, bool)> = vec![];
+    for r in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<String>>(2)?)))? {
+        let (t, c, h) = r?;
+        match last.insert(t, c) {
+            Some(was) => times.push((had, was == c)),
+            None => had += h.is_some_and(|h| evaluate::part(&h) == "train") as usize,
+        }
     }
-    for v in last.values().filter(|v| v.len() >= 2) {
-        s.again += 1;
-        s.agreed += (v[v.len() - 1] == v[v.len() - 2]) as usize;
+    s.again = times.len();
+    s.agreed = times.iter().filter(|t| t.1).count();
+    let n_train = l.hashes.iter().filter(|h| evaluate::part(h) == "train").count();
+    let mut at = vec![];
+    let mut k = 25;
+    while k < n_train {
+        at.push(k);
+        k *= 2;
+    }
+    at.push(n_train);
+    for n in at {
+        let so_far: Vec<bool> = times.iter().filter(|t| t.0 <= n || n == n_train).map(|t| t.1).collect();
+        if so_far.len() >= 20 {
+            let r = wilson(so_far.iter().filter(|&&b| b).count(), so_far.len());
+            s.past.push((n, (r[0] + r[1]) / 2.0));
+        }
     }
     Ok(s)
 }
@@ -1186,14 +1255,10 @@ pub fn curve(root: &Path, cfg: &Config) -> Res<Stats> {
             return Err("stopped".into());
         }
         let (_, sc) = fit(&l, &ax, k);
-        if sc.colour_n > 0 {
-            curve.push((k, (sc.colour[0] + sc.colour[1]) / 2.0));
-        }
+        curve.extend(Point::of(k, &sc));
         k *= 2;
     }
-    if ms.1.colour_n > 0 {
-        curve.push((n_train, (ms.1.colour[0] + ms.1.colour[1]) / 2.0));
-    }
+    curve.extend(Point::of(n_train, &ms.1));
     let cache = store::cache_db(root)?;
     curves_table(&cache)?;
     cache.execute("DELETE FROM curves", [])?;

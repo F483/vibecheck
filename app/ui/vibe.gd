@@ -15,33 +15,43 @@ var _model: HBoxContainer
 var _reviewed: HBoxContainer
 var _shown := -1
 var _status := ""
+## The queue, the model line and the player: the top half, lent to the library as it is, so
+## changing screen moves nothing on it.
+var top: VBoxContainer
+var _controls: CenterContainer
 
 
-func _init(s, a) -> void:
+func _init(s, a, p) -> void:
 	state = s
 	app = a
 	add_theme_constant_override("separation", 0)
+	top = UI.col(0)
+	add_child(top)
 	_queue = UI.col(8)
 	var q := UI.section(UI.DARK)
 	q.add_child(_queue)
-	add_child(q)
+	top.add_child(q)
 	_model = UI.row(12)
 	var m := UI.section(UI.PANEL, 16, 8)
 	m.add_child(_model)
-	add_child(m)
-	player = Player.new(UI.DARK, state)
-	player.next.connect(_on_next)
-	player.skip.connect(_on_skip)
-	player.ahead = _ahead
-	add_child(player)
+	top.add_child(m)
+	# shared with the library: Confirm and Skip belong to the screen in view
+	player = p
+	player.next.connect(func(c: int, r: int, e: int, k: String) -> void:
+		if is_visible_in_tree():
+			_on_next(c, r, e, k))
+	player.skip.connect(func() -> void:
+		if is_visible_in_tree():
+			_on_skip())
+	top.add_child(player)
 	_reviewed = UI.row(10)
 	var r := UI.section(UI.PANEL, 16, 8)
 	r.add_child(_reviewed)
 	# the player's main controls ride on this strip, centred over it, with Export at its right end
-	var mid := CenterContainer.new()
-	mid.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	mid.add_child(player.take_controls())
-	r.add_child(mid)
+	_controls = CenterContainer.new()
+	_controls.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_controls.add_child(player.take_controls())
+	r.add_child(_controls)
 	add_child(r)
 	table = Table.new(["now", "num", "ring", "colour", "title", "artist", "energy", "rating", "bpm", "key"])
 	table.activated.connect(_on_row)
@@ -58,11 +68,31 @@ func _init(s, a) -> void:
 	refresh()
 
 
+## The player comes here when this screen is shown. A track from the library stays, playing,
+## until Confirm or Skip, which go on with the queue.
+func dock() -> void:
+	lend(self, _controls, "vibe")
+	player.ahead = _ahead
+	if player.mode == "library":
+		relisten = false
+	refresh()
+
+
+## The top half into `parent`, first, and the player's controls into `controls`.
+func lend(parent: Control, controls: Control, w: String) -> void:
+	if top.get_parent() != parent:
+		top.reparent(parent, false)
+	parent.move_child(top, 0)
+	player.dock(controls, w)
+
+
 func refresh() -> void:
-	# a new queue: load its head, unless you are relistening to a reviewed track
-	if not relisten and (state.queue.is_empty() or state.queue[0] != player.track):
+	# a new queue: load its head, unless you are relistening to a reviewed track, or the
+	# player holds one from the library; not while the library has the player
+	var here := top.get_parent() == self
+	if here and not relisten and player.mode != "library" and (state.queue.is_empty() or state.queue[0] != player.track):
 		_head()
-	elif relisten:
+	elif here and relisten:
 		player.fill_guess(player.track)
 	_build_queue()
 	_build_model()
@@ -125,10 +155,12 @@ func _card(t: Dictionary, first: bool, playing: bool) -> Control:
 			l.clip_text = true
 			l.custom_minimum_size.x = 110
 	p.add_child(UI.row(8, [UI.cover(t, 48, state.cover(t)), info]))
+	# into the player, on the library screen too
 	UI.clickable(p, func() -> void:
 		state.queue.erase(t)
 		state.queue.push_front(t)
 		relisten = false
+		_head()
 		refresh())
 	return p
 
@@ -222,9 +254,12 @@ func _head() -> void:
 func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
 	var nxt := _next_row() if relisten else {}
 	relisten = not nxt.is_empty()
-	state.decide(player.track, colour, rating, "vibe", energy, key)
+	var t := player.track
+	state.decide(t, colour, rating, "vibe", energy, key)
 	if relisten:
 		open_row(nxt)
+	elif player.track == t:
+		_head()  # a library track: refresh leaves those, so on with the queue here
 
 
 ## What the player loads next: the next row when relistening (Confirm and Skip both go
@@ -243,6 +278,9 @@ func _next_row() -> Dictionary:
 func _on_skip() -> void:
 	if player.mode == "dropped" and not _next_dropped().is_empty():
 		open_row(_next_dropped())
+	elif player.mode == "library":
+		_head()
+		_build_queue()
 	elif relisten:
 		# next row as sorted; after the last, back to the queue, as Confirm
 		var nxt := _next_row()

@@ -73,15 +73,52 @@ How the app maps onto the core:
   a brain, a node graph and a waveform), books for library, a chart for stats,
   a clock with an arrow running back for history, a gear for settings. These replace the earlier letters (R/C/S/,). The icons are
   18 px line drawings: grey normally, lime when active.
+- No "v" logo on top of the rail: it did nothing (the user). The window
+  title names the app.
 - **Settings is the setup.** On first run the user fills in Music and
   `rekordbox.xml`; vibe, library and stats stay greyed out until both are
   set. It is the same page afterwards. Keep "Start ENTER" for now.
 - Stats, history and collection are one click away from every screen.
-- Stats opens at once: its tiles come from the cached model. The "colour right vs
+- Stats opens at once: what it shows comes from the cached model. The "colour right vs
   labels trained on" curve trains a model per point (seconds), so it is measured
   after each retrain in the background and kept by your labels; when your labels
   are ahead of it, the last curve shows dimmed with "measuring…" until the new
   one is in (the user found the page slow to open).
+- The curve has **four lines**: colour, hue, tone and stars right, each named
+  at its end with where it is now (the user). Colour is hue and tone together
+  (a cell of the 4×2 grid), so it sits lowest, and hue and tone show which half
+  of a wrong colour the model misses; stars count exact. All four come from the
+  same models, so they cost nothing more to measure. A checkbox per line below
+  the chart, its colour beside it, is the legend and hides or shows it; all
+  four start ticked; the choice lasts the session, not saved (the user). Line colours are not the
+  label colours' hues where it matters: lime, soft blue, soft orange, white.
+- The chart is always **0–100%**: a floor that followed the lowest line made
+  everything jump when a line was ticked off (the user). Labels trained on
+  run on a **log scale** (each point doubles them), with dotted lines at 100,
+  500, 1,000, 5,000… and the right edge a little past now. The "min 100" and
+  "goal 300" marks went with the old linear axis.
+- A thinner line per colour, in the label colours, with its own row of
+  checkboxes (no note on how noisy they are: the user). They start **unticked** (the user: there to look at, too noisy to
+  show by default). Chart twice as tall (480 px) for up to twelve lines.
+- **Past self** on the chart (the user): a dashed grey line, ticked by default,
+  for how often a track you labelled again kept its colour. Like the model
+  lines it is a running total (the user): each point counts every relabel made
+  while you had up to that many labels outside the holdout, from 20 relabels
+  on. It is about as high as the colour line can be expected to get: the model
+  can't agree with you more than you agree with yourself. Open: every Confirm
+  counts as a relabel, also with the colour in view, which inflates it.
+- No tiles above the chart (colour right, stars right, past self, labels):
+  the chart has them all (the user). The label count sits in the header.
+- The chart comes first; the misses are last on the page, under Colours
+  (the user). "Mixed up most" with "Blue taken for Green 6%" left unclear who
+  took what, and 6% was of all held-back labels. Now titled "Misses · you
+  said → it guessed", one per row so the rank reads top down: "■ Blue →
+  ■ Green" on the left, "5 / 18 · 28%" on the right (missed as that colour, of
+  your held-back labels of the first, and the share). The four worst by that
+  share lead (the user); on few labels a share can be chance.
+- **Colours** at the bottom, under Trust (the user): the same split bar, one
+  part per colour in the label colours, from all tracks with a colour (guesses
+  included), with counts below and "no colour N".
 
 ## Vibe workspace: one screen
 
@@ -188,6 +225,14 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
      long one never pushes the player past the window.
    - In the library the hint "Confirm adds it to the next Export" sits on the
      title line, before the time, because the upper row is full.
+   - **One player for vibe and library** (the user): it moves, with the queue
+     above it, to the screen shown, so changing screen keeps the track and
+     keeps it playing. Confirm
+     and Skip belong to the screen in view, whatever the track: in the
+     library, Confirm puts it in the export list and opens the row after the
+     selected one (the first when none is), Skip opens that row; in vibe,
+     Confirm or Skip on a library track goes on with the queue. In the
+     library Skip never says Requeue.
 5. **Export list strip** (light). It shows "↓ Export list 47" and an **"Export → X"**
    button. The arrow is on the button and points right, because the tracks go
    out of the app. Nothing else is on the strip.
@@ -342,9 +387,13 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 ## Collection
 
-- The player is docked **on top** and is the **same component as in vibe**,
-  so the user recognises it and it can be reused.
-- Below it: filter chips, then a selection bar ("N selected · Add to
+- The top half is **vibe's own**: queue, model line and player, moved over as
+  they are, with the main controls on a strip under them where vibe has the
+  export list strip. Changing screen moves nothing up there and the track
+  keeps playing (the user: the player jumping was jarring). The search bar
+  and its useless Columns button on top were dropped; search sits left of
+  the filter chips (/ still focuses it).
+- Below it: search and filter chips, then a selection bar ("N selected · Add to
   queue ⌥Q"), then the **same flat table** with extra columns (plays, last
   played, added).
 - Stepping through the collection with Confirm puts each track into the **same

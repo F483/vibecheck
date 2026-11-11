@@ -11,6 +11,7 @@ const Library := preload("res://ui/library.gd")
 const Stats := preload("res://ui/stats.gd")
 const History := preload("res://ui/history.gd")
 const Settings := preload("res://ui/settings.gd")
+const Player := preload("res://ui/player.gd")
 
 const SCREENS := ["vibe", "library", "stats", "history", "settings"]
 
@@ -38,7 +39,9 @@ func _ready() -> void:
 	var stack := Control.new()
 	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.add_child(stack)
-	screens = {"vibe": Vibe.new(state, self), "library": Library.new(state, self), "stats": Stats.new(state),
+	# one player: it moves to the vibe or library screen, whichever is shown
+	var player := Player.new(UI.DARK, state)
+	screens = {"vibe": Vibe.new(state, self, player), "library": Library.new(state, self, player), "stats": Stats.new(state),
 		"history": History.new(state, self), "settings": Settings.new(state, self)}
 	for k: String in SCREENS:
 		var s: Control = screens[k]
@@ -112,13 +115,6 @@ func _rail() -> Control:
 	p.add_theme_stylebox_override("panel", UI.pad(s, 6, 10))
 	p.custom_minimum_size.x = 64
 	var c := UI.col(4)
-	var logo := UI.panel(UI.LIME, 6)
-	logo.custom_minimum_size = Vector2(32, 32)
-	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	var v := UI.text("v", 15, UI.BG, "heavy")
-	v.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	logo.add_child(v)
-	c.add_child(UI.margin(logo, 0, 0, 0, 8))
 	for id: String in SCREENS:
 		var item := UI.panel(Color.TRANSPARENT, 4, 0, 4)
 		item.custom_minimum_size = Vector2(52, 44)
@@ -151,6 +147,8 @@ func show_screen(id: String) -> void:
 	current = id
 	for k: String in screens:
 		(screens[k] as Control).visible = k == id
+	if screens[id].has_method("dock"):
+		screens[id].dock()
 	refresh_rail()
 
 
