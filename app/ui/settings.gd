@@ -54,10 +54,11 @@ func refresh() -> void:
 		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_child(UI.row(16, [lc, rc]))
 	_side = lc
-	_card("Library", "Your music, and the rekordbox.xml it comes in and goes out through.")
+	_card("Library")
 	_add(_path("Music", "music", true))
 	_add(_path("rekordbox", "xml", false))
-	_add(UI.wrap("One rekordbox.xml file both ways: export the collection here from rekordbox; vibecheck writes its playlists into it."))
+	_add(UI.wrap("Export your rekordbox collection here; vibecheck's playlists go back into it."))
+	_add(UI.margin(UI.hline(), 0, 2, 0, 2))
 	var total: int = state.library.size()
 	var left: int = total - state.embedded
 	var now: String = ("now: " + state.listening) if state.listening != "" else ("done" if left == 0 else "paused")
@@ -70,7 +71,7 @@ func refresh() -> void:
 
 	_card("Calibration", "What the queue asks you, and when the model starts to guess.")
 	var th := UI.text("%d labels" % st.threshold, 12, UI.TEXT, "mono")
-	_add(UI.row(8, [UI.text("Start mixing in unsure tracks and conflicts after", 12), UI.spacer(), th]))
+	_add(UI.row(8, [UI.text("Calibration ends after", 12), UI.spacer(), th]))
 	var slider := UI.Track.new(100, 300, 10, st.threshold)
 	slider.changed.connect(func(v: float) -> void: th.text = "%d labels" % int(v))
 	slider.released.connect(func(v: float) -> void:
@@ -83,11 +84,10 @@ func refresh() -> void:
 	_add(_line("Re-ask old tracks blind", UI.text("rises as the library fills in", 12, UI.MUTED, "mono")))
 
 	_side = rc
-	_card("rekordbox", "What Export writes into your collection besides the playlist.")
+	_card("Rekordbox Export")
 	_toggle("Write the key into rekordbox's key field", "write_tonality", "8A")
 	_toggle("Start the comment with key and energy", "write_comment", "8A - Energy 6")
 	_add(UI.wrap("The rest of the comment, /* tags */ included, is kept."))
-	_add(_line("Warn when the collection export is older than", UI.text("%d days" % st.warn_days, 12, UI.MUTED, "mono")))
 
 	_card("Cue points", "Cues Export writes, learned from the ones you set yourself.")
 	_toggle("Write cue points", "cues_write")
@@ -127,8 +127,9 @@ func _add(c: Control) -> void:
 	_col.add_child(c)
 
 
-## A group of settings on its own card, titled, with a line on what it is for; _add fills it.
-func _card(t: String, about: String) -> void:
+## A group of settings on its own card, titled, with a line on what it is for when that
+## isn't plain; _add fills it.
+func _card(t: String, about := "") -> void:
 	_end_card()
 	var p := UI.panel(UI.PANEL, 6, 16, 14)
 	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
@@ -137,7 +138,10 @@ func _card(t: String, about: String) -> void:
 	_col = UI.col(10)
 	p.add_child(_col)
 	_side.add_child(p)
-	_add(UI.margin(UI.col(2, [UI.text(t, 14, UI.TEXT, "bold"), UI.wrap(about)]), 0, 0, 0, 4))
+	var head := UI.col(2, [UI.text(t, 14, UI.TEXT, "bold")])
+	if about != "":
+		head.add_child(UI.wrap(about))
+	_add(UI.margin(head, 0, 0, 0, 4))
 
 
 ## No hairline under a card's last line: the card's edge closes it.

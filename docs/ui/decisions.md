@@ -449,8 +449,9 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 - **Two columns**, so lines don't stretch across a wide window: the
   collection and the model on the left (Library, Calibration), what goes into
-  rekordbox on the right (rekordbox, Cue points). The intro and Start span both.
-- **Each group on its own card**, titled, with one line on what it is for, so
+  rekordbox on the right (Rekordbox Export, Cue points). Start spans both.
+- **Each group on its own card**, titled, with one line on what it is for where
+  that isn't plain (none on Library or Rekordbox Export), so
   a new user sees four groups rather than a wall of settings. Fields inside a
   card sit darker. No "Settings" title row and no intro line: the
   rail says where you are, and its dimmed screens that they wait on setup. The core version sits in small type under Start.
@@ -458,15 +459,16 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   one file is used both ways.
 - The progress of analysing the collection. No count tiles: the status row
   and stats carry those.
-- The calibration threshold, 100–300.
+- The calibration threshold, 100–300 ("Calibration ends after"): past it the
+  queue switches from calibration tracks to unsure, conflicts and old labels.
 - Show the model's guess in the player after calibration (On).
 - Re-ask old tracks blind (rises as the library fills in).
-- **rekordbox**
+- **Rekordbox Export**
   - Write the key into rekordbox's key field ("8A"): `[rekordbox] write_tonality`.
   - Start the comment with key and energy ("8A - Energy 6"); the rest of the
     comment, /* tags */ included, is kept: `[rekordbox] write_comment`.
-  - Warn when the collection export is older than 7 days. This one is new and
-    not in the config yet.
+  - No setting for how old the collection export may be: past 7 days
+    (`warn_days`) the status row warns, and it always shows the export's age.
 - **Cue points**
   - Write cue points (`[cues] write`). They go only on tracks with no cues or
     with generated ones; a track with any cue you set yourself is never touched.
