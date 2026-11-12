@@ -229,8 +229,9 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
     let mut in_batch: HashSet<String> = batch(&con, after)?.into_iter().collect();
     in_batch.extend(saved.dropped.iter().cloned());
     let joined = joined(&con, &saved, after)?;
+    let played = store::played_after_export(&con)?;
     let mut st = con.prepare(
-        "SELECT path, hash, colour_id, stars, source, ts FROM current WHERE missing_at IS NULL ORDER BY path",
+        "SELECT path, hash, colour_id, stars, source, ts, origin, card, shown FROM current WHERE missing_at IS NULL ORDER BY path",
     )?;
     let rows = st.query_map([], |r| {
         Ok((
@@ -240,11 +241,14 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
             r.get::<_, Option<i64>>(3)?,
             r.get::<_, Option<String>>(4)?,
             r.get::<_, Option<i64>>(5)?,
+            r.get::<_, Option<String>>(6)?,
+            r.get::<_, Option<String>>(7)?,
+            r.get::<_, Option<i64>>(8)?,
         ))
     })?;
     let mut out = vec![];
     for row in rows {
-        let (path, hash, colour, stars, source, ts) = row?;
+        let (path, hash, colour, stars, source, ts, origin, card, shown) = row?;
         let t = x.get(&path);
         let info = t.map(|t| t.info.clone()).unwrap_or_default();
         let (title, artist) = if info.name.is_empty() {
@@ -259,7 +263,10 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
         let said = colour.is_some() || stars.is_some_and(|s| s > 0);
         let theirs = t.and_then(|t| t.label).filter(|l| l.said());
         let (colour, stars, source, trust) = match source.as_deref() {
-            Some("user") if said => (colour, stars, "user", if info.plays > 0 { 4 } else { 3 }),
+            Some("user") if said => {
+                let t = trust("user", origin.as_deref(), card.as_deref(), shown, colour, played.contains(&path));
+                (colour, stars, "user", t.level())
+            }
             Some("model") if said => (colour, stars, "model", 1),
             _ => match theirs {
                 Some(l) => (l.colour.map(|c| c.id), l.stars.map(|s| s as i64), "rekordbox", if info.plays > 0 { 4 } else { 2 }),
@@ -324,18 +331,102 @@ struct Labelled {
     x: Vec<Vec<f32>>,
     y: Vec<Label>,
     hashes: Vec<String>,
+    /// how far each label is trusted: its weight in training
+    w: Vec<f64>,
+    /// made with no guess on screen: the only labels that measure accuracy
+    blind: Vec<bool>,
 }
 
-fn labelled(root: &Path) -> Res<Labelled> {
+/// Your labels (source "user"), with what each one is worth. The model's own guesses are
+/// not learned from: at 14,000 of them even a small weight would outvote your labels.
+fn labelled(root: &Path, cfg: &Config) -> Res<Labelled> {
     let con = store::labels_db(root)?;
-    let lab = store::current(&con, Some("user"))?;
-    let mut keys: Vec<String> = lab.keys().cloned().collect();
+    let made = store::current_made(&con)?;
+    let played = store::played_after_export(&con)?;
+    let mut keys: Vec<String> = made.iter().filter(|(_, c)| c.source == "user").map(|(p, _)| p.clone()).collect();
     keys.sort();
     let (paths, x) = embed::load(root, &keys)?;
     let hb = store::hash_by_path(&con)?;
-    let y = paths.iter().map(|p| lab[p]).collect();
+    let y: Vec<Label> = paths.iter().map(|p| made[p].label).collect();
     let hashes = paths.iter().map(|p| hb[p].clone()).collect();
-    Ok(Labelled { paths, x, y, hashes })
+    let w = paths
+        .iter()
+        .map(|p| {
+            let c = &made[p];
+            let t = trust(&c.source, c.origin.as_deref(), c.card.as_deref(), c.shown, c.label.colour.map(|c| c.id), played.contains(p));
+            t.weight(cfg) * rating_factor(c.label.stars, cfg)
+        })
+        .collect();
+    let blind = paths.iter().map(|p| made[p].shown.is_none()).collect();
+    Ok(Labelled { paths, x, y, hashes, w, blind })
+}
+
+/// How far a label is to be trusted, from what you did with it (docs/fast-track.md).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Trust {
+    Guessed,
+    Existing,
+    FastConfirm,
+    Confirmed,
+    Played,
+}
+
+impl Trust {
+    /// The ring in the app: 4 played, 3 confirmed (either kind), 2 existing, 1 guessed.
+    pub fn level(self) -> u8 {
+        match self {
+            Trust::Played => 4,
+            Trust::Confirmed | Trust::FastConfirm => 3,
+            Trust::Existing => 2,
+            Trust::Guessed => 1,
+        }
+    }
+
+    /// Its weight in training, `[trust]` in the config.
+    pub fn weight(self, cfg: &Config) -> f64 {
+        let (k, d) = match self {
+            Trust::Played => ("played", 1.0),
+            Trust::Confirmed => ("confirmed", 0.7),
+            Trust::FastConfirm => ("fast_confirm", 0.5),
+            Trust::Existing => ("existing", 0.3),
+            Trust::Guessed => ("guessed", 0.2),
+        };
+        cfg.float("trust", k, d)
+    }
+}
+
+/// What a label is worth from how it was made. `played`: an export of ours holding it was
+/// played since. Older rekordbox labels with no card count as existing.
+pub fn trust(source: &str, origin: Option<&str>, card: Option<&str>, shown: Option<i64>, colour: Option<i64>, played: bool) -> Trust {
+    if source == "model" {
+        return Trust::Guessed;
+    }
+    if played {
+        return Trust::Played;
+    }
+    if origin == Some("xml") {
+        return match card {
+            Some("corrected") | Some("confirmed") => Trust::Confirmed,
+            _ => Trust::Existing,
+        };
+    }
+    match shown {
+        Some(s) if Some(s) == colour => Trust::FastConfirm,
+        _ => Trust::Confirmed,
+    }
+}
+
+/// How much a label counts for the track's rating: `[rating]` base + per_star × stars, none
+/// (rekordbox's unrated, a half-done label) at the bottom.
+pub fn rating_factor(stars: Option<u8>, cfg: &Config) -> f64 {
+    cfg.float("rating", "base", 0.5) + cfg.float("rating", "per_star", 0.1) * stars.unwrap_or(0) as f64
+}
+
+/// The weights as text, part of what a trained model is cached under.
+fn weights_tag(cfg: &Config) -> String {
+    let t = [Trust::Played, Trust::Confirmed, Trust::FastConfirm, Trust::Existing, Trust::Guessed];
+    let ws: Vec<String> = t.iter().map(|t| t.weight(cfg).to_string()).collect();
+    format!("{}|{}|{}", ws.join(","), cfg.float("rating", "base", 0.5), cfg.float("rating", "per_star", 0.1))
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -359,14 +450,17 @@ pub struct Score {
 /// Train on the training slice (the first `take` of it), score the validation
 /// slice: the colour the model would pick, against the one you gave.
 fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Score) {
-    let (mut xt, mut yt, mut xv, mut yv) = (vec![], vec![], vec![], vec![]);
+    let (mut xt, mut yt, mut wt, mut xv, mut yv) = (vec![], vec![], vec![], vec![], vec![]);
     for i in 0..l.x.len() {
         match evaluate::part(&l.hashes[i]) {
             "train" if xt.len() < take => {
                 xt.push(l.x[i].as_slice());
                 yt.push(l.y[i]);
+                wt.push(l.w[i]);
             }
-            p if p == evaluate::VAL => {
+            // a label made with the guess on screen matches it by construction: only blind
+            // ones say how right the model is
+            p if p == evaluate::VAL && l.blind[i] => {
                 xv.push(l.x[i].as_slice());
                 yv.push(l.y[i]);
             }
@@ -378,7 +472,7 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
     if xt.len() < 2 {
         return (m, s);
     }
-    m.train(&xt, &yt);
+    m.train_weighted(&xt, &yt, &wt);
     let (mut ck, mut hk, mut tk, mut sk) = (0, 0, 0, 0);
     let mut mix: HashMap<(i64, i64), usize> = HashMap::new();
     let mut per: std::collections::BTreeMap<i64, (usize, usize)> = Default::default();
@@ -425,14 +519,15 @@ fn model_key(root: &Path, cfg: &Config, l: &Labelled) -> Res<(String, String)> {
     // only your labels change it: the model's guesses don't count
     let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels WHERE source = 'user'", [], |r| r.get(0))?;
     let ax = axes(cfg);
-    // m3: the score keeps every mix-up, not the top three
+    // m4: labels weighted by trust and rating, accuracy from blind labels only
     let kind = format!(
-        "m3|{}|{}|{}|{}|{}",
+        "m4|{}|{}|{}|{}|{}|{}",
         root.display(),
         ax[0].misleading_cost,
         ax[2].misleading_cost,
         predict::C,
-        embed::fingerprint()
+        embed::fingerprint(),
+        weights_tag(cfg)
     );
     let key = format!("{kind}#{last}|{}", l.y.len());
     Ok((kind, key))
@@ -490,7 +585,7 @@ fn model(root: &Path, cfg: &Config, l: &Labelled, stale_ok: bool) -> Res<(Arc<(p
 
 /// Retrain on all your labels now, if the cached model is behind them.
 pub fn train(root: &Path, cfg: &Config) -> Res<()> {
-    model(root, cfg, &labelled(root)?, false)?;
+    model(root, cfg, &labelled(root, cfg)?, false)?;
     Ok(())
 }
 
@@ -549,7 +644,7 @@ fn spread(pool: &[Vec<f32>], have: &[Vec<f32>], n: usize) -> Vec<usize> {
 /// before vibecheck the model disagrees with), those two asked blind.
 pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: usize, skip: &[String], stale_ok: bool) -> Res<Queue> {
     let con = store::labels_db(root)?;
-    let l = labelled(root)?;
+    let l = labelled(root, cfg)?;
     let mine: HashSet<String> = store::current(&con, Some("user"))?.into_keys().collect();
     let skip: HashSet<&String> = skip.iter().collect();
     let live = store::live_paths(&con)?;
@@ -651,7 +746,8 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
 
 /// Your label for one track: a colour (palette id), and stars when given (1..5);
 /// with a key ("8A") and energy (1..10) when you corrected them.
-pub fn decide(root: &Path, path: &str, colour: i64, stars: i64, key: Option<&str>, energy: Option<i64>) -> Res<()> {
+/// Save a label you made in the app. `made`: which card asked and what was on screen.
+pub fn decide(root: &Path, path: &str, colour: i64, stars: i64, key: Option<&str>, energy: Option<i64>, made: store::Made) -> Res<()> {
     let con = store::labels_db(root)?;
     let id: i64 = con.query_row("SELECT id FROM tracks WHERE path = ?1", [path], |r| r.get(0))?;
     let colour = Some(palette::by_id(colour).ok_or("no such colour")?);
@@ -659,7 +755,7 @@ pub fn decide(root: &Path, path: &str, colour: i64, stars: i64, key: Option<&str
     let key = key.filter(|k| is_key(k));
     let energy = energy.filter(|e| (1..=10).contains(e)).map(|e| e as u8);
     con.execute_batch("BEGIN")?;
-    store::log_label(&con, id, Label { colour, stars }, "user", None)?;
+    store::log_label_as(&con, id, Label { colour, stars }, "user", None, made)?;
     if key.is_some() || energy.is_some() {
         // a correction of one keeps the other as it was corrected before
         let (k0, e0) = store::key_energy(&con)?.remove(path).unwrap_or_default();
@@ -690,7 +786,7 @@ pub struct Guess {
 /// has no colour for, are left out; none while it has too little to learn from.
 pub fn guess(root: &Path, cfg: &Config, paths: &[String]) -> Res<Vec<Guess>> {
     embed::embed_all(root, paths)?;
-    let l = labelled(root)?;
+    let l = labelled(root, cfg)?;
     if l.x.len() < 20 {
         return Ok(vec![]);
     }
@@ -970,7 +1066,7 @@ fn their_corrections(root: &Path, e: &Export, x: &HashMap<String, Track>) -> Res
             continue;
         }
         let id: i64 = con.query_row("SELECT id FROM tracks WHERE path = ?1", [p], |r| r.get(0))?;
-        store::log_label_from(&con, id, l, "user", None, Some("xml"))?;
+        store::log_label_as(&con, id, l, "user", None, store::Made { origin: Some("xml"), card: Some("corrected"), ..Default::default() })?;
         out.push(p.clone());
     }
     con.execute_batch("COMMIT")?;
@@ -1184,7 +1280,7 @@ impl Point {
 /// What the stats page shows, from what is cached: quick. The learning curve trains a model
 /// per point (seconds), so it is measured by `curve` and kept in the cache by your labels.
 pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
-    let l = labelled(root)?;
+    let l = labelled(root, cfg)?;
     let (kind, key) = model_key(root, cfg, &l)?;
     let (ms, stale) = model(root, cfg, &l, true)?;
     let mut s = Stats { labels: l.y.len(), now: ms.1.clone(), ..Default::default() };
@@ -1244,7 +1340,7 @@ pub fn curve(root: &Path, cfg: &Config) -> Res<Stats> {
     if s.fresh {
         return Ok(s);
     }
-    let l = labelled(root)?;
+    let l = labelled(root, cfg)?;
     let (_, key) = model_key(root, cfg, &l)?;
     let ax = axes(cfg);
     let n_train = l.hashes.iter().filter(|h| evaluate::part(h) == "train").count();
@@ -1570,6 +1666,32 @@ mod tests {
         let [lo, hi] = wilson(56, 100);
         assert!(lo < 0.56 && hi > 0.56 && hi - lo < 0.21);
         assert_eq!(wilson(0, 0), [0.0, 1.0]);
+    }
+
+    #[test]
+    fn trust_follows_what_you_did() {
+        use Trust::*;
+        assert_eq!(trust("model", None, None, None, Some(3), false), Guessed);
+        assert_eq!(trust("user", None, Some("unsure"), Some(3), Some(3), false), FastConfirm);
+        assert_eq!(trust("user", None, Some("unsure"), Some(3), Some(5), false), Confirmed);
+        assert_eq!(trust("user", None, Some("calibration"), None, Some(3), false), Confirmed);
+        assert_eq!(trust("user", Some("xml"), None, None, Some(3), false), Existing);
+        assert_eq!(trust("user", Some("xml"), Some("existing"), None, Some(3), false), Existing);
+        assert_eq!(trust("user", Some("xml"), Some("corrected"), None, Some(3), false), Confirmed);
+        assert_eq!(trust("user", Some("xml"), None, None, Some(3), true), Played);
+        assert_eq!(trust("user", None, Some("fast"), Some(3), Some(3), true), Played);
+        assert_eq!(Played.level(), 4);
+        assert_eq!(FastConfirm.level(), 3);
+    }
+
+    #[test]
+    fn weights_multiply_trust_by_rating() {
+        let cfg = Config(crate::config::DEFAULT.parse().unwrap());
+        let w = |t: Trust, s: Option<u8>| t.weight(&cfg) * rating_factor(s, &cfg);
+        assert!((w(Trust::FastConfirm, Some(1)) - 0.3).abs() < 1e-9);
+        assert!((w(Trust::FastConfirm, None) - 0.25).abs() < 1e-9);
+        assert!((w(Trust::Confirmed, Some(5)) - 0.7).abs() < 1e-9);
+        assert!((w(Trust::Existing, Some(5)) - 0.3).abs() < 1e-9);
     }
 
     #[test]

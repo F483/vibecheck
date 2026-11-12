@@ -44,6 +44,10 @@ const WHY := [
 var state
 var track: Dictionary = {}
 var mode := "queue"
+## The model's guess the track opened with, UI colour index and stars, -1 when none was
+## shown: saved with the label, so a kept guess is trusted less than a blind answer.
+var shown := -1
+var shown_stars := -1
 ## The tracks the player may load next, read ahead so their waveforms are there: set by its screen.
 var ahead := Callable()
 var colour := -1
@@ -209,6 +213,10 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 	mode = m
 	colour = guess if m == "queue" else int(t.colour)
 	rating = maxi(guess_stars, 0) if m == "queue" else int(t.rating)
+	# relistening to a track the model labelled shows its guess too
+	var model_label: bool = m != "queue" and t.get("source", "") == "model" and int(t.colour) >= 0
+	shown = guess if m == "queue" else (int(t.colour) if model_label else -1)
+	shown_stars = guess_stars if m == "queue" else (int(t.rating) if model_label else -1)
 	energy = int(t.energy)
 	key = str(t.key)
 	_energy0 = energy
@@ -582,13 +590,20 @@ func _refresh() -> void:
 
 
 ## The model's guess arrived after the track opened: fill it in, unless you already chose.
+## Which card is asking: the queue's tag, else how the track was opened.
+func card() -> String:
+	return str(track.get("tag", "")) if mode == "queue" else mode
+
+
 func fill_guess(t: Dictionary) -> void:
 	if t != track or t.source != "model" or int(t.colour) < 0:
 		return
 	if colour < 0:
 		colour = int(t.colour)
+		shown = colour
 		if rating == 0:
 			rating = int(t.rating)
+			shown_stars = rating
 	_refresh()
 
 

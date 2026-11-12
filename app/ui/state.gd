@@ -291,9 +291,12 @@ func _apply_queue(q: Dictionary) -> void:
 
 ## Your label for a track, from the player: it joins the reviewed table, newest first.
 ## energy and key only when you corrected them (0 and "" otherwise).
-func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, key := "") -> void:
+## `shown`/`shown_stars`: the guess that was on screen (UI colour index, -1 for none), and
+## `card` which card asked: saved with the label, which is trusted by them.
+func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, key := "", shown := -1, shown_stars := -1, card := "") -> void:
 	_call(_main, "decide", {"path": t.path, "colour": PALETTE.find(UI.COLOURS[colour].name) + 1, "stars": rating,
-		"energy": energy, "key": key}, func(_r: Variant) -> void: pass)
+		"energy": energy, "key": key, "shown": (PALETTE.find(UI.COLOURS[shown].name) + 1) if shown >= 0 else 0,
+		"shown_stars": shown_stars, "card": card}, func(_r: Variant) -> void: pass)
 	if energy > 0:
 		t.energy = energy
 	if key != "":

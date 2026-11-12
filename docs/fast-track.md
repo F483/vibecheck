@@ -202,6 +202,20 @@ for each. Checked against `core/src/store.rs` and `app.rs` on 2026-11-12.
    "your consistency"; `user-flows.md`'s weight table points here so there's
    one source.
 
+### Done
+
+- **Steps 1–2 (2026-11-12).** Schema v8 (`shown`, `shown_stars`, `card`, with
+  older rekordbox labels backfilled from the sync history rows); `decide`
+  records them from the app (the player remembers the guess it opened with;
+  `card` is the queue tag, or relisten / dropped / library); sync writes
+  existing / corrected / confirmed. `trust()` + `rating_factor()` in `app.rs`,
+  weights in config, `Lr::fit_weighted` and `Model::train_weighted`; the
+  library's trust ring and the stats bar use the same `trust()`, so "played"
+  now means an export of ours was played since (sync's fate), not any play
+  count. Validation uses blind labels only. The model's own guesses are not
+  trained on: at 14,000 of them even 0.2 would outvote 1,300 labels; the
+  `guessed` weight stays in config for when that is revisited.
+
 ### Build order
 
 1. v8 migration: `shown`, `card`; `decide()` records them; validation excludes

@@ -107,7 +107,7 @@ pub fn read_corrections(
         if Some(now_l) == prev {
             // left as it was: confirms the command line's round; a guess the app exported stays a guess
             if in_scope && !last_user.contains_key(rel) && rid.is_some() {
-                store::log_label_from(&con, tid, now_l, "user", rid, Some("xml"))?;
+                store::log_label_as(&con, tid, now_l, "user", rid, store::Made { origin: Some("xml"), card: Some("confirmed"), ..Default::default() })?;
                 touched.extend(rid);
                 n.confirmed += 1;
             }
@@ -125,7 +125,9 @@ pub fn read_corrections(
         let contradicts = prev.is_some_and(|p| {
             (p.colour.is_some() && p.colour != now_l.colour) || (p.stars.is_some() && p.stars != now_l.stars)
         });
-        store::log_label_from(&con, tid, now_l, "user", rid, Some("xml"))?;
+        // how it came to be, for trust: there before vibecheck, changed in rekordbox, or left
+        let card = if prev.is_none() { "existing" } else if contradicts { "corrected" } else { "confirmed" };
+        store::log_label_as(&con, tid, now_l, "user", rid, store::Made { origin: Some("xml"), card: Some(card), ..Default::default() })?;
         touched.extend(rid);
         if prev.is_none() {
             n.added += 1;

@@ -47,6 +47,29 @@ misleading_cost = 1.0
 #   4  -> rates 10%,           81% right
 rating_misleading_cost = 4.0
 
+[trust]
+# How much a label counts in training, by what you did with it. A label's
+# weight is its trust times its rating factor below (docs/fast-track.md).
+#
+#   played        an export of ours was played since: tested in a real set
+#   confirmed     labelled blind here, corrected here, or changed in rekordbox
+#   fast_confirm  the model's guess was on screen and you kept it
+#   existing      there before vibecheck, never confirmed
+#   guessed       the model wrote it and nothing happened since (not trained
+#                 on: it would learn its own guesses back)
+played = 1.0
+confirmed = 0.7
+fast_confirm = 0.5
+existing = 0.3
+guessed = 0.2
+
+[rating]
+# You are sloppier with tracks you care less about, so a label on a low-rated
+# track counts less: factor = base + per_star * stars. No stars is rekordbox's
+# "unrated", a half-done label, and sits at the bottom (0.5); 5 stars is 1.0.
+base = 0.5
+per_star = 0.1
+
 [rekordbox]
 # Key and energy are worked out from the audio for every track a round labels
 # (and by `vibecheck analyse`), and written into the rekordbox xml with the

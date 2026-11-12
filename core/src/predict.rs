@@ -103,23 +103,30 @@ pub struct Lr {
 
 impl Lr {
     pub fn fit(x: &[&[f32]], y: &[String], c: f64) -> Lr {
+        Lr::fit_weighted(x, y, &vec![1.0; x.len()], c)
+    }
+
+    /// As `fit`, each row counting `w` times in the loss (1.0 = as `fit`).
+    pub fn fit_weighted(x: &[&[f32]], y: &[String], w: &[f64], c: f64) -> Lr {
         let (n, d) = (x.len(), x[0].len());
         let classes: Vec<String> = sort_classes(y.iter().cloned().collect::<BTreeSet<_>>().into_iter().collect());
+        // standardised by weight too, so a row that counts for nothing moves nothing
+        let wsum: f64 = w.iter().sum::<f64>().max(1e-12);
         let mut mean = vec![0f64; d];
         let mut scale = vec![0f64; d];
-        for r in x {
+        for (r, wi) in x.iter().zip(w) {
             for (m, v) in mean.iter_mut().zip(r.iter()) {
-                *m += *v as f64;
+                *m += wi * *v as f64;
             }
         }
-        mean.iter_mut().for_each(|m| *m /= n as f64);
-        for r in x {
+        mean.iter_mut().for_each(|m| *m /= wsum);
+        for (r, wi) in x.iter().zip(w) {
             for j in 0..d {
-                scale[j] += (r[j] as f64 - mean[j]).powi(2);
+                scale[j] += wi * (r[j] as f64 - mean[j]).powi(2);
             }
         }
         for s in scale.iter_mut() {
-            *s = (*s / n as f64).sqrt();
+            *s = (*s / wsum).sqrt();
             if *s == 0.0 {
                 *s = 1.0;
             }
@@ -130,7 +137,7 @@ impl Lr {
         let rows = if k == 2 { 1 } else { k };
         // parameters: rows x (d weights + 1 intercept)
         let p = rows * (d + 1);
-        let f = |th: &[f64], g: &mut [f64]| -> f64 { objective(th, g, &xs, &yi, n, d, rows, c) };
+        let f = |th: &[f64], g: &mut [f64]| -> f64 { objective(th, g, &xs, &yi, w, n, d, rows, c) };
         let th = lbfgs(vec![0.0; p], f, 5000, 1e-7);
         let w = (0..rows).map(|r| th[r * (d + 1)..r * (d + 1) + d].to_vec()).collect();
         let b = (0..rows).map(|r| th[r * (d + 1) + d]).collect();
@@ -177,9 +184,9 @@ fn softmax(z: &[f64]) -> Vec<f64> {
     e.into_iter().map(|v| v / s).collect()
 }
 
-/// C * sum of log losses + 0.5 * |W|^2 (intercepts unpenalised), and its gradient.
+/// C * weighted sum of log losses + 0.5 * |W|^2 (intercepts unpenalised), and its gradient.
 #[allow(clippy::too_many_arguments)]
-fn objective(th: &[f64], g: &mut [f64], x: &[f64], y: &[usize], n: usize, d: usize, rows: usize, c: f64) -> f64 {
+fn objective(th: &[f64], g: &mut [f64], x: &[f64], y: &[usize], w: &[f64], n: usize, d: usize, rows: usize, c: f64) -> f64 {
     g.iter_mut().for_each(|v| *v = 0.0);
     let mut loss = 0.0;
     let mut z = vec![0f64; rows];
@@ -193,17 +200,17 @@ fn objective(th: &[f64], g: &mut [f64], x: &[f64], y: &[usize], n: usize, d: usi
             let t = if y[i] == 1 { 1.0 } else { 0.0 };
             // log(1 + e^z) - t z, stably
             let zz = z[0];
-            loss += if zz > 0.0 { zz + (-zz).exp().ln_1p() } else { zz.exp().ln_1p() } - t * zz;
-            let e = c * (sigmoid(zz) - t);
+            loss += w[i] * (if zz > 0.0 { zz + (-zz).exp().ln_1p() } else { zz.exp().ln_1p() } - t * zz);
+            let e = c * w[i] * (sigmoid(zz) - t);
             for (gj, xj) in g[..d].iter_mut().zip(xi) {
                 *gj += e * xj;
             }
             g[d] += e;
         } else {
             let p = softmax(&z);
-            loss -= p[y[i]].max(1e-300).ln();
+            loss -= w[i] * p[y[i]].max(1e-300).ln();
             for r in 0..rows {
-                let e = c * (p[r] - if r == y[i] { 1.0 } else { 0.0 });
+                let e = c * w[i] * (p[r] - if r == y[i] { 1.0 } else { 0.0 });
                 let gr = &mut g[r * (d + 1)..(r + 1) * (d + 1)];
                 for (gj, xj) in gr[..d].iter_mut().zip(xi) {
                     *gj += e * xj;
@@ -320,20 +327,26 @@ impl Model {
     /// y: per track, its label. An axis the label says nothing about is
     /// left out of that axis's training, not trained as "unknown".
     pub fn train(&mut self, x: &[&[f32]], y: &[Label]) -> TrainInfo {
+        self.train_weighted(x, y, &vec![1.0; x.len()])
+    }
+
+    /// As `train`, each label counting `w` times: how far it is trusted.
+    pub fn train_weighted(&mut self, x: &[&[f32]], y: &[Label], w: &[f64]) -> TrainInfo {
         self.models.clear();
         let mut trained = vec![];
         for ax in &self.axes {
-            let (mut xs, mut ys) = (vec![], vec![]);
-            for (r, l) in x.iter().zip(y) {
+            let (mut xs, mut ys, mut ws) = (vec![], vec![], vec![]);
+            for ((r, l), wi) in x.iter().zip(y).zip(w) {
                 if let Some(v) = target(l, ax.name) {
                     xs.push(*r);
                     ys.push(v);
+                    ws.push(*wi);
                 }
             }
             if ys.iter().collect::<BTreeSet<_>>().len() < 2 {
                 continue; // nothing to learn yet
             }
-            self.models.insert(ax.name, Lr::fit(&xs, &ys, C));
+            self.models.insert(ax.name, Lr::fit_weighted(&xs, &ys, &ws, C));
             trained.push(ax.name);
         }
         TrainInfo { tracks: x.len(), axes: trained }
@@ -372,6 +385,22 @@ mod tests {
             (x[0] - 1.0).powi(2) + 2.0 * (x[1] + 2.0).powi(2)
         }, 200, 1e-10);
         assert!((x[0] - 1.0).abs() < 1e-8 && (x[1] + 2.0).abs() < 1e-8);
+    }
+
+    #[test]
+    fn weights_count_rows_more_or_not_at_all() {
+        // two clusters on a line; the third point is an outlier labelled against its side
+        let x: Vec<&[f32]> = vec![&[-2.0], &[-1.0], &[1.0], &[2.0], &[1.5]];
+        let y: Vec<String> = ["a", "a", "b", "b", "a"].iter().map(|s| s.to_string()).collect();
+        let plain = Lr::fit(&x, &y, 1.0);
+        let same = Lr::fit_weighted(&x, &y, &[1.0; 5], 1.0);
+        let gone = Lr::fit_weighted(&x, &y, &[1.0, 1.0, 1.0, 1.0, 0.0], 1.0);
+        let without = Lr::fit(&x[..4], &y[..4], 1.0);
+        let p = |m: &Lr, v: f32| m.predict_proba(&[v])[1];
+        assert!((p(&plain, 1.5) - p(&same, 1.5)).abs() < 1e-9);
+        // the outlier pulls "b" down at 1.5; at weight 0 it is as if it were not there
+        assert!(p(&gone, 1.5) > p(&plain, 1.5));
+        assert!((p(&gone, 1.5) - p(&without, 1.5)).abs() < 1e-3);
     }
 
     #[test]

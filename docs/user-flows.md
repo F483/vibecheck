@@ -57,7 +57,10 @@ rule; they only see a small indicator per track.
 | 2: existing label | it was there before vibecheck | about 0.3 until checked | a library's history can be wildly inconsistent; a track that has been played starts at 4 instead |
 | 1: guessed (was "untouched") | we wrote it and nothing happened since | about 0.2 | usually more or less right, just not worth playing or correcting; kept small so the model doesn't learn its own guesses back |
 
-The weights are a starting point to tune, not measured values.
+The weights are a starting point to tune, not measured values. They are in
+core now as `weight = trust × rating` (`[trust]` and `[rating]` in
+`core/src/default_config.toml`), with one more level for a kept guess; the
+current table and the reasoning are in `fast-track.md`, which is the source.
 
 Age alone doesn't lower trust: an old label can be perfectly right. What
 matters is age together with disagreement. An old label the current model

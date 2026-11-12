@@ -29,8 +29,9 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (5, "key_energy", include_str!("../migrations/0005_key_energy.sql")),
     (6, "batches", include_str!("../migrations/0006_batches.sql")),
     (7, "label_origin", include_str!("../migrations/0007_label_origin.sql")),
+    (8, "label_card", include_str!("../migrations/0008_label_card.sql")),
 ];
-pub const SCHEMA_VERSION: i64 = 7;
+pub const SCHEMA_VERSION: i64 = 8;
 const BASELINE: i64 = 3;
 
 pub fn vibecheck_dir(root: &Path) -> Res<PathBuf> {
@@ -340,11 +341,75 @@ pub fn log_label_from(
     round_id: Option<i64>,
     origin: Option<&str>,
 ) -> Res<()> {
+    log_label_as(con, track_id, label, source, round_id, Made { origin, ..Default::default() })
+}
+
+/// How a label came to be, beyond its source: where from (`origin`, Some("xml") from
+/// rekordbox), which card asked (`card`), and what was on screen when it was made
+/// (`shown`: palette id, None = blind). Training trusts a label by these.
+#[derive(Clone, Copy, Default)]
+pub struct Made<'a> {
+    pub origin: Option<&'a str>,
+    pub card: Option<&'a str>,
+    pub shown: Option<i64>,
+    pub shown_stars: Option<i64>,
+}
+
+pub fn log_label_as(con: &Connection, track_id: i64, label: Label, source: &str, round_id: Option<i64>, m: Made) -> Res<()> {
     con.execute(
-        "INSERT INTO labels (track_id, colour_id, stars, source, round_id, ts, origin) VALUES (?1,?2,?3,?4,?5,?6,?7)",
-        params![track_id, label.colour.map(|c| c.id), label.stars, source, round_id, now(), origin],
+        "INSERT INTO labels (track_id, colour_id, stars, source, round_id, ts, origin, card, shown, shown_stars)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![track_id, label.colour.map(|c| c.id), label.stars, source, round_id, now(), m.origin, m.card, m.shown, m.shown_stars],
     )?;
     Ok(())
+}
+
+/// The current label of a track with everything said about how it was made.
+pub struct Current {
+    pub label: Label,
+    pub source: String,
+    pub origin: Option<String>,
+    pub card: Option<String>,
+    pub shown: Option<i64>,
+}
+
+/// As `current`, with how each label was made, for tracks with a label that says something.
+pub fn current_made(con: &Connection) -> Res<HashMap<String, Current>> {
+    let mut st = con.prepare(
+        "SELECT path, colour_id, stars, source, origin, card, shown FROM current WHERE label_id IS NOT NULL",
+    )?;
+    let rows = st.query_map([], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, Option<i64>>(1)?,
+            r.get::<_, Option<i64>>(2)?,
+            r.get::<_, String>(3)?,
+            r.get::<_, Option<String>>(4)?,
+            r.get::<_, Option<String>>(5)?,
+            r.get::<_, Option<i64>>(6)?,
+        ))
+    })?;
+    let mut out = HashMap::new();
+    for r in rows {
+        let (p, c, s, source, origin, card, shown) = r?;
+        if c.is_none() && s.is_none() {
+            continue;
+        }
+        let label = Label { colour: c.and_then(palette::by_id), stars: s.map(|s| s as u8) };
+        out.insert(p, Current { label, source, origin, card, shown });
+    }
+    Ok(out)
+}
+
+/// Tracks an export of ours was played after: a sync saw their play count rise.
+pub fn played_after_export(con: &Connection) -> Res<HashSet<String>> {
+    let mut st = con.prepare(
+        "SELECT DISTINCT t.path FROM batch_tracks bt
+         JOIN batches b ON b.id = bt.batch_id JOIN tracks t ON t.id = bt.track_id
+         WHERE b.dir = 'out' AND bt.fate = 'played'",
+    )?;
+    let out = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    Ok(out)
 }
 
 pub fn open_round(con: &Connection, name: &str, size: usize, backend: &str, encoder: &str, n_labels: usize) -> Res<i64> {

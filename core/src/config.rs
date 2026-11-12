@@ -7,7 +7,7 @@ use toml::{Table, Value};
 
 use crate::{Res, store};
 
-const DEFAULT: &str = include_str!("default_config.toml");
+pub(crate) const DEFAULT: &str = include_str!("default_config.toml");
 
 #[derive(Debug, Clone)]
 pub struct Config(pub Table);

@@ -49,7 +49,14 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         "decide" => {
             let key = Some(s(a, "key")).filter(|k| !k.is_empty());
             let energy = Some(n(a, "energy", 0)).filter(|e| *e > 0);
-            app::decide(&root, s(a, "path"), n(a, "colour", 0), n(a, "stars", 0), key, energy)?;
+            // what was on screen and which card asked: how far the label is trusted
+            let made = vibecheck::store::Made {
+                origin: None,
+                card: Some(s(a, "card")).filter(|c| !c.is_empty()),
+                shown: Some(n(a, "shown", 0)).filter(|c| *c > 0),
+                shown_stars: Some(n(a, "shown_stars", -1)).filter(|s| *s >= 0),
+            };
+            app::decide(&root, s(a, "path"), n(a, "colour", 0), n(a, "stars", 0), key, energy, made)?;
             json!(true)
         }
         "embed" => {

@@ -9,15 +9,14 @@ rekordbox.
 A native version for macOS, Windows and Linux, without the Python
 dependency setup, is in the works.
 
-The working version is in [`prototype/`](prototype/): see its
-[README](prototype/README.md) to install and use it.
+The Python prototype it grew from is archived in `prototype.zip`, no longer
+maintained; its README inside explains how it was used.
 
 ## The native version, so far
 
-`core/` is the engine in Rust, with the same commands as the prototype
-(`scan`, `status`, `label`, `sync`, `discard`, `analyse`, `cues`, `migrate`).
-It reads and writes the same `.vibecheck/` files, so either can be used on
-the same collection. `ext/` exposes it to Godot, and `app/` is the Godot app.
+`core/` is the engine in Rust, with the commands the prototype had
+(`scan`, `status`, `label`, `sync`, `discard`, `analyse`, `cues`, `migrate`),
+reading and writing the same `.vibecheck/` files. `ext/` exposes it to Godot, and `app/` is the Godot app.
 
 ```sh
 cargo build --release
@@ -27,7 +26,7 @@ cargo build --release
 
 It needs the audio model as an ONNX file (145 MB, weights in half
 precision), made once from the prototype by
-`prototype/scripts/export_clap_onnx.py`, at
+`scripts/export_clap_onnx.py` (in `prototype.zip`), at
 `~/Library/Application Support/vibecheck/models/clap_audio.onnx` on macOS.
 `scripts/bundle.sh` puts the program and the model in one folder to share or
 back up.
