@@ -143,6 +143,80 @@ group stands out (the outlier pass, `user-flows.md` rule 4).
   asked blind so your answer stays your own, and the model's accuracy stays
   honest" / "Pick its colour and stars as if there were no guess."
 
+## Implementation
+
+What the design above needs that the code doesn't have, and the proposed fix
+for each. Checked against `core/src/store.rs` and `app.rs` on 2026-11-12.
+
+### Gaps
+
+1. **Two kinds of blind card, conflated above.** The 1-in-10 blind card serves
+   two purposes that need different tracks:
+   - *accuracy*: an unlabelled confident track asked blind, compared with the
+     guess afterwards;
+   - *anchoring gauge*: a track already fast-track-confirmed, re-asked blind
+     later.
+   Fix: two rates. Accuracy cards 1 in 10; gauge re-asks 1 in 20, drawn from
+   fast-track confirms older than a week, tagged **blind** both.
+2. **Labels don't record what was shown.** `labels` has `source`, `round_id`,
+   `origin` (schema v7), not whether a guess was on screen or which card asked.
+   Without that neither the weight, the gauge nor an honest accuracy can be
+   computed later. Fix: **v8 migration**, two columns on `labels`:
+   `shown` (colour id on screen, NULL = blind) and `card` (the tag:
+   calibration, unsure, conflict, old label, re-ask, fast, blind). `decide()`
+   gets both from the app, which has them on the queue item.
+3. **Accuracy today would be inflated.** `model()` scores a held-out split of
+   *all* user labels; fast-track confirms would land in the validation half
+   and match by construction. Fix: validation uses only rows with
+   `shown IS NULL`. Training may still use everything, weighted. This also
+   means **no separate accuracy bookkeeping**: the held-out score restricted
+   to blind labels is already the honest number, and the 1-in-10 accuracy
+   cards are what keep fresh blind labels flowing into it.
+4. **Trust levels don't exist in core.** Build them now, properly, as part of
+   this. The data is nearly all there: every level is derivable at training
+   time from what the store already holds plus v8's `shown`, so nothing new
+   is stored per level:
+   - 4 played: the label was exported and a later sync set
+     `batch_tracks.fate = 'played'` (exists today);
+   - 3 confirmed: `source = 'user'` with `shown IS NULL`, or shown and
+     corrected (`colour_id != shown`); also `origin = 'xml'` logged as
+     `what = 'corrected'` (changed in rekordbox);
+   - 3 fast-track confirm: `source = 'user'`, `colour_id = shown`;
+   - 2 existing: `origin = 'xml'` from a sync, never confirmed;
+   - 1 guessed: `source = 'model'`.
+   One function `trust(label, fate) -> f32` in `app.rs`; `weight = trust ×
+   rating(stars)`. `predict::Lr::fit` is plain logistic regression with no
+   sample weights; add a per-row weight to its gradient (one argument through
+   `Model::train`). Weights are config (`[trust]`, `[rating]` in
+   `default_config.toml`) so they can be tuned without a rebuild.
+5. **"Confident" has no number.** Conflicts use ≥ 0.5. Fix: fast-track pool
+   and unlock sample use **≥ 0.8** (hue × tone); unlock needs the Wilson lower
+   bound ≥ 0.9 over **at least 30** blind held-out rows that were predicted at
+   ≥ 0.8. Colour only; stars confidence is a filter, not a gate.
+6. **Filtering 200 items app-side leaves a handful.** `queue()` returns the
+   next 200. Fix: `queue()` takes a mode and the guess filter
+   (colours, stars, energy, BPM) and filters the confident pool in core before
+   cutting to 200, most sure first within the filter.
+7. **Small.** Toggle persists as a setting (`fast_track`), shortcut ⌥F; the
+   gauge (confirm vs re-ask disagreement) shows on the stats page next to
+   "your consistency"; `user-flows.md`'s weight table points here so there's
+   one source.
+
+### Build order
+
+1. v8 migration: `shown`, `card`; `decide()` records them; validation excludes
+   `shown IS NOT NULL`.
+2. Trust levels and weighted training: `trust()`, `rating()`, weights in
+   config, per-row weight in `Lr::fit`. Stats page shows labels per level
+   (`user-flows.md` already asks for that).
+3. `queue()` mode `fast`: confident pool ≥ 0.8, guess filter, accuracy cards
+   1 in 10, gauge re-asks 1 in 20, tags `fast` / `blind`.
+4. App: toggle before QUEUE, queue line text, `blind` tag + `WHY` row,
+   "SURE 94%" tag, filter row over the queue applied to the guess.
+5. Unlock: Wilson lower bound ≥ 0.9, n ≥ 30, on blind confident held-out rows;
+   locked toggle with hint.
+6. Gauge on stats; gauge-driven blind rate last, with data.
+
 ## Open questions
 
 - [x] Unlock: measured confident accuracy (Wilson lower bound ≥ 90%).
@@ -153,3 +227,7 @@ group stands out (the outlier pass, `user-flows.md` rule 4).
 - [x] Blind-card rate: fixed 1 in 10 first; gauge-driven later, with data.
 - [x] Settings slider retitled "Calibration ends after": past it the queue switches
       over (about 69% unsure, 20% conflicts, 11% old labels), nothing is mixed in.
+- [x] Trust levels built in core now, weighted training with them (gap 4).
+- [x] Confidence 0.8 and n ≥ 30 for the unlock (gap 5).
+- [x] Gauge re-asks 1 in 20, from confirms older than a week (gap 1).
+- [x] Gauge visible on stats (gap 7).
