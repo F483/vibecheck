@@ -25,6 +25,14 @@ const CORE_KEYS := {
 var library: Array[Dictionary] = []
 var by_path := {}
 var queue: Array[Dictionary] = []
+## The fast track (docs/fast-track.md): whether the queue in hand is it, whether it is open,
+## and what that rests on: sure guesses right (95% range) on how many blind held-back labels.
+var fast := false
+var fast_ready := false
+var sure_right: Array = [0.0, 1.0]
+var sure_n := 0
+## What the fast track is narrowed to: colours (palette ids), stars, energy, bpm (tens).
+var fast_filter := {}
 var reviewed: Array[Dictionary] = []
 var labels := 0
 var pool := 0
@@ -40,7 +48,7 @@ var _hearing := false  # the background listening chain is running
 var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
 	"listen": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_lead": 0,
-	"cues_loops": {}, "cues_memory": true,
+	"cues_loops": {}, "cues_memory": true, "fast_track": false,
 }
 
 var _main := Lane.new()
@@ -242,7 +250,8 @@ func refresh_queue(start := false) -> void:
 	if not head.is_empty():
 		skip.append(head.path)
 	skip.append_array(_front.keys())
-	_call(_model if start else _main, "queue", {"threshold": settings.threshold, "n": 200, "skip": skip, "stale_ok": start},
+	_call(_model if start else _main, "queue", {"threshold": settings.threshold, "n": 200, "skip": skip, "stale_ok": start,
+		"fast": settings.fast_track, "filter": fast_filter},
 		func(q: Variant) -> void:
 			if q == null:
 				return
@@ -255,6 +264,10 @@ func refresh_queue(start := false) -> void:
 func _apply_queue(q: Dictionary) -> void:
 	labels = int(q.labels)
 	pool = int(q.pool)
+	fast = bool(q.get("fast", false))
+	fast_ready = bool(q.get("fast_ready", false))
+	sure_right = q.get("sure_right", [0.0, 1.0])
+	sure_n = int(q.get("sure_n", 0))
 	var now_head: Dictionary = queue[0] if not queue.is_empty() else {}
 	var out: Array[Dictionary] = []
 	if not now_head.is_empty():
@@ -269,6 +282,7 @@ func _apply_queue(q: Dictionary) -> void:
 		t.tag = it.tag
 		t.guess = _ui_of.get(int(it.guess), -1)
 		t.guess_stars = int(it.stars)
+		t.sure = float(it.get("sure", 0))
 		out.append(t)
 	for t in _skipped:
 		if t != now_head and not _answered.has(t.path):
@@ -687,6 +701,12 @@ func _say_listening(now := false) -> void:
 
 # --- settings ----------------------------------------------------------------------------
 
+## Narrow the fast track (colours as palette ids, stars, energy, bpm in tens) and ask again.
+func set_fast_filter(f: Dictionary) -> void:
+	fast_filter = f
+	refresh_queue()
+
+
 func set_setting(k: String, v: Variant) -> void:
 	settings[k] = v
 	if CORE_KEYS.has(k):
@@ -703,7 +723,7 @@ func set_setting(k: String, v: Variant) -> void:
 		_answered.clear()
 		_skipped.clear()
 		load_all()
-	elif k == "threshold":
+	elif k == "threshold" or k == "fast_track":
 		refresh_queue()
 	elif k == "listen" and v:
 		_listen()

@@ -161,7 +161,15 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    ("Queue 200 of 8,412": tracks listened to and not labelled by you). That was a
    "+197 of 8,412" box after the last card; moved up so the row fits one more card
    (the user). Tags: next, conflict, calibration, unsure, re-ask, old
-   label. The queue is ordered by what teaches the model most. **Click the
+   label. The queue is ordered by what teaches the model most. A **Fast
+   track** toggle (⌥F) before the title switches it to the model's surest
+   guesses, most sure first, with the library's colour / energy / rating / BPM
+   chips over the cards applied to the guess; every 10th card is asked blind
+   and every 20th re-asks a guess you kept, so accuracy and anchoring stay
+   measured (`docs/fast-track.md`); the training queue too asks a sure track
+   blind every 10th card, so the gate can be earned. Locked until sure guesses are measurably
+   right, the toggle sits dimmed and the title line says what it waits on.
+   Fast-track cards are tagged "SURE 94%", check cards "BLIND". **Click the
    player's tag** for a popup like the trust one: every tag and why it puts a
    track in front of you, this one lit, and what to do with it ("Pick your
    colour again to keep it, or another to correct it") (the user).

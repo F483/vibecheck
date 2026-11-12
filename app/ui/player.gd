@@ -35,6 +35,10 @@ const WHY := [
 		"Pick the old colour to keep it, or another to correct it. Either becomes your label."],
 	["re-ask", "you put it in the queue from the library; asked blind",
 		"Pick its colour again. It replaces your label."],
+	["fast", "the fast track: the model is sure of this colour",
+		"Confirm if it's right, or pick the right colour. A kept guess counts less than a blind answer."],
+	["blind", "a check card: asked blind, so your answer stays your own and the model's accuracy stays honest",
+		"Pick its colour and stars as if there were no guess."],
 	["from rekordbox", "you dropped it on the app",
 		"Confirm makes it your label."],
 	["relistening", "opened from the export list or the library",
@@ -550,7 +554,7 @@ func _refresh() -> void:
 	if mode == "dropped":
 		tg += " · model's guess" if track.source == "model" else ""
 	if tg != "":
-		var chip := UI.tag(tg)
+		var chip := UI.tag(tg, UI.tag_label(track) if mode == "queue" else "")
 		UI.clickable(chip, _why_popup.bind(chip, tg))
 		_head.add_child(chip)
 	_title = UI.text(track.title, 22, UI.TEXT, "heavy")

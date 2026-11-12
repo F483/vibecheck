@@ -79,7 +79,7 @@ func refresh() -> void:
 			state.set_setting("threshold", int(v)))
 	_add(slider)
 	_add(UI.row(0, [UI.text("100", 10, UI.MUTED, "mono"), UI.spacer(), UI.text("200", 10, UI.MUTED, "mono"), UI.spacer(), UI.text("300", 10, UI.MUTED, "mono")]))
-	_add(UI.wrap("Below this the queue brings only calibration tracks, blind and spread across the sound of your collection. Past it, the tracks the model is least sure about, conflicts and old labels."))
+	_add(UI.wrap("Below this the queue brings only calibration tracks, blind and spread across the sound of your collection. Past it, the tracks the model is least sure about, conflicts and old labels, and every tenth one it is sure about, asked blind to check itself."))
 	_toggle("Show the model's guess in the player after calibration", "show_guess")
 	_add(_line("Re-ask old tracks blind", UI.text("rises as the library fills in", 12, UI.MUTED, "mono")))
 

@@ -138,6 +138,15 @@ func refresh() -> void:
 		legend.add_child(UI.row(5, [UI.rect(colours[i], 8, 8), UI.text("%s %d" % [names[i], counts[i]], 11, UI.MUTED)]))
 	legend.add_child(UI.text("· no label %d" % (state.library.size() - counts.reduce(func(a: int, b: int) -> int: return a + b)), 11, UI.MUTED))
 	left.add_child(legend)
+	# the anchoring gauge: guesses kept with them on screen, later asked blind, how often the
+	# same colour came back; the fast track's health
+	var kept: int = int(st.get("kept_again", 0))
+	var same: int = int(st.get("kept_agreed", 0))
+	left.add_child(UI.margin(UI.caps("Kept guesses, asked again blind"), 0, 6, 0, 0))
+	left.add_child(UI.text(
+		"none yet: the fast track re-asks a kept guess blind now and then" if kept == 0
+		else "%d of %d came back the same colour · %d%%" % [same, kept, int(round(100.0 * same / kept))],
+		11, UI.MUTED))
 	# the library by colour, guesses included, in the label colours: what a set has to pick from
 	left.add_child(UI.caps("Colours"))
 	var by := []

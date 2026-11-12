@@ -325,7 +325,8 @@ func _hidpi() -> void:
 
 
 ## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why|filter:colours|energy|…] [--wait=s] [--after=s]: once loaded, wait,
-## show the screen, wait again, render one frame to a file and quit.
+## show the screen, wait again, render one frame to a file and quit. --fast: the fast track on
+## for the shot, not saved (with VIBECHECK_FAST_OPEN=1 in the environment while it is locked).
 func _shot() -> void:
 	var args := {}
 	for a in OS.get_cmdline_user_args():
@@ -337,6 +338,9 @@ func _shot() -> void:
 	while not state.loaded and Time.get_ticks_msec() - t < 120000:
 		await get_tree().process_frame
 	await get_tree().create_timer(float(args.get("wait", "1"))).timeout
+	if args.has("fast"):
+		state.settings.fast_track = true
+		state.refresh_queue()
 	show_screen(args.get("screen", "vibe"))
 	await get_tree().create_timer(float(args.get("after", "0"))).timeout
 	match args.get("dialog", ""):

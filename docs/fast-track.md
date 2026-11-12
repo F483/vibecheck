@@ -23,9 +23,10 @@ the library into rekordbox quickly.
     colour; most sure first, blind;
   - **old label**: a colour from before vibecheck you never confirmed, the
     model at least 50% sure of another; most sure first, blind.
-- **Mix** by queue position: every 5th place (3rd, 8th, …) is a conflict;
-  every 7th place (5th, 12th, …) is an old label unless a conflict holds it;
-  everything else is unsure. Over 35 tracks: 7 conflicts (20%), 4 old labels
+- **Mix** by queue position (`train_slot`): every 10th place a sure track
+  asked blind (added 2026-11-12, see below); every 5th place (3rd, 8th, …) a
+  conflict; every 7th place (5th, 12th, …) an old label unless a conflict
+  holds it; everything else unsure. Over 35 tracks: 7 conflicts (20%), 4 old labels
   (about 11%), 24 unsure (about 69%). When a list runs out, its places go to
   the next one.
 - The settings slider is titled "Calibration ends after" for this reason:
@@ -215,6 +216,26 @@ for each. Checked against `core/src/store.rs` and `app.rs` on 2026-11-12.
   count. Validation uses blind labels only. The model's own guesses are not
   trained on: at 14,000 of them even 0.2 would outvote 1,300 labels; the
   `guessed` weight stays in config for when that is revisited.
+
+- **Steps 3–6 (2026-11-12).** `queue(.., fast, filter)`: when open, the
+  sure pool (≥ 0.8) most sure first within the guess filter, `fast_slot`
+  putting a blind sure card every 10th place and a kept guess older than a
+  week every 20th (`store::kept_guesses_before`). `Score.sure` / `sure_n`:
+  colour right where sure, on blind held-back labels; `fast_ready` = n ≥ 30
+  and the **middle** of the 95% range ≥ 0.9 (the low end cannot reach 0.9 on
+  30: Wilson gives 0.886 for 30/30, so the doc's "lower bound" was unbuildable
+  as written; the curve reads the middle too). App: Fast track chip + ⌥F
+  before QUEUE, dimmed with the gate's state while locked; guess-only
+  `Filters` row over the cards; tags `SURE 94%` / `BLIND`, both explained in
+  the tag popup; `fast_track` saved as an app setting. Stats: "Kept guesses,
+  asked again blind" under Trust (`store::kept_then_blind`). Not done:
+  gauge-driven blind rate (needs data).
+- **The training queue checks itself.** Sure-and-blind labels only came by
+  accident (7 in 1,314 labels on the reference collection: the training queue
+  asks unsure tracks, calibration ends at 100), so the gate was unreachable.
+  Now every 10th training card is a sure track asked blind (`BLIND`), the
+  same rule as on the fast track; it costs a little teaching and buys an
+  honest measure of the model where it is sure.
 
 ### Build order
 

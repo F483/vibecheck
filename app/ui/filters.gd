@@ -19,9 +19,13 @@ var _pop_at := Vector2i.ZERO
 var _openers := {}  # filter name: its chip
 var _chips: HBoxContainer
 var _count: Label
+## Only the colour, energy, rating and BPM chips, over the fast track's queue: they narrow
+## what the model's guess is asked about, so no search, trust filters or count.
+var guess_only := false
 
 
-func _init(tail: Array = []) -> void:
+func _init(tail: Array = [], guess := false) -> void:
+	guess_only = guess
 	add_theme_constant_override("separation", 8)
 	search = LineEdit.new()
 	search.placeholder_text = "Search tracks"
@@ -45,26 +49,64 @@ func _init(tail: Array = []) -> void:
 	_chips = UI.row(6)
 	_chips.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_count = UI.text("", 11, UI.MUTED, "mono")
-	for c: Control in [UI.kbd("/"), search, UI.rect(Color("#4a4b50"), 1, 20), _chips, _count]:
+	var head: Array = [] if guess_only else [UI.kbd("/"), search, UI.rect(Color("#4a4b50"), 1, 20)]
+	for c: Control in head + [_chips] + ([] if guess_only else [_count]):
 		add_child(c)
 	for c: Control in tail:
 		add_child(UI.margin(c, 8, 0, 0, 0))
+	if guess_only:
+		rebuild(0)
+
+
+## What is picked, for the core: colours as UI indexes (the caller maps them), the rest as is.
+func picked() -> Dictionary:
+	var out := {}
+	for n: String in _picked:
+		out[n] = (_picked[n] as Dictionary).keys()
+	return out
 
 
 ## The rows that pass, with the chips rebuilt for them ("Pending N" counts `rows`).
 func apply(rows: Array) -> Array[Dictionary]:
-	for c in _chips.get_children():
-		c.queue_free()
 	var pending := 0
 	for t: Dictionary in rows:
 		if t.trust <= 1:
 			pending += 1
-	for f: String in FILTERS:
-		var label := "Pending %s" % UI.thousands(pending) if f == "Pending" else f
-		_chips.add_child(UI.chip(label, f == filter, func() -> void:
-			filter = f
-			changed.emit()))
-	_chips.add_child(UI.rect(Color("#4a4b50"), 1, 20))
+	rebuild(pending)
+	var q := search.text.to_lower()
+	var out: Array[Dictionary] = []
+	for t: Dictionary in rows:
+		if q != "" and not (t.title.to_lower().contains(q) or t.artist.to_lower().contains(q)):
+			continue
+		if not (_has("colours", int(t.colour)) and _has("energy", int(t.energy)) and _has("rating", int(t.rating))
+				and _has("bpm", clampi(int(t.bpm) / 10 * 10, 70, 180))):
+			continue
+		match filter:
+			"Played":
+				if t.plays == 0:
+					continue
+			"Pending":
+				if t.trust > 1:
+					continue
+			"Thin trust":
+				if t.trust > 2:
+					continue
+		out.append(t)
+	_count.text = "%s tracks" % UI.thousands(out.size())
+	return out
+
+
+## The chips as things stand; `pending` for the "Pending N" chip.
+func rebuild(pending: int) -> void:
+	for c in _chips.get_children():
+		c.queue_free()
+	if not guess_only:
+		for f: String in FILTERS:
+			var label := "Pending %s" % UI.thousands(pending) if f == "Pending" else f
+			_chips.add_child(UI.chip(label, f == filter, func() -> void:
+				filter = f
+				changed.emit()))
+		_chips.add_child(UI.rect(Color("#4a4b50"), 1, 20))
 	# colours: a dot for each one shown
 	var dots := UI.row(2)
 	var cs: Dictionary = _picked.colours
@@ -90,27 +132,6 @@ func apply(rows: Array) -> Array[Dictionary]:
 		UI.clickable(chip, _pick.bind(n, chip))
 		_chips.add_child(chip)
 		_openers[n] = chip
-	var q := search.text.to_lower()
-	var out: Array[Dictionary] = []
-	for t: Dictionary in rows:
-		if q != "" and not (t.title.to_lower().contains(q) or t.artist.to_lower().contains(q)):
-			continue
-		if not (_has("colours", int(t.colour)) and _has("energy", int(t.energy)) and _has("rating", int(t.rating))
-				and _has("bpm", clampi(int(t.bpm) / 10 * 10, 70, 180))):
-			continue
-		match filter:
-			"Played":
-				if t.plays == 0:
-					continue
-			"Pending":
-				if t.trust > 1:
-					continue
-			"Thin trust":
-				if t.trust > 2:
-					continue
-		out.append(t)
-	_count.text = "%s tracks" % UI.thousands(out.size())
-	return out
 
 
 ## Open a filter's popup, as a click on its chip does (for screenshots).
@@ -154,7 +175,8 @@ func _pick(n: String, at: Control) -> void:
 		"colours":
 			for i in UI.COLOURS.size():
 				items.append([i, UI.COLOURS[i].name, UI.COLOURS[i].c])
-			items.append([-1, "no colour"])
+			if not guess_only:
+				items.append([-1, "no colour"])
 		"energy":
 			for e in range(1, 11):
 				items.append([e, str(e)])
