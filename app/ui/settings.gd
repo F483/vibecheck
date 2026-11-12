@@ -7,16 +7,16 @@ const UI := preload("res://ui/ui.gd")
 var state
 var app
 var _body: VBoxContainer
+## Where _add puts things: the body, or the card being filled.
+var _col: VBoxContainer
+## The column _card puts its card into.
+var _side: VBoxContainer
 
 
 func _init(s, a) -> void:
 	state = s
 	app = a
 	add_theme_constant_override("separation", 0)
-	var head := UI.section(UI.PANEL, 16, 0)
-	head.custom_minimum_size.y = 40
-	head.add_child(UI.row(8, [UI.text("Settings", 13, UI.TEXT, "semi"), UI.spacer(), UI.text(_version(), 11, UI.MUTED, "mono")]))
-	add_child(head)
 	_body = UI.col(10)
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sc := ScrollContainer.new()
@@ -45,21 +45,20 @@ func refresh() -> void:
 	for c in _body.get_children():
 		c.queue_free()
 	var st: Dictionary = state.settings
-	_add(UI.wrap("Choose your music and rekordbox.xml first; vibe, library and stats unlock once both are set. Everything here can be changed later from the same page.", 12))
-	_heading("Library")
+	_col = _body
+	# two columns of cards, one per group, so lines don't stretch across a wide window: the
+	# collection and the model on the left, what goes into rekordbox on the right
+	var lc := UI.col(16)
+	var rc := UI.col(16)
+	for c: VBoxContainer in [lc, rc]:
+		c.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_body.add_child(UI.row(16, [lc, rc]))
+	_side = lc
+	_card("Library", "Your music, and the rekordbox.xml it comes in and goes out through.")
 	_add(_path("Music", "music", true))
 	_add(_path("rekordbox", "xml", false))
-	_add(UI.wrap("One file both ways: export the collection here from rekordbox; vibecheck writes its playlists into it."))
-	var conflicts: int = state.queue.filter(func(t: Dictionary) -> bool: return t.tag == "conflict").size()
+	_add(UI.wrap("One rekordbox.xml file both ways: export the collection here from rekordbox; vibecheck writes its playlists into it."))
 	var total: int = state.library.size()
-	var tiles := UI.row(6)
-	for t: Array in [["Tracks", _n(total), UI.TEXT], ["Labelled by you", _n(state.labels), UI.TEXT],
-			["Conflicts", _n(conflicts), UI.AMBER]]:
-		var p := UI.panel(UI.PANEL, 4, 8, 8)
-		p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		p.add_child(UI.col(2, [UI.caps(t[0]), UI.text(t[1], 18, t[2], "mono")]))
-		tiles.add_child(p)
-	_add(tiles)
 	var left: int = total - state.embedded
 	var now: String = ("now: " + state.listening) if state.listening != "" else ("done" if left == 0 else "paused")
 	_add(UI.row(8, [UI.text("Analysed", 12), UI.spacer(),
@@ -68,9 +67,8 @@ func refresh() -> void:
 	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_add(bar)
 	_toggle("Analyse the rest in the background (about 5 s a track)", "listen")
-	_add(UI.wrap("Only analysed tracks can be asked about and learned from. A track you label is analysed right away."))
 
-	_heading("Calibration")
+	_card("Calibration", "What the queue asks you, and when the model starts to guess.")
 	var th := UI.text("%d labels" % st.threshold, 12, UI.TEXT, "mono")
 	_add(UI.row(8, [UI.text("Start mixing in unsure tracks and conflicts after", 12), UI.spacer(), th]))
 	var slider := UI.Track.new(100, 300, 10, st.threshold)
@@ -84,13 +82,14 @@ func refresh() -> void:
 	_toggle("Show the model's guess in the player after calibration", "show_guess")
 	_add(_line("Re-ask old tracks blind", UI.text("rises as the library fills in", 12, UI.MUTED, "mono")))
 
-	_heading("rekordbox")
+	_side = rc
+	_card("rekordbox", "What Export writes into your collection besides the playlist.")
 	_toggle("Write the key into rekordbox's key field", "write_tonality", "8A")
 	_toggle("Start the comment with key and energy", "write_comment", "8A - Energy 6")
 	_add(UI.wrap("The rest of the comment, /* tags */ included, is kept."))
 	_add(_line("Warn when the collection export is older than", UI.text("%d days" % st.warn_days, 12, UI.MUTED, "mono")))
 
-	_heading("Cue points")
+	_card("Cue points", "Cues Export writes, learned from the ones you set yourself.")
 	_toggle("Write cue points", "cues_write")
 	_add(UI.wrap("Only on tracks with no cues, or with generated ones (\"Cue 1\", \"Cue 2\", …). A track with any cue you set yourself is never touched."))
 	var lead := UI.row(6, [UI.text("Hot cues", 12), UI.spacer()])
@@ -106,11 +105,13 @@ func refresh() -> void:
 	_add(UI.wrap("Click a slot to make it a loop and set its length in bars, e.g. A and G as 16-bar loops to wait at the mix-in and mix-out."))
 	_toggle("Memory cue on every hot cue and the first downbeat", "cues_memory")
 
+	_end_card()
 	var next := "Calibration first: at least %d tracks, blind." % st.threshold if state.calibrating() \
 		else "%d labels so far: the queue mixes in what the model is least sure about." % state.labels
 	var start := UI.row(8, [UI.wrap(next), UI.button("Start", "ENTER", true, func() -> void: app.show_screen("vibe"))])
 	start.get_child(0).size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_body.add_child(UI.margin(start, 0, 10, 0, 0))
+	_body.add_child(UI.text(_version(), 10, UI.MUTED, "mono"))
 
 
 func _n(n: int) -> String:
@@ -123,12 +124,29 @@ func _n(n: int) -> String:
 
 
 func _add(c: Control) -> void:
-	_body.add_child(c)
+	_col.add_child(c)
 
 
-func _heading(t: String) -> void:
-	_body.add_child(UI.margin(UI.hline(), 0, 4, 0, 4))
-	_body.add_child(UI.text(t, 13, UI.TEXT, "bold"))
+## A group of settings on its own card, titled, with a line on what it is for; _add fills it.
+func _card(t: String, about: String) -> void:
+	_end_card()
+	var p := UI.panel(UI.PANEL, 6, 16, 14)
+	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
+	s.border_color = UI.LINE
+	s.set_border_width_all(1)
+	_col = UI.col(10)
+	p.add_child(_col)
+	_side.add_child(p)
+	_add(UI.margin(UI.col(2, [UI.text(t, 14, UI.TEXT, "bold"), UI.wrap(about)]), 0, 0, 0, 4))
+
+
+## No hairline under a card's last line: the card's edge closes it.
+func _end_card() -> void:
+	if _col == _body or _col.get_child_count() == 0:
+		return
+	var last := _col.get_child(_col.get_child_count() - 1)
+	if last.has_meta("line"):
+		(last.get_theme_stylebox("panel") as StyleBoxFlat).border_width_bottom = 0
 
 
 ## A setting on one line, with a hairline under it.
@@ -136,6 +154,7 @@ func _line(t: String, right: Control) -> Control:
 	var p := UI.section(Color.TRANSPARENT, 6, 0)
 	(p.get_theme_stylebox("panel") as StyleBoxFlat).border_color = Color("#34353a")
 	p.custom_minimum_size.y = 32
+	p.set_meta("line", true)
 	p.add_child(UI.row(8, [UI.text(t, 12), UI.spacer(), right]))
 	return p
 
@@ -151,7 +170,7 @@ func _toggle(t: String, key: String, example := "") -> void:
 
 
 func _path(label: String, key: String, folder: bool) -> Control:
-	var p := UI.panel(UI.PANEL, 4, 10, 6)
+	var p := UI.panel(UI.DARK, 4, 10, 6)
 	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
 	s.border_color = UI.LINE
 	s.set_border_width_all(1)
