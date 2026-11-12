@@ -60,7 +60,7 @@ rule; they only see a small indicator per track.
 The weights are a starting point to tune, not measured values. They are in
 core now as `weight = trust × rating` (`[trust]` and `[rating]` in
 `core/src/default_config.toml`), with one more level for a kept guess; the
-current table and the reasoning are in `fast-track.md`, which is the source.
+current table and the reasoning are in `label-weights.md`, which is the source.
 
 Age alone doesn't lower trust: an old label can be perfectly right. What
 matters is age together with disagreement. An old label the current model

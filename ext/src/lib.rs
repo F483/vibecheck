@@ -40,9 +40,7 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         "queue" => {
             let skip: Vec<String> = a.get("skip").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
             let stale_ok = a.get("stale_ok").and_then(Value::as_bool).unwrap_or(false);
-            let fast = a.get("fast").and_then(Value::as_bool).unwrap_or(false);
-            let filter: app::QueueFilter = a.get("filter").and_then(|v| serde_json::from_value(v.clone()).ok()).unwrap_or_default();
-            json!(app::queue(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize, n(a, "n", 200) as usize, &skip, stale_ok, fast, &filter)?)
+            json!(app::queue(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize, n(a, "n", 200) as usize, &skip, stale_ok)?)
         }
         "train" => {
             app::train(&root, &cfg()?)?;

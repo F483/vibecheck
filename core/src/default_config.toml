@@ -49,17 +49,17 @@ rating_misleading_cost = 4.0
 
 [trust]
 # How much a label counts in training, by what you did with it. A label's
-# weight is its trust times its rating factor below (docs/fast-track.md).
+# weight is its trust times its rating factor below (docs/label-weights.md).
 #
-#   played        an export of ours was played since: tested in a real set
-#   confirmed     labelled blind here, corrected here, or changed in rekordbox
-#   fast_confirm  the model's guess was on screen and you kept it
-#   existing      there before vibecheck, never confirmed
-#   guessed       the model wrote it and nothing happened since (not trained
-#                 on: it would learn its own guesses back)
+#   played     an export of ours was played since: tested in a real set
+#   confirmed  labelled blind here, corrected here, or changed in rekordbox
+#   kept       the model's guess was on screen and you kept it
+#   existing   there before vibecheck, never confirmed
+#   guessed    the model wrote it and nothing happened since (not trained
+#              on: it would learn its own guesses back)
 played = 1.0
 confirmed = 0.7
-fast_confirm = 0.5
+kept = 0.5
 existing = 0.3
 guessed = 0.2
 

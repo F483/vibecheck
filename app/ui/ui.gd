@@ -40,7 +40,6 @@ const TAGS := {
 	"re-ask": [Color("#3a3b40"), Color("#d6d7db")],
 	"old label": [Color("#463a1c"), Color("#e0b04a")],
 	"from rekordbox": [Color("#24304a"), Color("#9fb8ff")],
-	"fast": [Color("#203a28"), Color("#7fe08a")],
 	"blind": [Color("#3a3b40"), Color("#d6d7db")],
 }
 
@@ -185,13 +184,12 @@ static func hline() -> ColorRect:
 	return r
 
 
-## `label`: what it prints when not the tag itself ("sure 94%" for a fast-track card).
-static func tag(t: String, label := "") -> PanelContainer:
+static func tag(t: String) -> PanelContainer:
 	var cs: Array = TAGS.get(t, TAGS["re-ask"])
 	if t in ["next", "early calibration", "mixing in"]:
 		cs = TAGS["calibration"]
 	var p := panel(cs[0], 2, 5, 2)
-	p.add_child(text((label if label != "" else t).to_upper(), 9, cs[1], "mono"))
+	p.add_child(text(t.to_upper(), 9, cs[1], "mono"))
 	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	p.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	return p
@@ -237,11 +235,6 @@ static func chip(t: String, on: bool, cb: Callable = Callable()) -> PanelContain
 	if cb.is_valid():
 		clickable(p, cb)
 	return p
-
-
-## A card's tag text: "sure 94%" on the fast track, else the tag.
-static func tag_label(t: Dictionary) -> String:
-	return "sure %d%%" % int(round(float(t.get("sure", 0)) * 100)) if t.get("tag", "") == "fast" else str(t.get("tag", ""))
 
 
 ## 14194 -> "14,194"

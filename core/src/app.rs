@@ -361,12 +361,12 @@ fn labelled(root: &Path, cfg: &Config) -> Res<Labelled> {
     Ok(Labelled { paths, x, y, hashes, w, blind })
 }
 
-/// How far a label is to be trusted, from what you did with it (docs/fast-track.md).
+/// How far a label is to be trusted, from what you did with it (docs/label-weights.md).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Trust {
     Guessed,
     Existing,
-    FastConfirm,
+    Kept,
     Confirmed,
     Played,
 }
@@ -376,7 +376,7 @@ impl Trust {
     pub fn level(self) -> u8 {
         match self {
             Trust::Played => 4,
-            Trust::Confirmed | Trust::FastConfirm => 3,
+            Trust::Confirmed | Trust::Kept => 3,
             Trust::Existing => 2,
             Trust::Guessed => 1,
         }
@@ -387,7 +387,7 @@ impl Trust {
         let (k, d) = match self {
             Trust::Played => ("played", 1.0),
             Trust::Confirmed => ("confirmed", 0.7),
-            Trust::FastConfirm => ("fast_confirm", 0.5),
+            Trust::Kept => ("kept", 0.5),
             Trust::Existing => ("existing", 0.3),
             Trust::Guessed => ("guessed", 0.2),
         };
@@ -411,7 +411,7 @@ pub fn trust(source: &str, origin: Option<&str>, card: Option<&str>, shown: Opti
         };
     }
     match shown {
-        Some(s) if Some(s) == colour => Trust::FastConfirm,
+        Some(s) if Some(s) == colour => Trust::Kept,
         _ => Trust::Confirmed,
     }
 }
@@ -424,7 +424,7 @@ pub fn rating_factor(stars: Option<u8>, cfg: &Config) -> f64 {
 
 /// The weights as text, part of what a trained model is cached under.
 fn weights_tag(cfg: &Config) -> String {
-    let t = [Trust::Played, Trust::Confirmed, Trust::FastConfirm, Trust::Existing, Trust::Guessed];
+    let t = [Trust::Played, Trust::Confirmed, Trust::Kept, Trust::Existing, Trust::Guessed];
     let ws: Vec<String> = t.iter().map(|t| t.weight(cfg).to_string()).collect();
     format!("{}|{}|{}", ws.join(","), cfg.float("rating", "base", 0.5), cfg.float("rating", "per_star", 0.1))
 }
@@ -445,26 +445,11 @@ pub struct Score {
     pub stars_n: usize,
     /// (truth, picked, times) for every mix-up, commonest first, palette ids
     pub confused: Vec<(i64, i64, usize)>,
-    /// colour right where the model was sure (>= SURE), on the same blind held-back labels:
-    /// what the fast track rides on. No serde default: a model cached without it is retrained.
-    pub sure: [f64; 2],
-    pub sure_n: usize,
 }
 
-/// A guess the model is this sure of (hue x tone) is "sure": what the fast track offers, and
-/// what its unlock is measured on.
+/// A guess the model is this sure of (hue x tone) is "sure": a conflict needs it, and the
+/// training queue's check cards are drawn from such tracks.
 pub const SURE: f64 = 0.8;
-/// The fast track unlocks once sure guesses are right at least this often (the middle of the
-/// 95% range, as the curve reads it: its low end cannot reach 0.9 on 30), measured on at least
-/// `SURE_MIN` blind held-back labels.
-pub const SURE_RIGHT: f64 = 0.9;
-pub const SURE_MIN: usize = 30;
-
-/// Whether the fast track is open: the model's sure guesses are measurably right.
-/// VIBECHECK_FAST_OPEN in the environment opens it regardless, to try it before it is earned.
-pub fn fast_ready(s: &Score) -> bool {
-    std::env::var_os("VIBECHECK_FAST_OPEN").is_some() || s.sure_n >= SURE_MIN && (s.sure[0] + s.sure[1]) / 2.0 >= SURE_RIGHT
-}
 
 /// Train on the training slice (the first `take` of it), score the validation
 /// slice: the colour the model would pick, against the one you gave.
@@ -492,16 +477,12 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
         return (m, s);
     }
     m.train_weighted(&xt, &yt, &wt);
-    let (mut ck, mut hk, mut tk, mut sk, mut qk) = (0, 0, 0, 0, 0);
+    let (mut ck, mut hk, mut tk, mut sk) = (0, 0, 0, 0);
     let mut mix: HashMap<(i64, i64), usize> = HashMap::new();
     let mut per: std::collections::BTreeMap<i64, (usize, usize)> = Default::default();
     for (p, y) in m.predict(&xv).iter().zip(&yv) {
-        if let (Some(c), Some((g, pg))) = (y.colour, best_colour(p)) {
+        if let (Some(c), Some((g, _))) = (y.colour, best_colour(p)) {
             s.colour_n += 1;
-            if pg >= SURE {
-                s.sure_n += 1;
-                qk += (c.id == g) as usize;
-            }
             let e = per.entry(c.id).or_default();
             e.0 += (c.id == g) as usize;
             e.1 += 1;
@@ -519,7 +500,6 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
         }
     }
     s.colour = wilson(ck, s.colour_n);
-    s.sure = wilson(qk, s.sure_n);
     s.hue = wilson(hk, s.colour_n);
     s.tone = wilson(tk, s.colour_n);
     s.by_colour = per.into_iter().map(|(id, (k, n))| (id, k, n)).collect();
@@ -543,7 +523,7 @@ fn model_key(root: &Path, cfg: &Config, l: &Labelled) -> Res<(String, String)> {
     // only your labels change it: the model's guesses don't count
     let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels WHERE source = 'user'", [], |r| r.get(0))?;
     let ax = axes(cfg);
-    // m5: labels weighted by trust and rating, accuracy from blind labels only, sure score
+    // m5: labels weighted by trust and rating, accuracy from blind labels only
     let kind = format!(
         "m5|{}|{}|{}|{}|{}|{}",
         root.display(),
@@ -618,14 +598,11 @@ pub fn train(root: &Path, cfg: &Config) -> Res<()> {
 #[derive(Serialize)]
 pub struct Item {
     pub path: String,
-    /// "calibration", "unsure", "conflict", "old label"; on the fast track "fast" (the model is
-    /// sure) and "blind" (a check: asked blind)
+    /// "calibration", "unsure", "conflict", "old label", "blind" (a check: asked blind)
     pub tag: &'static str,
     /// the colour the model would pick, palette id; 0 when asked blind
     pub guess: i64,
     pub stars: i64,
-    /// how sure it is of `guess`, 0..1; 0 when asked blind
-    pub sure: f64,
 }
 
 #[derive(Serialize)]
@@ -639,44 +616,12 @@ pub struct Queue {
     pub pool: usize,
     /// asked of a model trained before your latest labels: retrain, then ask again
     pub stale: bool,
-    /// whether these are the fast track's items (asked for, and open)
-    pub fast: bool,
-    /// whether the fast track is open, and what it rides on: sure guesses right, on how many
-    /// blind held-back labels (docs/fast-track.md)
-    pub fast_ready: bool,
-    pub sure_right: [f64; 2],
-    pub sure_n: usize,
-}
-
-/// What the fast track is narrowed to, each empty for any: colours (palette ids), stars, energy
-/// (1..10) and BPM in tens (70 holding all below, 180 all above), all on the model's guess or
-/// the track's analysis, since these tracks have no label yet.
-#[derive(Deserialize, Default, Clone)]
-pub struct QueueFilter {
-    #[serde(default)]
-    pub colours: Vec<i64>,
-    #[serde(default)]
-    pub stars: Vec<i64>,
-    #[serde(default)]
-    pub energy: Vec<i64>,
-    #[serde(default)]
-    pub bpm: Vec<i64>,
-}
-
-impl QueueFilter {
-    fn passes(&self, colour: i64, stars: i64, energy: i64, bpm: f64) -> bool {
-        let any = |want: &[i64], v: i64| want.is_empty() || want.contains(&v);
-        any(&self.colours, colour)
-            && any(&self.stars, stars)
-            && any(&self.energy, energy)
-            && any(&self.bpm, (bpm as i64 / 10 * 10).clamp(70, 180))
-    }
 }
 
 /// What the training queue asks at each place: every 5th a conflict (1), every 7th an old
 /// label (2), every 10th a track the model is sure about, asked blind (3): sure guesses teach
 /// it little, but answered blind they are the only honest measure of how right it is where it
-/// is sure, which the accuracy stat and the fast track's gate live on. The rest unsure (0).
+/// is sure, which the accuracy stat lives on. The rest unsure (0).
 pub fn train_slot(slot: usize) -> usize {
     if slot % 10 == 0 {
         3
@@ -687,35 +632,6 @@ pub fn train_slot(slot: usize) -> usize {
     } else {
         0
     }
-}
-
-/// What the fast track asks at each place: mostly sure tracks to confirm or fix; every 10th a
-/// sure track asked blind, which keeps the accuracy honest; every 20th a guess you kept a while
-/// ago, asked blind again, which measures how much the shown guess swayed you.
-pub fn fast_slot(slot: usize) -> &'static str {
-    if slot % 20 == 10 {
-        "gauge"
-    } else if slot % 10 == 5 {
-        "blind"
-    } else {
-        "fast"
-    }
-}
-
-/// Each track's energy as the library shows it: your correction, else the analysis; 0 unknown.
-fn energy_by_path(root: &Path, con: &rusqlite::Connection) -> Res<HashMap<String, i64>> {
-    let cache = store::cache_db(root)?;
-    let hb = store::hash_by_path(con)?;
-    let mut st = cache.prepare("SELECT hash, energy FROM analysis WHERE version = ?1")?;
-    let by_hash: HashMap<String, i64> = st.query_map([keyenergy::VERSION], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
-    let mine = store::key_energy(con)?;
-    Ok(hb
-        .iter()
-        .map(|(p, h)| {
-            let e = mine.get(p).and_then(|(_, e)| *e).map(i64::from).or_else(|| by_hash.get(h).copied()).unwrap_or(0);
-            (p.clone(), e)
-        })
-        .collect())
 }
 
 fn unit(v: &[f32]) -> Vec<f32> {
@@ -746,9 +662,7 @@ fn spread(pool: &[Vec<f32>], have: &[Vec<f32>], n: usize) -> Vec<usize> {
 /// the tracks the model is least sure about, mixed with conflicts (your label
 /// against a model that is sure otherwise) and old labels (a colour from
 /// before vibecheck the model disagrees with), those two asked blind.
-/// `fast`: the fast track instead, when it is open (`fast_ready`), narrowed by `filter`.
-#[allow(clippy::too_many_arguments)]
-pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: usize, skip: &[String], stale_ok: bool, fast: bool, filter: &QueueFilter) -> Res<Queue> {
+pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: usize, skip: &[String], stale_ok: bool) -> Res<Queue> {
     let con = store::labels_db(root)?;
     let l = labelled(root, cfg)?;
     let mine: HashSet<String> = store::current(&con, Some("user"))?.into_keys().collect();
@@ -758,24 +672,12 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let (pool, px) = embed::load(root, &open)?;
     let (ms, stale) = model(root, cfg, &l, stale_ok)?;
     let (m, s) = (&ms.0, &ms.1);
-    let ready = fast_ready(s);
-    let mut q = Queue {
-        items: vec![],
-        labels: mine.len(),
-        accuracy: s.colour,
-        measured: s.colour_n,
-        pool: pool.len(),
-        stale,
-        fast: fast && ready,
-        fast_ready: ready,
-        sure_right: s.sure,
-        sure_n: s.sure_n,
-    };
+    let mut q = Queue { items: vec![], labels: mine.len(), accuracy: s.colour, measured: s.colour_n, pool: pool.len(), stale };
     if mine.len() < threshold || l.x.len() < 20 {
         let have: Vec<Vec<f32>> = l.x.iter().map(|v| unit(v)).collect();
         let ux: Vec<Vec<f32>> = px.iter().map(|v| unit(v)).collect();
         for i in spread(&ux, &have, n) {
-            q.items.push(Item { path: pool[i].clone(), tag: "calibration", guess: 0, stars: -1, sure: 0.0 });
+            q.items.push(Item { path: pool[i].clone(), tag: "calibration", guess: 0, stars: -1 });
         }
         return Ok(q);
     }
@@ -783,43 +685,6 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
     let preds = m.predict(&pr);
     let star = |p: &Prediction| p.top.get(STARS).and_then(|s| s.0.parse().ok()).unwrap_or(-1);
-    if q.fast {
-        // most sure first, within what you narrowed it to
-        let x = xml(root, xml_path)?;
-        let energy = energy_by_path(root, &con)?;
-        let mut sure: Vec<(f64, usize)> = preds
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| {
-                let (g, pg) = best_colour(p)?;
-                let bpm = x.get(&pool[i]).map(|t| t.info.bpm).unwrap_or(0.0);
-                (pg >= SURE && filter.passes(g, star(p), energy.get(&pool[i]).copied().unwrap_or(0), bpm)).then_some((pg, i))
-            })
-            .collect();
-        sure.sort_by(|a, b| b.0.total_cmp(&a.0));
-        let week = now() - 7 * 86400;
-        let mut again = store::kept_guesses_before(&con, week)?.into_iter().filter(|p| !skip.contains(p));
-        let mut next = sure.into_iter();
-        let mut slot = 0;
-        while q.items.len() < n {
-            slot += 1;
-            let kind = fast_slot(slot);
-            if kind == "gauge"
-                && let Some(p) = again.next()
-            {
-                q.items.push(Item { path: p, tag: "blind", guess: 0, stars: -1, sure: 0.0 });
-                continue;
-            }
-            let Some((pg, i)) = next.next() else { break };
-            let p = &preds[i];
-            q.items.push(if kind == "fast" {
-                Item { path: pool[i].clone(), tag: "fast", guess: best_colour(p).map(|g| g.0).unwrap_or(0), stars: star(p), sure: pg }
-            } else {
-                Item { path: pool[i].clone(), tag: "blind", guess: 0, stars: -1, sure: 0.0 }
-            });
-        }
-        return Ok(q);
-    }
     // least sure first
     let mut unsure: Vec<(f64, usize)> = preds.iter().enumerate().filter_map(|(i, p)| Some((best_colour(p)?.1, i))).collect();
     unsure.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -850,7 +715,7 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
         })
         .collect();
     old.sort_by(|a, b| b.0.total_cmp(&a.0));
-    // sure ones, asked blind now and then: the check the accuracy and the fast track rest on
+    // sure ones, asked blind now and then: the check the accuracy stat rests on
     let mut sure: Vec<(f64, usize)> = unsure.iter().filter(|(pg, _)| *pg >= SURE).copied().collect();
     sure.sort_by(|a, b| b.0.total_cmp(&a.0));
     let (mut a, mut b, mut c, mut d) = (unsure.iter(), conflicts.iter(), old.iter(), sure.iter());
@@ -865,20 +730,20 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
                 3 => {
                     if let Some((_, i)) = d.find(|(_, i)| !used.contains(i)) {
                         used.insert(*i);
-                        q.items.push(Item { path: pool[*i].clone(), tag: "blind", guess: 0, stars: -1, sure: 0.0 });
+                        q.items.push(Item { path: pool[*i].clone(), tag: "blind", guess: 0, stars: -1 });
                         placed = true;
                     }
                 }
                 1 => {
                     if let Some((_, p)) = b.next() {
-                        q.items.push(Item { path: p.clone(), tag: "conflict", guess: 0, stars: -1, sure: 0.0 });
+                        q.items.push(Item { path: p.clone(), tag: "conflict", guess: 0, stars: -1 });
                         placed = true;
                     }
                 }
                 2 => {
                     if let Some((_, i)) = c.find(|(_, i)| !used.contains(i)) {
                         used.insert(*i);
-                        q.items.push(Item { path: pool[*i].clone(), tag: "old label", guess: 0, stars: -1, sure: 0.0 });
+                        q.items.push(Item { path: pool[*i].clone(), tag: "old label", guess: 0, stars: -1 });
                         placed = true;
                     }
                 }
@@ -891,7 +756,6 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
                             tag: "unsure",
                             guess: best_colour(p).map(|g| g.0).unwrap_or(0),
                             stars: star(p),
-                            sure: 0.0,
                         });
                         placed = true;
                     }
@@ -1414,10 +1278,6 @@ pub struct Stats {
     /// that share as it was when the model could have trained on `n` of your labels, at
     /// the curve's points: (n, the middle of its 95% range); from 20 times on
     pub past: Vec<(usize, f64)>,
-    /// the anchoring gauge: guesses you kept with them on screen and later answered blind,
-    /// and how often the blind answer was the same colour
-    pub kept_again: usize,
-    pub kept_agreed: usize,
 }
 
 /// One point of the learning curve: trained on `n` labels, the share right (the middle of
@@ -1485,7 +1345,6 @@ pub fn stats(root: &Path, cfg: &Config) -> Res<Stats> {
     }
     s.again = times.len();
     s.agreed = times.iter().filter(|t| t.1).count();
-    (s.kept_again, s.kept_agreed) = store::kept_then_blind(&con)?;
     let n_train = l.hashes.iter().filter(|h| evaluate::part(h) == "train").count();
     let mut at = vec![];
     let mut k = 25;
@@ -1849,51 +1708,27 @@ mod tests {
     }
 
     #[test]
-    fn the_fast_track_is_mostly_sure_tracks() {
-        let kinds: Vec<&str> = (1..=40).map(fast_slot).collect();
-        assert_eq!(kinds.iter().filter(|k| **k == "fast").count(), 34);
-        assert_eq!(kinds.iter().filter(|k| **k == "blind").count(), 4);
-        assert_eq!(kinds.iter().filter(|k| **k == "gauge").count(), 2);
-        assert_eq!(fast_slot(1), "fast");
-    }
-
-    #[test]
-    fn the_fast_track_opens_on_measured_accuracy() {
-        let mut s = Score { sure: wilson(29, 30), sure_n: 30, ..Default::default() };
-        assert!(fast_ready(&s));
-        s.sure_n = 29;
-        assert!(!fast_ready(&s));
-        s = Score { sure: wilson(26, 30), sure_n: 30, ..Default::default() };
-        assert!(!fast_ready(&s)); // 87%
-        let f = QueueFilter { colours: vec![3], bpm: vec![120], ..Default::default() };
-        assert!(f.passes(3, 4, 7, 128.0));
-        assert!(!f.passes(3, 4, 7, 131.0));
-        assert!(!f.passes(2, 4, 7, 128.0));
-        assert!(QueueFilter::default().passes(1, -1, 0, 0.0));
-    }
-
-    #[test]
     fn trust_follows_what_you_did() {
         use Trust::*;
         assert_eq!(trust("model", None, None, None, Some(3), false), Guessed);
-        assert_eq!(trust("user", None, Some("unsure"), Some(3), Some(3), false), FastConfirm);
+        assert_eq!(trust("user", None, Some("unsure"), Some(3), Some(3), false), Kept);
         assert_eq!(trust("user", None, Some("unsure"), Some(3), Some(5), false), Confirmed);
         assert_eq!(trust("user", None, Some("calibration"), None, Some(3), false), Confirmed);
         assert_eq!(trust("user", Some("xml"), None, None, Some(3), false), Existing);
         assert_eq!(trust("user", Some("xml"), Some("existing"), None, Some(3), false), Existing);
         assert_eq!(trust("user", Some("xml"), Some("corrected"), None, Some(3), false), Confirmed);
         assert_eq!(trust("user", Some("xml"), None, None, Some(3), true), Played);
-        assert_eq!(trust("user", None, Some("fast"), Some(3), Some(3), true), Played);
+        assert_eq!(trust("user", None, Some("unsure"), Some(3), Some(3), true), Played);
         assert_eq!(Played.level(), 4);
-        assert_eq!(FastConfirm.level(), 3);
+        assert_eq!(Kept.level(), 3);
     }
 
     #[test]
     fn weights_multiply_trust_by_rating() {
         let cfg = Config(crate::config::DEFAULT.parse().unwrap());
         let w = |t: Trust, s: Option<u8>| t.weight(&cfg) * rating_factor(s, &cfg);
-        assert!((w(Trust::FastConfirm, Some(1)) - 0.3).abs() < 1e-9);
-        assert!((w(Trust::FastConfirm, None) - 0.25).abs() < 1e-9);
+        assert!((w(Trust::Kept, Some(1)) - 0.3).abs() < 1e-9);
+        assert!((w(Trust::Kept, None) - 0.25).abs() < 1e-9);
         assert!((w(Trust::Confirmed, Some(5)) - 0.7).abs() < 1e-9);
         assert!((w(Trust::Existing, Some(5)) - 0.3).abs() < 1e-9);
     }

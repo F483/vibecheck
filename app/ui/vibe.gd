@@ -15,8 +15,6 @@ var relisten := false
 var _queue: VBoxContainer
 ## Search and filters over the export list, the library's row, with Export at its end.
 var filters: Filters
-## The fast track's filters: colour, energy, rating and BPM of the model's guess.
-var _fast_filters: Filters
 var _shown := -1
 var _status := ""
 ## The player: lent to the library as it is, so changing screen moves nothing on it.
@@ -51,13 +49,6 @@ func _init(s, a, p) -> void:
 	var q := UI.section(UI.DARK)
 	q.add_child(_queue)
 	add_child(q)
-	_fast_filters = Filters.new([], true)
-	_fast_filters.changed.connect(func() -> void:
-		var pk := _fast_filters.picked()
-		var ids: Array = []
-		for i: int in pk.colours:
-			ids.append(state.PALETTE.find(UI.COLOURS[i].name) + 1)
-		state.set_fast_filter({"colours": ids, "stars": pk.rating, "energy": pk.energy, "bpm": pk.bpm}))
 	filters = Filters.new([UI.button("Export →", "X", true, Callable(app, "export_batch"), UI.OUTPUT)])
 	filters.changed.connect(_fill)
 	var r := UI.section(UI.PANEL, 16, 8)
@@ -127,26 +118,10 @@ func _fill() -> void:
 func _build_queue() -> void:
 	for c in _queue.get_children():
 		c.queue_free()
-	# the fast track: a toggle before the title, open once the model's sure guesses are
-	# measurably right; locked, it says what it waits on
-	var on: bool = state.settings.fast_track and state.fast
-	var fast := UI.chip("Fast track", on, func() -> void: state.set_setting("fast_track", not state.settings.fast_track))
-	fast.add_theme_constant_override("margin_right", 4)
-	if not state.fast_ready:
-		fast.modulate.a = 0.45
-	var about := "most sure first: confirm or fix" if on else "ordered by what teaches the model most"
-	if not state.fast_ready:
-		about += "  ·  fast track opens at 90%% right on 30 sure tracks asked blind: %s" % (
-			"%d%% on %d" % [int(round(float(state.sure_right[0]) * 100)), state.sure_n] if state.sure_n > 0 else "none yet")
 	# the queue holds the next 200; the pool is everything that could be asked
-	_queue.add_child(UI.row(8, [fast, UI.kbd("⌥F"), UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
+	_queue.add_child(UI.row(8, [UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
 		UI.text("of %s" % UI.thousands(maxi(state.pool, state.queue.size())), 12, UI.MUTED, "mono"),
-		UI.text(about, 11, UI.MUTED), UI.spacer(), UI.text(_status, 11, UI.LIME, "mono")]))
-	# narrowed by the guess: the library's colour, energy, rating and BPM chips
-	if _fast_filters.get_parent():
-		_fast_filters.get_parent().remove_child(_fast_filters)
-	if on:
-		_queue.add_child(_fast_filters)
+		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.text(_status, 11, UI.LIME, "mono")]))
 	var cards := UI.row(8)
 	var n := _fit()
 	_shown = n
@@ -171,7 +146,7 @@ func _card(t: Dictionary, first: bool, playing: bool) -> Control:
 		s.border_color = UI.LIME
 		s.set_border_width_all(1)
 	p.custom_minimum_size = Vector2(184, 64)
-	var info := UI.col(1, [UI.tag("next" if first else str(t.tag), "" if first else UI.tag_label(t)), UI.text(t.title, 12, UI.TEXT, "bold"),
+	var info := UI.col(1, [UI.tag("next" if first else str(t.tag)), UI.text(t.title, 12, UI.TEXT, "bold"),
 		UI.text(t.artist, 11, UI.MUTED)])
 	for l in info.get_children():
 		if l is Label:
@@ -295,9 +270,6 @@ func handle_key(k: InputEventKey) -> bool:
 		filters.search.grab_focus()
 		return true
 	if k.alt_pressed:
-		if k.keycode == KEY_F:
-			state.set_setting("fast_track", not state.settings.fast_track)
-			return true
 		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm", KEY_T: "ring"}
 		if sorts.has(k.keycode):
 			table.sort_by(sorts[k.keycode])

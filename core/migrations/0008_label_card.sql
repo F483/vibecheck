@@ -1,4 +1,4 @@
--- How a label came to be, beyond its source (docs/fast-track.md):
+-- How a label came to be, beyond its source (docs/label-weights.md):
 --   shown        the colour on screen when it was made, palette id; NULL = asked blind
 --   shown_stars  the stars on screen then; NULL = none shown
 --   card         which card asked: calibration, unsure, conflict, old label, re-ask, fast,

@@ -401,45 +401,6 @@ pub fn current_made(con: &Connection) -> Res<HashMap<String, Current>> {
     Ok(out)
 }
 
-/// Tracks whose current label is a guess you kept with it on screen, made before `ts`: what
-/// the fast track asks again blind now and then, to see how much the shown guess swayed you.
-pub fn kept_guesses_before(con: &Connection, ts: i64) -> Res<Vec<String>> {
-    let mut st = con.prepare(
-        "SELECT path FROM current WHERE source = 'user' AND shown IS NOT NULL AND colour_id = shown
-         AND ts < ?1 AND missing_at IS NULL ORDER BY ts",
-    )?;
-    let out = st.query_map([ts], |r| r.get(0))?.collect::<Result<_, _>>()?;
-    Ok(out)
-}
-
-/// The anchoring gauge: (guesses kept with them on screen and later answered blind, how often
-/// the blind answer was the same colour). Each kept guess counts once, with the next blind answer.
-pub fn kept_then_blind(con: &Connection) -> Res<(usize, usize)> {
-    let mut st = con.prepare(
-        "SELECT track_id, colour_id, shown FROM labels WHERE source = 'user' AND colour_id IS NOT NULL ORDER BY id",
-    )?;
-    let mut kept: HashMap<i64, i64> = HashMap::new();
-    let (mut again, mut agreed) = (0, 0);
-    for r in st.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, Option<i64>>(2)?)))? {
-        let (t, c, shown) = r?;
-        match shown {
-            Some(s) if s == c => {
-                kept.insert(t, c);
-            }
-            None => {
-                if let Some(was) = kept.remove(&t) {
-                    again += 1;
-                    agreed += (was == c) as usize;
-                }
-            }
-            _ => {
-                kept.remove(&t);
-            }
-        }
-    }
-    Ok((again, agreed))
-}
-
 /// Tracks an export of ours was played after: a sync saw their play count rise.
 pub fn played_after_export(con: &Connection) -> Res<HashSet<String>> {
     let mut st = con.prepare(
