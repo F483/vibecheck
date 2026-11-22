@@ -123,6 +123,13 @@ impl Vibecheck {
         GString::from(v.to_string().as_str())
     }
 
+    /// Export's progress while it runs: tracks analysed, of all.
+    #[func]
+    fn export_progress() -> Vector2i {
+        let get = |a: &std::sync::atomic::AtomicUsize| a.load(std::sync::atomic::Ordering::Relaxed) as i32;
+        Vector2i::new(get(&app::EXPORT_DONE), get(&app::EXPORT_TOTAL))
+    }
+
     /// The app is closing: long work stops at its next safe point.
     #[func]
     fn stop() {

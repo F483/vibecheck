@@ -279,11 +279,20 @@ pub fn bar_audio(y: &[f32], down: &[f64]) -> Bars {
         fft.process(&mut inp, &mut out).unwrap();
         s.push(out.iter().map(|z| (z.norm_sqr() as f32) as f64).collect());
     }
-    let mb = mel_basis();
+    // each mel filter is a triangle over a few bins: summing only its span skips exact zeros,
+    // so the result is the same as the full product, ~30x less work (it was most of export)
+    let mb: Vec<(usize, Vec<f64>)> = mel_basis()
+        .into_iter()
+        .map(|row| {
+            let a = row.iter().position(|w| *w != 0.0).unwrap_or(0);
+            let b = row.iter().rposition(|w| *w != 0.0).map_or(a, |b| b + 1);
+            (a, row[a..b].to_vec())
+        })
+        .collect();
     let mut mel: Vec<f64> = vec![0.0; frames * N_MELS];
     for (t, fr) in s.iter().enumerate() {
-        for (m, row) in mb.iter().enumerate() {
-            mel[t * N_MELS + m] = row.iter().zip(fr).map(|(a, b)| a * b).sum();
+        for (m, (a, row)) in mb.iter().enumerate() {
+            mel[t * N_MELS + m] = row.iter().zip(&fr[*a..]).map(|(a, b)| a * b).sum();
         }
     }
     power_to_db(&mut mel);

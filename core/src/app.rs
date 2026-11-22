@@ -10,6 +10,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
@@ -1015,7 +1016,57 @@ pub struct Exported {
 
 /// Write what was labelled since the last export into the xml, as one playlist,
 /// with key, energy and cue points as configured.
+/// Export's progress for the app to poll while it runs: tracks whose audio is analysed, of all.
+pub static EXPORT_DONE: AtomicUsize = AtomicUsize::new(0);
+pub static EXPORT_TOTAL: AtomicUsize = AtomicUsize::new(0);
+
+const _: () = assert!(keyenergy::RATE == cues::SR);
+
+/// Decode each track that misses key/energy or cue features once and fill both caches, so
+/// export's two passes read them back instead of decoding every track twice. Tracks heard in
+/// the player are mostly cached; bulk-labelled ones never are.
+fn warm(root: &Path, paths: &[String], x: &HashMap<String, Track>, ke: bool, cue: bool) -> Res<()> {
+    let cache = store::cache_db(root)?;
+    let hb = store::hash_by_path(&store::labels_db(root)?)?;
+    let todo: Vec<(&String, bool, Option<&Track>)> = paths
+        .iter()
+        .filter_map(|p| {
+            let h = hb.get(p)?;
+            let nk = ke && keyenergy::cached(&cache, h).is_none();
+            let t = x.get(p).filter(|t| cue && !t.tempos.is_empty() && cues::writable(t));
+            let nc = t.filter(|t| cues::cached_features(&cache, h, t).is_none());
+            (nk || nc.is_some()).then_some((p, nk, nc))
+        })
+        .collect();
+    EXPORT_TOTAL.store(paths.len(), Ordering::Relaxed);
+    EXPORT_DONE.store(paths.len() - todo.len(), Ordering::Relaxed);
+    let res = keyenergy::parallel(
+        &todo,
+        |(p, nk, t)| {
+            let r = audio::decode(&root.join(p), keyenergy::RATE)
+                .ok()
+                .map(|d| (nk.then(|| keyenergy::analyse(&d).ok()).flatten(), t.and_then(|t| cues::features_of(&d, t))));
+            EXPORT_DONE.fetch_add(1, Ordering::Relaxed);
+            r
+        },
+        "      ",
+    );
+    cache.execute_batch("BEGIN")?;
+    for ((p, _, t), r) in todo.iter().zip(res) {
+        let Some((k, f)) = r else { continue };
+        if let Some((k, detail)) = k {
+            keyenergy::keep(&cache, &hb[*p], &k, &detail)?;
+        }
+        if let (Some(t), Some(f)) = (t, f) {
+            cues::keep_features(&cache, &hb[*p], t, &f)?;
+        }
+    }
+    cache.execute_batch("COMMIT")?;
+    Ok(())
+}
+
 pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
+    EXPORT_TOTAL.store(0, Ordering::Relaxed);
     if !xml_path.exists() {
         return Err(format!(
             "no rekordbox export at {}: in rekordbox, File › Export Collection in xml format",
@@ -1039,6 +1090,9 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
     let labels = store::current(&con, None)?;
     let tonality = cfg.bool("rekordbox", "write_tonality", true);
     let comment = cfg.bool("rekordbox", "write_comment", true);
+    let x = xml(root, xml_path)?;
+    let cue = cfg.bool("cues", "write", true);
+    warm(root, &paths, &x, tonality || comment, cue)?;
     let mut ke = if tonality || comment { keyenergy::analyse_all(root, &paths)?.0 } else { HashMap::new() };
     for (p, (k, e)) in store::key_energy(&con)? {
         if let Some(a) = ke.get_mut(&p) {
@@ -1046,8 +1100,7 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
             a.energy = e.unwrap_or(a.energy);
         }
     }
-    let x = xml(root, xml_path)?;
-    let plan = if cfg.bool("cues", "write", true) { Some(workflow::plan_cues(root, cfg, &paths, &x)?) } else { None };
+    let plan = if cue { Some(workflow::plan_cues(root, cfg, &paths, &x)?) } else { None };
     let name = format!("vibecheck-{}", local(now(), "%Y%m%d-%H%M"));
     let entries: Vec<Entry> = paths
         .iter()

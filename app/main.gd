@@ -202,8 +202,25 @@ func export_batch() -> void:
 	var v := dialog_box(464)
 	v.add_child(UI.caps("Exporting → rekordbox"))
 	v.add_child(UI.text("%d tracks" % state.reviewed.size(), 18, UI.TEXT, "heavy"))
-	v.add_child(UI.wrap("Working out key and energy and placing cue points; a minute for a long list.", 12))
+	# tracks heard in the player are analysed already; the rest are decoded now, the slow part
+	var line := UI.text("Starting…", 12, UI.MUTED, "mono")
+	var bar := UI.Bar.new(0, 0.0, UI.LIME)
+	v.add_child(UI.wrap("Working out key and energy and placing cue points.", 12))
+	v.add_child(bar)
+	v.add_child(line)
+	var poll := Timer.new()
+	poll.wait_time = 0.25
+	poll.timeout.connect(func() -> void:
+		var p: Vector2i = ClassDB.class_call_static("Vibecheck", "export_progress")
+		if p.y == 0:
+			return
+		bar.frac = float(p.x) / p.y
+		bar.queue_redraw()
+		line.text = "Analysing audio · %d of %d tracks" % [p.x, p.y] if p.x < p.y else "Writing rekordbox.xml…")
+	v.add_child(poll)
+	poll.start()
 	state.export(func(e: Variant) -> void:
+		poll.stop()
 		if e == null:
 			return
 		v = dialog_box(464)
