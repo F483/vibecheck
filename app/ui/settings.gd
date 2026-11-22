@@ -118,7 +118,7 @@ func refresh() -> void:
 	for n in [50, 100, 250, 0]:
 		lim.add_child(UI.chip("All" if n == 0 else str(n), int(st.guesses_limit) == n, func() -> void: state.set_setting("guesses_limit", n)))
 	_add(_line("Label all sure tracks at once" if int(st.guesses_limit) == 0 else "Label at most %d tracks at a time" % int(st.guesses_limit), lim))
-	_add(UI.wrap("Colour and stars only: key, energy and cues come with Export once you review a track. A guess stays thin trust until you change it in rekordbox or label the track here."))
+	_add(UI.wrap("Adds the model's colour and stars to the export list; Export writes them into rekordbox with key, energy and cues, like your own labels. A guess stays thin trust until you change it in rekordbox or label the track here."))
 
 	_card("Cue points")
 	_toggle("Write cue points", "cues_write")

@@ -126,8 +126,9 @@ func _build_queue() -> void:
 		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.text(_status, 11, UI.LIME, "mono")])
 	if not state.sure_hist.is_empty():
 		var bar := float(state.settings.guesses_sure)
-		var write := UI.button("Bulk label →", "⌥G", false, Callable(app, "export_guesses"), UI.OUTPUT)
-		if state.guesses_locked() != "":
+		var locked: bool = state.guesses_locked() != ""
+		var write := UI.button("Bulk label →", "⌥G", false, Callable(app, "export_guesses"), UI.OUTPUT, "lock" if locked else "unlock")
+		if locked:
 			write.modulate.a = 0.45
 		head.add_child(UI.spacer())
 		head.add_child(UI.text("model %d%% sure on %s" % [int(round(bar * 100)), UI.thousands(state.sure_at(bar))], 11, UI.MUTED))

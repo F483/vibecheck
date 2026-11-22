@@ -479,6 +479,13 @@ pub fn right_at(by: &[(usize, usize)], bar: f64) -> (usize, usize) {
         .fold((0, 0), |a, (_, b)| (a.0 + b.0, a.1 + b.1))
 }
 
+/// Blind tests that must pass: `rate` of the tests taken, counted as at least `need`. Under
+/// `need` taken this is the fixed `rate * need`, so 7 passed of 8 already unlocks at 70% of 10
+/// (the two left cannot pull it under); past it, the plain pass rate.
+pub fn must_pass(asked: usize, rate: f64, need: usize) -> usize {
+    (rate * asked.max(need) as f64 - 1e-9).ceil().max(0.0) as usize
+}
+
 /// `items` in runs of `run` sharing a key: round-robin over the keys in order of first
 /// appearance, each key's items in their given order.
 fn runs<T: Copy, K: PartialEq>(items: &[T], key: impl Fn(&T) -> K, run: usize) -> Vec<T> {
@@ -761,14 +768,15 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let preds = m.predict(&pr);
     let star = |p: &Prediction| p.top.get(STARS).and_then(|s| s.0.parse().ok()).unwrap_or(-1);
     let x = xml(root, xml_path)?;
-    // how much of the pool the model is sure about, and how much of that rekordbox has no
-    // colour for: the queue line's "sure on N" and the guesses export's size
+    // how much of the pool the model is sure about, and how much of that has no colour in
+    // rekordbox nor a label here: the queue line's "sure on N" and Bulk label's size
+    let any = store::current(&con, None)?;
     q.sure_hist = vec![0; BANDS];
     q.blank_hist = vec![0; BANDS];
     for (i, p) in preds.iter().enumerate() {
         if let Some(b) = best_colour(p).and_then(|(_, pg)| band(pg)) {
             q.sure_hist[b] += 1;
-            if x.get(&pool[i]).and_then(|t| t.label).and_then(|l| l.colour).is_none() {
+            if !any.contains_key(&pool[i]) && x.get(&pool[i]).and_then(|t| t.label).and_then(|l| l.colour).is_none() {
                 q.blank_hist[b] += 1;
             }
         }
@@ -792,7 +800,7 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let (rk, rn) = right_at(&s.by_sure, SURE);
     let measured = cfg.int("guesses", "measured", 10).max(1) as usize;
     let rested = store::recent_cards(&con, "conflict", now() - CONFLICT_REST)?;
-    let mut conflicts: Vec<(f64, String)> = if rn >= measured && rk as f64 >= CONFLICT_RIGHT * rn as f64 {
+    let mut conflicts: Vec<(f64, String)> = if rk >= must_pass(rn, CONFLICT_RIGHT, measured) {
         m.predict(&xr)
             .iter()
             .zip(&l.y)
@@ -1105,16 +1113,15 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
     Ok(out)
 }
 
-/// Write the model's guesses into rekordbox: tracks with no colour there that the model is
-/// at least `[guesses] sure` of, colour and stars, as one playlist, written with the same
-/// `[rekordbox]` options as Export.
-/// Nothing else is touched: no key, energy or cues (Export adds those once a track is
-/// reviewed), and no track that has a colour. Refused while calibrating, and until the model
-/// is right at least `[guesses] right` of the time where it is that sure, on at least
-/// `[guesses] measured` blind held-back labels. The guesses are logged as a round, so they
-/// stay guesses (trust 1, not trained on) until you change one in rekordbox, which sync
-/// reads as a correction, or label the track here (docs/queue.md).
-pub fn export_guesses(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize) -> Res<Exported> {
+/// Label in bulk: the model's colour and stars for tracks with no colour in rekordbox and no
+/// label here, the surest first, at most `[guesses] limit` (0 = all), once it is at least
+/// `[guesses] sure` of them. Nothing is written to rekordbox: the labels join the export list
+/// like the queue's, and Export writes them with key, energy and cues. Refused while
+/// calibrating, and until `must_pass` blind tests passed where the model is that sure. Logged
+/// as the model's (source `model`, card `guessed`): trust 1, not trained on, and an untouched
+/// one stays a guess after Export and sync; change it in rekordbox (a correction) or label the
+/// track here to make it yours (docs/queue.md).
+pub fn bulk_label(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize) -> Res<Bulked> {
     let con = store::labels_db(root)?;
     let l = labelled(root, cfg)?;
     let mine: HashSet<String> = store::current(&con, Some("user"))?.into_keys().collect();
@@ -1127,22 +1134,16 @@ pub fn export_guesses(root: &Path, xml_path: &Path, cfg: &Config, threshold: usi
     let right = cfg.float("guesses", "right", 0.7);
     let need = cfg.int("guesses", "measured", 10).max(1) as usize;
     let (k, kn) = right_at(&s.by_sure, bar);
-    if kn < need {
-        return Err(format!("not measured yet: {kn} of {need} blind labels where the model is {:.0}% sure", bar * 100.0).into());
-    }
-    if (k as f64) < right * kn as f64 {
-        return Err(format!(
-            "the model is right {:.0}% of the time where it is {:.0}% sure, below the {:.0}% it needs",
-            100.0 * k as f64 / kn as f64,
-            bar * 100.0,
-            right * 100.0
-        )
-        .into());
+    let want = must_pass(kn, right, need);
+    if k < want {
+        return Err(format!("{k} of {kn} blind tests passed where the model is {:.0}% sure, needs {want}", bar * 100.0).into());
     }
     let x = xml(root, xml_path)?;
+    // a label here already (yours, or a guess waiting for Export) is not guessed over
+    let any = store::current(&con, None)?;
     let blank: Vec<String> = store::live_paths(&con)?
         .into_iter()
-        .filter(|p| !mine.contains(p) && x.get(p).and_then(|t| t.label).and_then(|l| l.colour).is_none())
+        .filter(|p| !any.contains_key(p) && x.get(p).and_then(|t| t.label).and_then(|l| l.colour).is_none())
         .collect();
     let (pool, px) = embed::load(root, &blank)?;
     let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
@@ -1156,44 +1157,34 @@ pub fn export_guesses(root: &Path, xml_path: &Path, cfg: &Config, threshold: usi
         let stars = pred.top.get(STARS).and_then(|s| s.0.parse::<u8>().ok()).filter(|s| *s > 0);
         sure.push((pg, p.clone(), Label { colour: palette::by_id(g), stars }));
     }
-    // the surest first; `limit` (0 = all) per run, so a wrong model shows in a small batch
+    // the surest first; `limit` per run, so a wrong model shows in a small batch
     sure.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
     if limit > 0 {
         sure.truncate(limit);
     }
-    let labels: Vec<(String, Label)> = sure.into_iter().map(|(_, p, l)| (p, l)).collect();
-    let entries: Vec<Entry> =
-        labels.iter().map(|(p, l)| Entry { rel: p.clone(), level: "colour", label: Some(*l), key: None, energy: None, cues: None }).collect();
-    if entries.is_empty() {
-        return Err("nothing to write: no track without a colour in rekordbox that the model is sure of".into());
+    if sure.is_empty() {
+        return Err("nothing to label: no track without a colour that the model is sure of".into());
     }
-    let name = format!("vibecheck-bulk-{}", local(now(), "%Y%m%d-%H%M"));
-    let o = WriteOpts::from_cfg(&name, cfg, false);
-    let st = rekordbox::write(xml_path, xml_path, root, &entries, &o)?;
     let ids = store::track_ids(&con)?;
-    let rid = store::open_round(&con, &name, entries.len(), embed::BACKEND, &embed::fingerprint(), l.x.len())?;
+    let mut out = Bulked::default();
     con.execute_batch("BEGIN")?;
-    for (p, lab) in &labels {
+    for (_, p, lab) in &sure {
         if let Some(t) = ids.get(p) {
-            store::log_label_as(&con, *t, *lab, "model", Some(rid), store::Made { card: Some("guessed"), ..Default::default() })?;
+            store::log_label_as(&con, *t, *lab, "model", None, store::Made { card: Some("guessed"), ..Default::default() })?;
+            out.count += 1;
+            out.rated += usize::from(lab.stars.is_some());
         }
     }
     con.execute_batch("COMMIT")?;
-    let ts = now();
-    let out = Exported {
-        name: name.clone(),
-        count: entries.len(),
-        coloured: st.coloured,
-        rated: st.rated,
-        keyed: 0,
-        commented: 0,
-        cued: 0,
-        not_in_xml: st.not_in_xml,
-        mtime: rekordbox::exported(xml_path).unwrap_or(ts),
-    };
-    let rows: Vec<Kept> = labels.iter().map(|(p, lab)| Kept::label(p, "guessed", None, Some(lab))).collect();
-    log_batch(&con, "out", ts, &name, None, &serde_json::to_value(&out)?, &rows)?;
     Ok(out)
+}
+
+#[derive(Serialize, Default)]
+pub struct Bulked {
+    /// tracks given the model's label, now on the export list
+    pub count: usize,
+    /// of them with stars
+    pub rated: usize,
 }
 
 #[derive(Serialize, Default)]
@@ -1923,6 +1914,13 @@ mod tests {
         assert_eq!(right_at(&by, 0.8), (8, 9));
         assert_eq!(right_at(&by, 0.75), (9, 11));
         assert_eq!(right_at(&[], 0.8), (0, 0));
+        // 70% of at least 10: 7 passed unlocks early, past 10 the rate counts
+        assert_eq!(must_pass(0, 0.7, 10), 7);
+        assert_eq!(must_pass(8, 0.7, 10), 7);
+        assert_eq!(must_pass(10, 0.7, 10), 7);
+        assert_eq!(must_pass(20, 0.7, 10), 14);
+        assert_eq!(must_pass(11, 0.7, 10), 8);
+        assert_eq!(must_pass(8, 0.75, 10), 8);
     }
 
     #[test]

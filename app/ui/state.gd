@@ -494,24 +494,28 @@ func guesses_locked() -> String:
 	if calibrating() or sure_hist.is_empty():
 		return "still calibrating"
 	var r := right_at(float(settings.guesses_sure))
-	var need := int(settings.guesses_measured)
-	if r[1] < need:
-		return "measured on %d of %d blind labels where the model is that sure" % [r[1], need]
-	if r[0] < float(settings.guesses_right) * r[1]:
-		return "right %d%% of the time there, below the %d%% it needs" % [int(round(100.0 * r[0] / r[1])), int(round(100 * float(settings.guesses_right)))]
+	var want := must_pass(r[1])
+	if r[0] < want:
+		return "%d blind tests passed, needs %d" % [r[0], want]
 	return ""
 
 
-## The model's guesses into rekordbox, colour and stars, tracks with no colour there.
-func export_guesses(done: Callable) -> void:
-	_exporting = true
-	_call(_main, "export_guesses", {"threshold": settings.threshold}, func(e: Variant) -> void:
-		_exporting = false
-		if e != null:
-			_seen_mtime = int(e.mtime)
+## Blind tests that must pass to unlock Bulk label (core `must_pass`): `right` of those
+## taken, counted as at least `measured`, so 7 passed of 8 unlocks at 70% of 10.
+func must_pass(taken: int) -> int:
+	return int(ceil(float(settings.guesses_right) * maxi(taken, int(settings.guesses_measured)) - 1e-9))
+
+
+## The model's colour and stars for tracks with no colour, onto the export list (core
+## `bulk_label`); Export writes them into rekordbox like the queue's labels.
+func bulk_label(done: Callable) -> void:
+	_call(_main, "bulk_label", {"threshold": settings.threshold}, func(e: Variant) -> void:
+		if e == null:
+			done.call(e)
+			return
+		_load_library(func() -> void:
 			refresh_queue()
-			changed.emit()
-		done.call(e), "Writing the model's guesses into rekordbox.xml…")
+			done.call(e)), "Labelling in bulk…")
 
 
 func export(done: Callable) -> void:

@@ -214,13 +214,19 @@ static func clickable(c: Control, cb: Callable) -> Control:
 
 
 ## `bg` overrides the fill (lime when primary, else grey); the ink follows how light it is.
-static func button(t: String, key: String, primary: bool, cb: Callable, bg := Color.TRANSPARENT) -> PanelContainer:
+static func button(t: String, key: String, primary: bool, cb: Callable, bg := Color.TRANSPARENT, icon := "") -> PanelContainer:
 	var fill := bg if bg.a > 0 else (LIME if primary else LINE)
 	var light := fill.get_luminance() > 0.5
 	var p := panel(fill, 4, 12.0 if primary else 10.0, 6)
 	p.custom_minimum_size.y = 32
 	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	var r := row(6, [text(t, 12, BG if light else TEXT, "bold")])
+	if icon != "":
+		var i := Icon.new(icon)
+		i.custom_minimum_size = Vector2(14, 14)
+		i.color = BG if light else TEXT
+		r.add_child(i)
+		r.move_child(i, 0)
 	if key != "":
 		r.add_child(kbd(key, light))
 	p.add_child(r)
@@ -352,6 +358,17 @@ class Icon extends Control:
 				for i in 8:
 					var d := Vector2(cos(i * PI / 4), sin(i * PI / 4))
 					draw_line(c + d * 7 * s, c + d * 10 * s, color, w + 0.6, true)
+			"lock", "unlock":
+				# a padlock; unlocked, the shackle stands open to the right
+				draw_rect(Rect2(Vector2(4, 11) * s, Vector2(16, 11) * s), color, false, w, true)
+				if kind == "lock":
+					draw_arc(Vector2(12, 8) * s, 5 * s, PI, TAU, 16, color, w, true)
+					draw_line(Vector2(7, 8) * s, Vector2(7, 11) * s, color, w, true)
+					draw_line(Vector2(17, 8) * s, Vector2(17, 11) * s, color, w, true)
+				else:
+					draw_arc(Vector2(19, 6) * s, 5 * s, PI, TAU, 16, color, w, true)
+					draw_line(Vector2(14, 6) * s, Vector2(14, 11) * s, color, w, true)
+					draw_line(Vector2(24, 6) * s, Vector2(24, 7) * s, color, w, true)
 
 
 ## A slider drawn like the mockup: a thin track and a lime knob.

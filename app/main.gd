@@ -239,50 +239,56 @@ func export_guesses() -> void:
 		return
 	var st: Dictionary = state.settings
 	var bar := float(st.guesses_sure)
+	var pct := int(round(bar * 100))
 	var r: Array = state.right_at(bar)
-	var why: String = state.guesses_locked()
+	var want := state.must_pass(r[1])
+	var locked: bool = state.guesses_locked() != ""
 	var v := dialog_box(464)
-	v.add_child(UI.caps("Bulk label → rekordbox"))
+	v.add_child(UI.caps("Bulk label → export list"))
 	var n := state.sure_at(bar, true)
 	var lim := int(st.guesses_limit)
 	v.add_child(UI.text("%s of %s tracks" % [UI.thousands(lim), UI.thousands(n)] if lim > 0 and n > lim else "%s tracks" % UI.thousands(n), 18, UI.TEXT, "heavy"))
-	v.add_child(UI.text("no colour in rekordbox yet, the model at least %d%% sure of one%s" % [int(round(bar * 100)), ", surest first" if lim > 0 and n > lim else ""], 12, UI.MUTED, "mono"))
-	v.add_child(UI.text("right %d%% of the time there, on %d blind labels" % [int(round(100.0 * r[0] / r[1])), r[1]] if r[1] > 0
-		else "not measured there yet", 12, UI.MUTED, "mono"))
-	v.add_child(UI.wrap("Colour and stars only, as one playlist. Key, energy and cues come with Export once you review a track. A guess stays a guess (thin trust) until you change it in rekordbox or label the track here."))
-	if why != "":
-		v.add_child(UI.wrap("Locked: %s. The bar is set under Settings › Bulk label." % why, 12, UI.AMBER))
+	v.add_child(UI.text("no colour yet, the model %d%% sure of one%s" % [pct, ", surest first" if lim > 0 and n > lim else ""], 12, UI.MUTED, "mono"))
+	# the three conditions, in the words of Settings › Bulk label, each with where it stands
+	var checks := UI.col(6)
+	var li := UI.Icon.new("lock" if locked else "unlock")
+	li.custom_minimum_size = Vector2(14, 14)
+	li.color = UI.AMBER if locked else UI.DECIDE
+	checks.add_child(UI.row(8, [li, UI.caps("Locked" if locked else "Unlocked", li.color)]))
+	var cal := not state.calibrating()
+	_check(checks, cal, "Calibration done", "%s of %s labels" % [UI.thousands(mini(state.labels, int(st.threshold))), UI.thousands(int(st.threshold))])
+	_check(checks, r[0] >= want, "Blind tests passed", "%d of %d · needs %d" % [r[0], r[1], want])
+	var box := UI.panel(UI.DARK, 4, 12, 10)
+	box.add_child(checks)
+	v.add_child(box)
+	v.add_child(UI.wrap("Adds the model's colour and stars to the export list, surest first; Export then writes them into rekordbox like your own labels. A guess stays thin trust (not trained on) until you change it in rekordbox or label the track here. A blind test is a track the model is %d%% sure of, asked in the queue without showing its guess (every 10th card). Settings › Bulk label sets the numbers." % pct))
+	if locked:
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
 		return
 	v.add_child(UI.row(8, [UI.spacer(), UI.button("Cancel", "ESC", false, close_dialog), UI.button("Label", "ENTER", true, _write_guesses)]))
 	dialog_ok = _write_guesses
 
 
+## One unlock condition: a tick or a cross, its name, and where it stands.
+func _check(into: Control, ok: bool, what: String, status: String) -> void:
+	into.add_child(UI.row(8, [UI.text("✓" if ok else "✗", 12, UI.DECIDE if ok else UI.AMBER, "mono"), UI.text(what, 12),
+		UI.spacer(), UI.text(status, 12, UI.TEXT if ok else UI.AMBER, "mono")]))
+
+
 func _write_guesses() -> void:
 	var v := dialog_box(464)
-	v.add_child(UI.caps("Bulk labelling → rekordbox"))
+	v.add_child(UI.caps("Bulk label → export list"))
 	v.add_child(UI.wrap("A moment: the whole collection is scored.", 12))
-	state.export_guesses(func(e: Variant) -> void:
+	state.bulk_label(func(e: Variant) -> void:
 		if e == null:
 			return
 		v = dialog_box(464)
-		v.add_child(UI.caps("Bulk labelled → rekordbox"))
-		v.add_child(UI.text("%s tracks · %s" % [UI.thousands(e.count), e.name], 18, UI.TEXT, "heavy"))
-		var parts := ["%d colours" % e.coloured, "%d ratings" % e.rated]
-		if e.not_in_xml > 0:
-			parts.append("%d not in the export" % e.not_in_xml)
-		v.add_child(UI.text(", ".join(parts), 12, UI.MUTED, "mono"))
-		v.add_child(UI.text("written into %s · old one kept as .bak" % state.settings.xml, 11, UI.MUTED, "mono"))
-		v.add_child(UI.margin(UI.caps("Now in rekordbox"), 0, 4, 0, 0))
-		var steps := [
-			"Refresh the rekordbox xml node in the sidebar.",
-			"Right-click %s › Import Playlist, or just use the colours in the collection." % e.name,
-			"Play; change a colour that is wrong, then File › Export Collection in xml format over the same file. vibecheck reads the changes as corrections.",
-		]
-		for i in steps.size():
-			v.add_child(UI.row(8, [UI.text(str(i + 1), 12, UI.LIME, "mono"), UI.wrap(steps[i], 12, UI.TEXT)]))
-			(v.get_child(v.get_child_count() - 1).get_child(1) as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_child(UI.caps("Bulk labelled → export list"))
+		v.add_child(UI.text("%s tracks" % UI.thousands(e.count), 18, UI.TEXT, "heavy"))
+		v.add_child(UI.text("%d with stars · on the export list now" % e.rated, 12, UI.MUTED, "mono"))
+		v.add_child(UI.wrap("Check them in the list below, then Export (X) writes them into rekordbox with key, energy and cues, like the labels you made in the queue.", 12, UI.TEXT))
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)])))
+	dialog_ok = Callable()
 
 
 func sync_now() -> void:

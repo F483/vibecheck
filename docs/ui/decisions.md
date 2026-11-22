@@ -168,12 +168,20 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    mood; conflicts are dealt only once the model is right 75% of the time
    where it is sure, and a track asked as a conflict rests 60 days
    (`docs/queue.md`). At the right end of the title line, "model 80% sure on
-   1,163" and a **Bulk label →** button (⌥G), dimmed while locked: the
-   number says how much of the pool the model would label with confidence,
-   and when it stops moving per session, you write the guesses and go play.
-   Its dialog shows the count (tracks with no colour in rekordbox), the
-   measured accuracy where the model is that sure, and the reason when
-   locked; the bar and the guard are under Settings › Bulk label. The
+   1,163" and a **Bulk label →** button (⌥G) with a padlock, closed and
+   dimmed while locked, open once it may write: the number says how much of
+   the pool the model would label with confidence, and when it stops moving
+   per session, you write the guesses and go play. Its dialog shows the
+   count (tracks with no colour in rekordbox, capped by the limit) and a
+   LOCKED / UNLOCKED box with the three conditions as a checklist in the
+   words of Settings › Bulk label, each with where it stands: Calibration
+   done (100 of 100 labels), Blind tests passed (8 of 8 · needs 7).
+   Rewritten 2026-11-22: the earlier prose ("measured on 8 of 10 blind
+   labels where the model is that sure") read like a pass rate next to the
+   70% setting. The rule is one number, `must_pass`: 70% of the tests
+   taken, counted as at least 10, so 7 passed unlocks before the 10th test
+   (the rest cannot pull it under 70% of 10); a separate "taken ≥ 10" check
+   kept 8 of 8 locked for no reason. The
    player starts a track at its second section, past the intro, unless you
    moved first; 1 goes back to the start. A fast-track toggle (the
    model's surest guesses to confirm quickly, behind an accuracy gate) was
@@ -491,7 +499,7 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   - These apply to every write into rekordbox, Bulk label included.
   - No setting for how old the collection export may be: past 7 days
     (`warn_days`) the status row warns, and it always shows the export's age.
-- **Bulk label** (`[guesses]`): what Bulk label puts into rekordbox. Named
+- **Bulk label** (`[guesses]`): what Bulk label puts on the export list. Named
   for what the user gets (many tracks labelled at once), not the mechanism;
   the earlier "Model guesses" card / "Write guesses" button read as two
   things. No subtitle; none of the cards has one since 2026-11-22 (Calibration
@@ -506,18 +514,22 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
     here, and conflicts are the queue's business.
   - "Label at most 100 tracks at a time": 50 / 100 / 250 / All (`limit`,
     0 = all). The surest first; the dialog then reads "100 of 1,163 tracks,
-    … surest first". A small first batch shows a wrong model in rekordbox
-    before it has coloured a thousand tracks; run it again for the next.
+    … surest first". A small batch is quick to check on the export list;
+    run it again for the next 100 (tracks with a label here are skipped).
   - The number sits in the sentence and moves with the control, no value on
     the right: "right this often where it is that sure" did not tell the user
     what unlocked the button; "Unlock … blind tests" on both gate rows does.
   - No stars toggle (dropped 2026-11-22, with `[guesses] stars`): Bulk label
-    always writes colour and stars, with the Rekordbox Export options; what
-    goes into rekordbox is decided in one card, not per button.
-  - Colour and stars only, tracks with no colour in rekordbox, one playlist;
-    key, energy and cues come with Export once a track is reviewed. Not a
-    hard accuracy gate: the fast track showed a measured gate starves, so the
-    dialog informs and the user decides, within these bounds.
+    always labels colour and stars; what goes into rekordbox is decided in
+    the Rekordbox Export card, not per button.
+  - Bulk label adds to the export list, it does not write rekordbox
+    (changed 2026-11-22): the model's colour and stars for tracks with no
+    colour in rekordbox and no label here, then Export writes them with key,
+    energy and cues like the queue's labels. It first wrote its own playlist
+    straight into the xml, which left the export list unchanged and the user
+    wondering where the 100 tracks went. Not a hard accuracy gate: the fast
+    track showed a measured gate starves, so the dialog informs and the user
+    decides, within these bounds.
 - **Cue points**
   - Write cue points (`[cues] write`). They go only on tracks with no cues or
     with generated ones; a track with any cue you set yourself is never touched.

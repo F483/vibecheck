@@ -167,26 +167,29 @@ The end of the loop. You label until "model 80% sure on N" flattens, then
 write the guesses and go play; rekordbox corrections and plays come back
 through sync, the sure set grows, you write again.
 
-- **What**: tracks with no colour in rekordbox that the model is at least
-  `sure` of, colour and stars, as one playlist
-  `vibecheck-bulk-<date>`, at most `limit` (100) per run, surest first.
-  Nothing with a colour is touched: your labels
-  and old ones stay, disagreements remain the queue's job. No key, energy or
-  cues: only 476 of 14,194 tracks have that analysis, the rest would take
-  hours; Export adds them once a track is reviewed.
-- **Guard**, Settings › Bulk label (`[guesses]`): `sure` 0.8, `right` 0.7
-  on at least `measured` (10) blind held-back labels where the model is that
-  sure, and past calibration. Not a hard 90% gate: the fast track showed a
-  measured gate starves on real labels. The dialog shows the count, the
-  measured accuracy and the reason when locked; you decide within the bounds.
+- **What**: tracks with no colour in rekordbox and no label here that the
+  model is at least `sure` of, colour and stars, at most `limit` (100) per
+  run, surest first, added to the export list. Nothing is written to
+  rekordbox until Export, which writes them with key, energy and cues like
+  the queue's labels. Nothing with a colour is touched: your labels and old
+  ones stay, disagreements remain the queue's job. (First built as a direct
+  write of its own playlist into the xml; changed 2026-11-22, the export list
+  did not show it.)
+- **Guard**, Settings › Bulk label (`[guesses]`): past calibration, and
+  `must_pass` blind tests (held-back labels where the model is ≥ `sure`)
+  passed: `right` (0.7) of those taken, counted as at least `measured` (10).
+  So 7 passed unlocks before the 10th test; past 10 the pass rate counts.
+  Conflict cards use the same rule at 0.75. Not a hard 90% gate: the fast
+  track showed a measured gate starves on real labels. The dialog shows the
+  count and a checklist (calibration, blind tests passed · needs N).
 - **Meter**: the queue line's "model 80% sure on N" (whole pool) and the
   dialog's count (blank in rekordbox), both from per-band histograms the
   queue returns, so the Settings bar moves them without a round trip.
-- **Trust**: logged as a round, source `model`, card `guessed`: not trained
-  on, trust ring 1. `batch()` and `unsent` skip round labels, so Export never
-  resends them; sync leaves an untouched round track alone (it is never in
-  the last export's scope) and reads a changed one as `corrected` (0.7).
-  History shows the batch; `discard` undoes it.
+- **Trust**: source `model`, card `guessed`, no round: not trained on,
+  trust ring 1. They sit in `batch()` / `unsent` like a dropped track's
+  guess, so Export writes them; after it, sync reads an untouched one as
+  still a guess (only rounds are confirmed by being left alone) and a
+  changed one as `corrected` (0.7).
 - **Not done**: play tracking for guesses. Sync follows play counts only for
   the last export, so a played guess stays a guess. A `plays` column on
   `batch_tracks` and a sync over all out batches would fix that for every
@@ -194,7 +197,7 @@ through sync, the sure set grows, you write again.
 
 ## Done (2026-11-12)
 
-In `core/src/app.rs` (`queue()`, `export_guesses()`), `ext`, and the app:
+In `core/src/app.rs` (`queue()`, `bulk_label()`), `ext`, and the app:
 
 1. Conflicts: bar 0.8 (`SURE`); dealt only when `right_at(by_sure, SURE)` ≥
    `CONFLICT_RIGHT` (0.75) on ≥ `[guesses] measured` labels; a track asked as
@@ -208,6 +211,6 @@ In `core/src/app.rs` (`queue()`, `export_guesses()`), `ext`, and the app:
 5. `Score::by_sure` (right, asked per 5% band from 0.5; model cache key m6);
    the queue returns `sure_hist`, `blank_hist`, `right_hist`; the queue line
    shows "model 80% sure on N" and the Bulk label button (⌥G).
-6. Bulk label (was Write guesses): `export_guesses(root, xml, cfg, threshold)`, the dialog in
+6. Bulk label (was Write guesses): `bulk_label(root, xml, cfg, threshold)`, the dialog in
    `main.gd` (count, accuracy, lock reason; Cancel / Write, ENTER writes),
    the Settings card, `[guesses]` defaults in `default_config.toml`.

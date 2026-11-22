@@ -64,14 +64,15 @@ existing = 0.3
 guessed = 0.2
 
 [guesses]
-# The model's guesses written into rekordbox (Bulk label on the vibe
-# screen): tracks with no colour there, colour and stars, as one playlist,
-# with the [rekordbox] options above; key, energy and cues come with Export
-# once a track is reviewed. A guess is
-# written when the model is at least `sure` of the colour, and only once it is
-# right at least `right` of the time where it is that sure, measured on at
-# least `measured` blind labels held back from training. `measured` also gates
-# the queue's conflict cards. One run labels at most `limit` tracks, the
+# Bulk label on the vibe screen: the model's colour and stars for tracks with
+# no colour in rekordbox and no label here, added to the export list; Export
+# writes them with the [rekordbox] options above, key, energy and cues
+# included. A track is labelled when the model is at least `sure` of the
+# colour, and only once
+# `right` of the blind tests (labels held back from training) where it is
+# that sure have passed, counting at least `measured` tests: at 0.7 and 10,
+# 7 passed unlocks even before the 10th, past 10 the pass rate counts.
+# `measured` also gates the queue's conflict cards. One run labels at most `limit` tracks, the
 # surest first (0 = all), so a wrong model shows up in a small batch.
 sure = 0.8
 right = 0.7
