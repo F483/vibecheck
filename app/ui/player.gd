@@ -252,6 +252,9 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 			sections.append(float(sec[0]))
 			names.append(str(sec[1]))
 		_wave.show_parts(sections, names, p.cues, p.own_cues)
+		# start where the track does, past the intro, unless you already moved; 1 goes back
+		if sections.size() > 1 and pos < 2.0:
+			seek(sections[1])
 		# what an export would write; yours stays if you changed it meanwhile
 		var we := int(p.energy)
 		var wk := str(p.key)

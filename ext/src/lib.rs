@@ -82,6 +82,7 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         }
         "unheard" => json!(app::unheard(&root, n(a, "n", 20) as usize)?),
         "export" => json!(app::export(&root, &xml, &cfg()?)?),
+        "export_guesses" => json!(app::export_guesses(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize)?),
         "sync" => json!(app::sync(&root, &xml)?),
         "stats" => json!(app::stats(&root, &cfg()?)?),
         "history" => json!(app::history(&root)?),

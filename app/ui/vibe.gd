@@ -118,10 +118,21 @@ func _fill() -> void:
 func _build_queue() -> void:
 	for c in _queue.get_children():
 		c.queue_free()
-	# the queue holds the next 200; the pool is everything that could be asked
-	_queue.add_child(UI.row(8, [UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
+	# the queue holds the next 200; the pool is everything that could be asked. At the right,
+	# how much of the pool the model is sure about: when that stops moving, write the guesses
+	# and go play (docs/queue.md)
+	var head := UI.row(8, [UI.caps("Queue"), UI.text(str(state.queue.size()), 12, UI.TEXT, "mono"),
 		UI.text("of %s" % UI.thousands(maxi(state.pool, state.queue.size())), 12, UI.MUTED, "mono"),
-		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.text(_status, 11, UI.LIME, "mono")]))
+		UI.text("ordered by what teaches the model most", 11, UI.MUTED), UI.text(_status, 11, UI.LIME, "mono")])
+	if not state.sure_hist.is_empty():
+		var bar := float(state.settings.guesses_sure)
+		var write := UI.button("Write guesses →", "⌥G", false, Callable(app, "export_guesses"), UI.OUTPUT)
+		if state.guesses_locked() != "":
+			write.modulate.a = 0.45
+		head.add_child(UI.spacer())
+		head.add_child(UI.text("model %d%% sure on %s" % [int(round(bar * 100)), UI.thousands(state.sure_at(bar))], 11, UI.MUTED))
+		head.add_child(write)
+	_queue.add_child(head)
 	var cards := UI.row(8)
 	var n := _fit()
 	_shown = n
@@ -270,6 +281,9 @@ func handle_key(k: InputEventKey) -> bool:
 		filters.search.grab_focus()
 		return true
 	if k.alt_pressed:
+		if k.keycode == KEY_G:
+			app.export_guesses()
+			return true
 		var sorts := {KEY_C: "colour", KEY_E: "energy", KEY_R: "rating", KEY_B: "bpm", KEY_T: "ring"}
 		if sorts.has(k.keycode):
 			table.sort_by(sorts[k.keycode])

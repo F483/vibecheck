@@ -76,6 +76,44 @@ user really is sloppier on 1–2★. If they agree with themselves as often on
 2★ as on 5★, flatten the multiplier; if corrections turn out as consistent on
 1★ as on 5★, flatten it for level ≥ 3 only.
 
+## Worked examples
+
+| label | trust | rating | weight |
+|---|---|---|---|
+| played out after export, 5★ | 1.0 | 1.0 | 1.00 |
+| played, 2★ | 1.0 | 0.7 | 0.70 |
+| calibration card (blind), 4★ | 0.7 | 0.9 | 0.63 |
+| conflict / old label / blind check card, 3★ | 0.7 | 0.8 | 0.56 |
+| unsure card, guess Yellow, you picked Red, 5★ | 0.7 | 1.0 | 0.70 |
+| unsure card, guess Yellow, you kept Yellow, 5★ | 0.5 | 1.0 | 0.50 |
+| kept guess, 1★ | 0.5 | 0.6 | 0.30 |
+| kept guess, 0★ | 0.5 | 0.5 | 0.25 |
+| changed the colour in rekordbox, 3★ | 0.7 | 0.8 | 0.56 |
+| old rekordbox label, untouched, 5★ | 0.3 | 1.0 | 0.30 |
+| old rekordbox label, untouched, 0★ | 0.3 | 0.5 | 0.15 |
+
+Edge cases, as the code reads them (`trust()` in `app.rs`):
+
+- **Kept** needs the guess actually on screen (`shown` not NULL): calibration
+  and every blind card are confirmed (0.7) whatever you pick. Changing only
+  the stars of a shown guess is still kept: the colour matched.
+- **Played** wins over everything: a kept guess that was then played in a
+  set is 1.0. It means an export of ours was played since (sync's fate), not
+  the track's rekordbox play count.
+- **Rekordbox labels**: `corrected` and `confirmed` (left as exported, read
+  back) are 0.7; `existing` and older rows without a card are 0.3.
+- **Pre-v8 labels** have `shown` NULL, so they all count as confirmed:
+  0.7 × rating. On the reference collection that is 1,316 of 1,333 labels,
+  with one played.
+- **Stars**: `shown_stars` is recorded but does not enter the weight; only
+  the label's own stars do, through the rating factor.
+- The weight multiplies the row's loss and gradient in `Lr::fit_weighted`;
+  standardisation is weighted too, so a 0-weight row changes nothing.
+
+Things to check with data: whether re-ask consistency really drops on 1–2★
+(else flatten the rating factor), and whether kept guesses disagree with a
+later blind answer more than blind labels do (else raise `kept` toward 0.7).
+
 ## Accuracy from blind labels only
 
 A label made with the guess on screen matches it by construction, so the

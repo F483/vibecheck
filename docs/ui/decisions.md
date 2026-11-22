@@ -163,7 +163,19 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    (the user). Tags: next, conflict, calibration, unsure, re-ask, old
    label, blind. The queue is ordered by what teaches the model most; every
    10th card is a track the model is sure about, asked blind, so the accuracy
-   stat stays honest (`docs/label-weights.md`). A fast-track toggle (the
+   stat stays honest (`docs/label-weights.md`). Unsure cards come in runs of
+   five of one guessed colour, thinned for coverage, so deciding stays in one
+   mood; conflicts are dealt only once the model is right 75% of the time
+   where it is sure, and a track asked as a conflict rests 60 days
+   (`docs/queue.md`). At the right end of the title line, "model 80% sure on
+   1,163" and a **Write guesses →** button (⌥G), dimmed while locked: the
+   number says how much of the pool the model would label with confidence,
+   and when it stops moving per session, you write the guesses and go play.
+   Its dialog shows the count (tracks with no colour in rekordbox), the
+   measured accuracy where the model is that sure, and the reason when
+   locked; the bar and the guard are under Settings › Model guesses. The
+   player starts a track at its second section, past the intro, unless you
+   moved first; 1 goes back to the start. A fast-track toggle (the
    model's surest guesses to confirm quickly, behind an accuracy gate) was
    built here and cut the same day: the gate was out of reach on real
    labels (label-weights.md, last section). **Click the
@@ -454,10 +466,11 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
 
 - **Two columns**, so lines don't stretch across a wide window: the
   collection and the model on the left (Library, Calibration), what goes into
-  rekordbox on the right (Rekordbox Export, Cue points). Start spans both.
+  rekordbox on the right (Rekordbox Export, Model guesses, Cue points). Start
+  spans both.
 - **Each group on its own card**, titled, with one line on what it is for where
   that isn't plain (none on Library or Rekordbox Export), so
-  a new user sees four groups rather than a wall of settings. Fields inside a
+  a new user sees five groups rather than a wall of settings. Fields inside a
   card sit darker. No "Settings" title row and no intro line: the
   rail says where you are, and its dimmed screens that they wait on setup. The core version sits in small type under Start.
 - Library: the Music path and the `rekordbox.xml` path, with the note that the
@@ -474,6 +487,17 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
     comment, /* tags */ included, is kept: `[rekordbox] write_comment`.
   - No setting for how old the collection export may be: past 7 days
     (`warn_days`) the status row warns, and it always shows the export's age.
+- **Model guesses** (`[guesses]`): what Write guesses puts into rekordbox.
+  - Write a guess when the model is at least this sure: 60–95%, default 80%
+    (`sure`).
+  - Allowed once it is right this often where it is that sure: 50–95%,
+    default 70% (`right`), measured on at least 10 / 20 / 30 blind labels
+    (`measured`; the same count gates the queue's conflict cards).
+  - Write its star rating too (On, `stars`).
+  - Colour and stars only, tracks with no colour in rekordbox, one playlist;
+    key, energy and cues come with Export once a track is reviewed. Not a
+    hard accuracy gate: the fast track showed a measured gate starves, so the
+    dialog informs and the user decides, within these bounds.
 - **Cue points**
   - Write cue points (`[cues] write`). They go only on tracks with no cues or
     with generated ones; a track with any cue you set yourself is never touched.

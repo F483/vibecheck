@@ -445,11 +445,63 @@ pub struct Score {
     pub stars_n: usize,
     /// (truth, picked, times) for every mix-up, commonest first, palette ids
     pub confused: Vec<(i64, i64, usize)>,
+    /// colour right by how sure the model was, on the same blind held-back labels: (right,
+    /// asked) per band (`band`). What the conflict cards and the guesses export are gated
+    /// on. No serde default: a model cached without it is retrained once.
+    pub by_sure: Vec<(usize, usize)>,
 }
 
 /// A guess the model is this sure of (hue x tone) is "sure": a conflict needs it, and the
 /// training queue's check cards are drawn from such tracks.
 pub const SURE: f64 = 0.8;
+/// Conflict cards are dealt once the model is right this often where it is sure
+/// (`right_at(.., SURE)`, on at least `[guesses] measured` blind labels): below that its
+/// disagreement is noise and the card a blind re-ask for nothing (docs/queue.md).
+pub const CONFLICT_RIGHT: f64 = 0.75;
+/// A track asked as a conflict is not asked again for this long, seconds.
+pub const CONFLICT_REST: i64 = 60 * 86400;
+/// How many unsure cards in a row share the guessed colour.
+pub const RUN: usize = 5;
+
+/// Sureness bands, `BANDS` of `BAND` from 0.5 up: `Score::by_sure` and the queue's histograms.
+pub const BAND: f64 = 0.05;
+pub const BANDS: usize = 10;
+
+pub fn band(pg: f64) -> Option<usize> {
+    (pg >= 0.5).then(|| (((pg - 0.5) / BAND + 1e-9).floor() as usize).min(BANDS - 1))
+}
+
+/// (right, asked) where the model was at least `bar` sure, summed over the bands from it up.
+pub fn right_at(by: &[(usize, usize)], bar: f64) -> (usize, usize) {
+    by.iter()
+        .enumerate()
+        .filter(|(i, _)| 0.5 + *i as f64 * BAND >= bar - 1e-9)
+        .fold((0, 0), |a, (_, b)| (a.0 + b.0, a.1 + b.1))
+}
+
+/// `items` in runs of `run` sharing a key: round-robin over the keys in order of first
+/// appearance, each key's items in their given order.
+fn runs<T: Copy, K: PartialEq>(items: &[T], key: impl Fn(&T) -> K, run: usize) -> Vec<T> {
+    let mut groups: Vec<(K, std::collections::VecDeque<T>)> = vec![];
+    for it in items {
+        let k = key(it);
+        match groups.iter_mut().find(|(g, _)| *g == k) {
+            Some((_, v)) => v.push_back(*it),
+            None => groups.push((k, [*it].into())),
+        }
+    }
+    let mut out = Vec::with_capacity(items.len());
+    while out.len() < items.len() {
+        for (_, g) in groups.iter_mut() {
+            for _ in 0..run {
+                if let Some(t) = g.pop_front() {
+                    out.push(t);
+                }
+            }
+        }
+    }
+    out
+}
 
 /// Train on the training slice (the first `take` of it), score the validation
 /// slice: the colour the model would pick, against the one you gave.
@@ -478,11 +530,16 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
     }
     m.train_weighted(&xt, &yt, &wt);
     let (mut ck, mut hk, mut tk, mut sk) = (0, 0, 0, 0);
+    let mut by = vec![(0usize, 0usize); BANDS];
     let mut mix: HashMap<(i64, i64), usize> = HashMap::new();
     let mut per: std::collections::BTreeMap<i64, (usize, usize)> = Default::default();
     for (p, y) in m.predict(&xv).iter().zip(&yv) {
-        if let (Some(c), Some((g, _))) = (y.colour, best_colour(p)) {
+        if let (Some(c), Some((g, pg))) = (y.colour, best_colour(p)) {
             s.colour_n += 1;
+            if let Some(b) = band(pg) {
+                by[b].1 += 1;
+                by[b].0 += (c.id == g) as usize;
+            }
             let e = per.entry(c.id).or_default();
             e.0 += (c.id == g) as usize;
             e.1 += 1;
@@ -507,6 +564,7 @@ fn fit(l: &Labelled, ax: &[predict::Axis], take: usize) -> (predict::Model, Scor
     let mut mx: Vec<_> = mix.into_iter().map(|((a, b), n)| (a, b, n)).collect();
     mx.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)));
     s.confused = mx;
+    s.by_sure = by;
     (m, s)
 }
 
@@ -523,9 +581,9 @@ fn model_key(root: &Path, cfg: &Config, l: &Labelled) -> Res<(String, String)> {
     // only your labels change it: the model's guesses don't count
     let last: i64 = con.query_row("SELECT COALESCE(MAX(id), 0) FROM labels WHERE source = 'user'", [], |r| r.get(0))?;
     let ax = axes(cfg);
-    // m5: labels weighted by trust and rating, accuracy from blind labels only
+    // m6: labels weighted by trust and rating, accuracy from blind labels only, by sureness
     let kind = format!(
-        "m5|{}|{}|{}|{}|{}|{}",
+        "m6|{}|{}|{}|{}|{}|{}",
         root.display(),
         ax[0].misleading_cost,
         ax[2].misleading_cost,
@@ -616,6 +674,13 @@ pub struct Queue {
     pub pool: usize,
     /// asked of a model trained before your latest labels: retrain, then ask again
     pub stale: bool,
+    /// the pool by how sure the model is of its colour, per band (`band`): all of it, and
+    /// the part with no colour in rekordbox (what the guesses export would write); empty
+    /// while calibrating
+    pub sure_hist: Vec<usize>,
+    pub blank_hist: Vec<usize>,
+    /// colour right where the model was that sure, per band, on blind held-back labels
+    pub right_hist: Vec<(usize, usize)>,
 }
 
 /// What the training queue asks at each place: every 5th a conflict (1), every 7th an old
@@ -672,7 +737,17 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let (pool, px) = embed::load(root, &open)?;
     let (ms, stale) = model(root, cfg, &l, stale_ok)?;
     let (m, s) = (&ms.0, &ms.1);
-    let mut q = Queue { items: vec![], labels: mine.len(), accuracy: s.colour, measured: s.colour_n, pool: pool.len(), stale };
+    let mut q = Queue {
+        items: vec![],
+        labels: mine.len(),
+        accuracy: s.colour,
+        measured: s.colour_n,
+        pool: pool.len(),
+        stale,
+        sure_hist: vec![],
+        blank_hist: vec![],
+        right_hist: s.by_sure.clone(),
+    };
     if mine.len() < threshold || l.x.len() < 20 {
         let have: Vec<Vec<f32>> = l.x.iter().map(|v| unit(v)).collect();
         let ux: Vec<Vec<f32>> = px.iter().map(|v| unit(v)).collect();
@@ -685,24 +760,54 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
     let preds = m.predict(&pr);
     let star = |p: &Prediction| p.top.get(STARS).and_then(|s| s.0.parse().ok()).unwrap_or(-1);
-    // least sure first
+    let x = xml(root, xml_path)?;
+    // how much of the pool the model is sure about, and how much of that rekordbox has no
+    // colour for: the queue line's "sure on N" and the guesses export's size
+    q.sure_hist = vec![0; BANDS];
+    q.blank_hist = vec![0; BANDS];
+    for (i, p) in preds.iter().enumerate() {
+        if let Some(b) = best_colour(p).and_then(|(_, pg)| band(pg)) {
+            q.sure_hist[b] += 1;
+            if x.get(&pool[i]).and_then(|t| t.label).and_then(|l| l.colour).is_none() {
+                q.blank_hist[b] += 1;
+            }
+        }
+    }
+    // least sure first; the head of it (2n) thinned for coverage as calibration is, so one
+    // label settles a neighbourhood, then dealt in runs of one guessed colour, so deciding
+    // stays in one mood (docs/queue.md); the rest follows least sure first
     let mut unsure: Vec<(f64, usize)> = preds.iter().enumerate().filter_map(|(i, p)| Some((best_colour(p)?.1, i))).collect();
     unsure.sort_by(|a, b| a.0.total_cmp(&b.0));
-    // yours, where the model is sure of another colour
-    let mut conflicts: Vec<(f64, String)> = m
-        .predict(&xr)
-        .iter()
-        .zip(&l.y)
-        .zip(&l.paths)
-        .filter(|((_, y), p)| y.colour.is_some() && !skip.contains(p))
-        .filter_map(|((p, y), path)| {
-            let (g, pg) = best_colour(p)?;
-            (g != y.colour?.id && pg >= 0.5).then(|| (pg, path.clone()))
-        })
-        .collect();
+    let head: Vec<(f64, usize)> = unsure.iter().take(2 * n).copied().collect();
+    let have: Vec<Vec<f32>> = l.x.iter().map(|v| unit(v)).collect();
+    let hx: Vec<Vec<f32>> = head.iter().map(|(_, i)| unit(&px[*i])).collect();
+    let mut picked: Vec<(f64, usize)> = spread(&hx, &have, n).into_iter().map(|j| head[j]).collect();
+    picked.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let ordered = runs(&picked, |(_, i)| best_colour(&preds[*i]).map(|g| g.0).unwrap_or(0), RUN);
+    let in_order: HashSet<usize> = ordered.iter().map(|(_, i)| *i).collect();
+    unsure = ordered.into_iter().chain(unsure.into_iter().filter(|(_, i)| !in_order.contains(i))).collect();
+    // yours, where the model is sure of another colour: asked once the model has earned it
+    // (CONFLICT_RIGHT where sure, on enough blind labels), and not again within
+    // CONFLICT_REST of the last conflict card on the track
+    let (rk, rn) = right_at(&s.by_sure, SURE);
+    let measured = cfg.int("guesses", "measured", 10).max(1) as usize;
+    let rested = store::recent_cards(&con, "conflict", now() - CONFLICT_REST)?;
+    let mut conflicts: Vec<(f64, String)> = if rn >= measured && rk as f64 >= CONFLICT_RIGHT * rn as f64 {
+        m.predict(&xr)
+            .iter()
+            .zip(&l.y)
+            .zip(&l.paths)
+            .filter(|((_, y), p)| y.colour.is_some() && !skip.contains(p) && !rested.contains(*p))
+            .filter_map(|((p, y), path)| {
+                let (g, pg) = best_colour(p)?;
+                (g != y.colour?.id && pg >= SURE).then(|| (pg, path.clone()))
+            })
+            .collect()
+    } else {
+        vec![]
+    };
     conflicts.sort_by(|a, b| b.0.total_cmp(&a.0));
     // colours from before vibecheck the model disagrees with
-    let x = xml(root, xml_path)?;
     let spoken: HashSet<String> = store::current(&con, None)?.into_keys().collect();
     let mut old: Vec<(f64, usize)> = preds
         .iter()
@@ -996,6 +1101,91 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
             cues: plan.as_ref().and_then(|c| c.marks.get(p)).map(|m| m.0.len() as i64),
         })
         .collect();
+    log_batch(&con, "out", ts, &name, None, &serde_json::to_value(&out)?, &rows)?;
+    Ok(out)
+}
+
+/// Write the model's guesses into rekordbox: tracks with no colour there that the model is
+/// at least `[guesses] sure` of, colour and (with `[guesses] stars`) stars, as one playlist.
+/// Nothing else is touched: no key, energy or cues (Export adds those once a track is
+/// reviewed), and no track that has a colour. Refused while calibrating, and until the model
+/// is right at least `[guesses] right` of the time where it is that sure, on at least
+/// `[guesses] measured` blind held-back labels. The guesses are logged as a round, so they
+/// stay guesses (trust 1, not trained on) until you change one in rekordbox, which sync
+/// reads as a correction, or label the track here (docs/queue.md).
+pub fn export_guesses(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize) -> Res<Exported> {
+    let con = store::labels_db(root)?;
+    let l = labelled(root, cfg)?;
+    let mine: HashSet<String> = store::current(&con, Some("user"))?.into_keys().collect();
+    if mine.len() < threshold || l.x.len() < 20 {
+        return Err("still calibrating: label more tracks first".into());
+    }
+    let (ms, _) = model(root, cfg, &l, false)?;
+    let (m, s) = (&ms.0, &ms.1);
+    let bar = cfg.float("guesses", "sure", 0.8);
+    let right = cfg.float("guesses", "right", 0.7);
+    let need = cfg.int("guesses", "measured", 10).max(1) as usize;
+    let (k, kn) = right_at(&s.by_sure, bar);
+    if kn < need {
+        return Err(format!("not measured yet: {kn} of {need} blind labels where the model is {:.0}% sure", bar * 100.0).into());
+    }
+    if (k as f64) < right * kn as f64 {
+        return Err(format!(
+            "the model is right {:.0}% of the time where it is {:.0}% sure, below the {:.0}% it needs",
+            100.0 * k as f64 / kn as f64,
+            bar * 100.0,
+            right * 100.0
+        )
+        .into());
+    }
+    let x = xml(root, xml_path)?;
+    let blank: Vec<String> = store::live_paths(&con)?
+        .into_iter()
+        .filter(|p| !mine.contains(p) && x.get(p).and_then(|t| t.label).and_then(|l| l.colour).is_none())
+        .collect();
+    let (pool, px) = embed::load(root, &blank)?;
+    let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
+    let with_stars = cfg.bool("guesses", "stars", true);
+    let mut entries = vec![];
+    let mut labels: Vec<(String, Label)> = vec![];
+    for (p, pred) in pool.iter().zip(m.predict(&pr)) {
+        let Some((g, pg)) = best_colour(&pred) else { continue };
+        if pg < bar {
+            continue;
+        }
+        let stars = if with_stars { pred.top.get(STARS).and_then(|s| s.0.parse::<u8>().ok()).filter(|s| *s > 0) } else { None };
+        let label = Label { colour: palette::by_id(g), stars };
+        entries.push(Entry { rel: p.clone(), level: "colour", label: Some(label), key: None, energy: None, cues: None });
+        labels.push((p.clone(), label));
+    }
+    if entries.is_empty() {
+        return Err("nothing to write: no track without a colour in rekordbox that the model is sure of".into());
+    }
+    let name = format!("vibecheck-guesses-{}", local(now(), "%Y%m%d-%H%M"));
+    let o = WriteOpts { name: &name, tonality: false, comment: false, changed_only: false };
+    let st = rekordbox::write(xml_path, xml_path, root, &entries, &o)?;
+    let ids = store::track_ids(&con)?;
+    let rid = store::open_round(&con, &name, entries.len(), embed::BACKEND, &embed::fingerprint(), l.x.len())?;
+    con.execute_batch("BEGIN")?;
+    for (p, lab) in &labels {
+        if let Some(t) = ids.get(p) {
+            store::log_label_as(&con, *t, *lab, "model", Some(rid), store::Made { card: Some("guessed"), ..Default::default() })?;
+        }
+    }
+    con.execute_batch("COMMIT")?;
+    let ts = now();
+    let out = Exported {
+        name: name.clone(),
+        count: entries.len(),
+        coloured: st.coloured,
+        rated: st.rated,
+        keyed: 0,
+        commented: 0,
+        cued: 0,
+        not_in_xml: st.not_in_xml,
+        mtime: rekordbox::exported(xml_path).unwrap_or(ts),
+    };
+    let rows: Vec<Kept> = labels.iter().map(|(p, lab)| Kept::label(p, "guessed", None, Some(lab))).collect();
     log_batch(&con, "out", ts, &name, None, &serde_json::to_value(&out)?, &rows)?;
     Ok(out)
 }
@@ -1581,6 +1771,10 @@ pub fn settings(cfg: &Config) -> serde_json::Value {
         "cues_lead": cfg.ints("cues", "lead", &[0]),
         "cues_loops": cfg.int_map("cues", "loops").into_iter().collect::<HashMap<_, _>>(),
         "cues_memory": cfg.bool("cues", "memory", true),
+        "guesses_sure": cfg.float("guesses", "sure", 0.8),
+        "guesses_right": cfg.float("guesses", "right", 0.7),
+        "guesses_measured": cfg.int("guesses", "measured", 10),
+        "guesses_stars": cfg.bool("guesses", "stars", true),
     })
 }
 
@@ -1705,6 +1899,29 @@ mod tests {
         assert_eq!(kinds.iter().filter(|k| **k == 1).count(), 14);
         assert_eq!(kinds.iter().filter(|k| **k == 2).count(), 10 - 3); // 40 is a check card, 33 and 68 conflicts
         assert_eq!(train_slot(1), 0);
+    }
+
+    #[test]
+    fn right_at_sums_the_bands_from_the_bar_up() {
+        assert_eq!(band(0.49), None);
+        assert_eq!(band(0.5), Some(0));
+        assert_eq!(band(0.75), Some(5));
+        assert_eq!(band(0.8), Some(6));
+        assert_eq!(band(1.0), Some(9));
+        let mut by = vec![(0, 0); BANDS];
+        by[5] = (1, 2);
+        by[6] = (3, 4);
+        by[9] = (5, 5);
+        assert_eq!(right_at(&by, 0.8), (8, 9));
+        assert_eq!(right_at(&by, 0.75), (9, 11));
+        assert_eq!(right_at(&[], 0.8), (0, 0));
+    }
+
+    #[test]
+    fn unsure_cards_come_in_runs_of_one_colour() {
+        let items: Vec<(usize, char)> = "aaaaaaabbbcc".chars().enumerate().collect();
+        let out: String = runs(&items, |(_, c)| *c, RUN).iter().map(|(_, c)| *c).collect();
+        assert_eq!(out, "aaaaabbbccaa");
     }
 
     #[test]

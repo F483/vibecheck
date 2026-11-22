@@ -20,11 +20,19 @@ const CORE_KEYS := {
 	"write_tonality": ["rekordbox", "write_tonality"], "write_comment": ["rekordbox", "write_comment"],
 	"cues_write": ["cues", "write"], "cues_lead": ["cues", "lead"], "cues_loops": ["cues", "loops"],
 	"cues_memory": ["cues", "memory"],
+	"guesses_sure": ["guesses", "sure"], "guesses_right": ["guesses", "right"],
+	"guesses_measured": ["guesses", "measured"], "guesses_stars": ["guesses", "stars"],
 }
 
 var library: Array[Dictionary] = []
 var by_path := {}
 var queue: Array[Dictionary] = []
+## The pool by how sure the model is of its colour, in bands of 5% from 50% up (core's
+## `band`): all of it, the part with no colour in rekordbox, and (right, asked) on blind
+## held-back labels per band. Empty while calibrating.
+var sure_hist: Array = []
+var blank_hist: Array = []
+var right_hist: Array = []
 var reviewed: Array[Dictionary] = []
 var labels := 0
 var pool := 0
@@ -41,6 +49,7 @@ var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
 	"listen": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_lead": 0,
 	"cues_loops": {}, "cues_memory": true,
+	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_stars": true,
 }
 
 var _main := Lane.new()
@@ -255,6 +264,9 @@ func refresh_queue(start := false) -> void:
 func _apply_queue(q: Dictionary) -> void:
 	labels = int(q.labels)
 	pool = int(q.pool)
+	sure_hist = q.get("sure_hist", [])
+	blank_hist = q.get("blank_hist", [])
+	right_hist = q.get("right_hist", [])
 	var now_head: Dictionary = queue[0] if not queue.is_empty() else {}
 	var out: Array[Dictionary] = []
 	if not now_head.is_empty():
@@ -453,6 +465,52 @@ func _to_front(ts: Array, at: int, tag: String) -> void:
 
 
 # --- export and sync -------------------------------------------------------------------
+
+## Of the pool, how many the model is at least `bar` sure of; `blank`: of those, how many
+## have no colour in rekordbox (what Write guesses would write).
+func sure_at(bar: float, blank := false) -> int:
+	var n := 0
+	var h: Array = blank_hist if blank else sure_hist
+	for i in h.size():
+		if 0.5 + i * 0.05 >= bar - 1e-9:
+			n += int(h[i])
+	return n
+
+
+## [right, asked] on blind held-back labels where the model was at least `bar` sure.
+func right_at(bar: float) -> Array:
+	var out := [0, 0]
+	for i in right_hist.size():
+		if 0.5 + i * 0.05 >= bar - 1e-9:
+			out[0] += int(right_hist[i][0])
+			out[1] += int(right_hist[i][1])
+	return out
+
+
+## Why Write guesses is locked (Settings › Model guesses), or "" when it may write.
+func guesses_locked() -> String:
+	if calibrating() or sure_hist.is_empty():
+		return "still calibrating"
+	var r := right_at(float(settings.guesses_sure))
+	var need := int(settings.guesses_measured)
+	if r[1] < need:
+		return "measured on %d of %d blind labels where the model is that sure" % [r[1], need]
+	if r[0] < float(settings.guesses_right) * r[1]:
+		return "right %d%% of the time there, below the %d%% it needs" % [int(round(100.0 * r[0] / r[1])), int(round(100 * float(settings.guesses_right)))]
+	return ""
+
+
+## The model's guesses into rekordbox, colour and stars, tracks with no colour there.
+func export_guesses(done: Callable) -> void:
+	_exporting = true
+	_call(_main, "export_guesses", {"threshold": settings.threshold}, func(e: Variant) -> void:
+		_exporting = false
+		if e != null:
+			_seen_mtime = int(e.mtime)
+			refresh_queue()
+			changed.emit()
+		done.call(e), "Writing the model's guesses into rekordbox.xml…")
+
 
 func export(done: Callable) -> void:
 	var cut := int(Time.get_unix_time_from_system())
@@ -703,7 +761,7 @@ func set_setting(k: String, v: Variant) -> void:
 		_answered.clear()
 		_skipped.clear()
 		load_all()
-	elif k == "threshold":
+	elif k == "threshold" or k == "guesses_measured":
 		refresh_queue()
 	elif k == "listen" and v:
 		_listen()

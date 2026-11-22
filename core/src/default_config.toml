@@ -63,6 +63,19 @@ kept = 0.5
 existing = 0.3
 guessed = 0.2
 
+[guesses]
+# The model's guesses written into rekordbox (Write guesses on the vibe
+# screen): tracks with no colour there, colour and stars, as one playlist;
+# key, energy and cues come with Export once a track is reviewed. A guess is
+# written when the model is at least `sure` of the colour, and only once it is
+# right at least `right` of the time where it is that sure, measured on at
+# least `measured` blind labels held back from training. `measured` also gates
+# the queue's conflict cards.
+sure = 0.8
+right = 0.7
+measured = 10
+stars = true
+
 [rating]
 # You are sloppier with tracks you care less about, so a label on a low-rated
 # track counts less: factor = base + per_star * stars. No stars is rekordbox's

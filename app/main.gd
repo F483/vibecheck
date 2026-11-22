@@ -21,6 +21,8 @@ var state := State.new()
 var screens := {}
 var current := ""
 var dialog: Control = null
+## What ENTER does in the open dialog when it is a question, else it closes it.
+var dialog_ok := Callable()
 var _rail_items := {}
 var _status: Control
 
@@ -175,6 +177,7 @@ func open_dialog(body: Control) -> void:
 
 
 func close_dialog() -> void:
+	dialog_ok = Callable()
 	if dialog:
 		dialog.queue_free()
 		dialog = null
@@ -230,6 +233,56 @@ func export_batch() -> void:
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)])))
 
 
+## The model's guesses into rekordbox: what it would write and the guard, then the write.
+func export_guesses() -> void:
+	if not state.loaded:
+		return
+	var st: Dictionary = state.settings
+	var bar := float(st.guesses_sure)
+	var r: Array = state.right_at(bar)
+	var why: String = state.guesses_locked()
+	var v := dialog_box(464)
+	v.add_child(UI.caps("Model guesses → rekordbox"))
+	v.add_child(UI.text("%s tracks" % UI.thousands(state.sure_at(bar, true)), 18, UI.TEXT, "heavy"))
+	v.add_child(UI.text("no colour in rekordbox yet, the model at least %d%% sure of one" % int(round(bar * 100)), 12, UI.MUTED, "mono"))
+	v.add_child(UI.text("right %d%% of the time there, on %d blind labels" % [int(round(100.0 * r[0] / r[1])), r[1]] if r[1] > 0
+		else "not measured there yet", 12, UI.MUTED, "mono"))
+	v.add_child(UI.wrap("Colour%s only, as one playlist. Key, energy and cues come with Export once you review a track. A guess stays a guess (thin trust) until you change it in rekordbox or label the track here." % (" and stars" if st.guesses_stars else "")))
+	if why != "":
+		v.add_child(UI.wrap("Locked: %s. The bar is set under Settings › Model guesses." % why, 12, UI.AMBER))
+		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
+		return
+	v.add_child(UI.row(8, [UI.spacer(), UI.button("Cancel", "ESC", false, close_dialog), UI.button("Write", "ENTER", true, _write_guesses)]))
+	dialog_ok = _write_guesses
+
+
+func _write_guesses() -> void:
+	var v := dialog_box(464)
+	v.add_child(UI.caps("Writing guesses → rekordbox"))
+	v.add_child(UI.wrap("A moment: the whole collection is scored.", 12))
+	state.export_guesses(func(e: Variant) -> void:
+		if e == null:
+			return
+		v = dialog_box(464)
+		v.add_child(UI.caps("Guesses written → rekordbox"))
+		v.add_child(UI.text("%s tracks · %s" % [UI.thousands(e.count), e.name], 18, UI.TEXT, "heavy"))
+		var parts := ["%d colours" % e.coloured, "%d ratings" % e.rated]
+		if e.not_in_xml > 0:
+			parts.append("%d not in the export" % e.not_in_xml)
+		v.add_child(UI.text(", ".join(parts), 12, UI.MUTED, "mono"))
+		v.add_child(UI.text("written into %s · old one kept as .bak" % state.settings.xml, 11, UI.MUTED, "mono"))
+		v.add_child(UI.margin(UI.caps("Now in rekordbox"), 0, 4, 0, 0))
+		var steps := [
+			"Refresh the rekordbox xml node in the sidebar.",
+			"Right-click %s › Import Playlist, or just use the colours in the collection." % e.name,
+			"Play; change a colour that is wrong, then File › Export Collection in xml format over the same file. vibecheck reads the changes as corrections.",
+		]
+		for i in steps.size():
+			v.add_child(UI.row(8, [UI.text(str(i + 1), 12, UI.LIME, "mono"), UI.wrap(steps[i], 12, UI.TEXT)]))
+			(v.get_child(v.get_child_count() - 1).get_child(1) as Control).size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)])))
+
+
 func sync_now() -> void:
 	if not state.loaded:
 		return
@@ -266,7 +319,11 @@ func _unhandled_key_input(e: InputEvent) -> void:
 	if not k or not k.pressed:
 		return
 	if dialog:
-		if k.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_ESCAPE]:
+		if k.keycode in [KEY_ENTER, KEY_KP_ENTER] and dialog_ok.is_valid():
+			var ok := dialog_ok
+			close_dialog()
+			ok.call()
+		elif k.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_ESCAPE]:
 			close_dialog()
 		get_viewport().set_input_as_handled()
 		return
@@ -342,6 +399,8 @@ func _shot() -> void:
 	match args.get("dialog", ""):
 		"export":
 			export_batch()
+		"guesses":
+			export_guesses()
 		"sync":
 			sync_now()
 		"why":

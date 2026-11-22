@@ -442,6 +442,13 @@ pub fn log_cue_write(
 }
 
 /// path -> hot cue starts this app last wrote there.
+/// Tracks whose current label came from a `card` card after `ts`.
+pub fn recent_cards(con: &Connection, card: &str, ts: i64) -> Res<HashSet<String>> {
+    let mut st = con.prepare("SELECT path FROM current WHERE card = ?1 AND ts > ?2")?;
+    let out = st.query_map(params![card, ts], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    Ok(out)
+}
+
 pub fn cues_written(con: &Connection) -> Res<HashMap<String, Vec<f64>>> {
     let m: HashMap<String, String> = pairs(
         con,
