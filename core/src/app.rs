@@ -1114,14 +1114,14 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
 }
 
 /// Label in bulk: the model's colour and stars for tracks with no colour in rekordbox and no
-/// label here, the surest first, at most `[guesses] limit` (0 = all), once it is at least
+/// label here, the surest first, at most `limit` (0 = all; the dialog's, kept in `[guesses] limit`), once it is at least
 /// `[guesses] sure` of them. Nothing is written to rekordbox: the labels join the export list
 /// like the queue's, and Export writes them with key, energy and cues. Refused while
 /// calibrating, and until `must_pass` blind tests passed where the model is that sure. Logged
 /// as the model's (source `model`, card `guessed`): trust 1, not trained on, and an untouched
 /// one stays a guess after Export and sync; change it in rekordbox (a correction) or label the
 /// track here to make it yours (docs/queue.md).
-pub fn bulk_label(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize) -> Res<Bulked> {
+pub fn bulk_label(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, limit: usize) -> Res<Bulked> {
     let con = store::labels_db(root)?;
     let l = labelled(root, cfg)?;
     let mine: HashSet<String> = store::current(&con, Some("user"))?.into_keys().collect();
@@ -1147,7 +1147,6 @@ pub fn bulk_label(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize) 
         .collect();
     let (pool, px) = embed::load(root, &blank)?;
     let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
-    let limit = cfg.int("guesses", "limit", 100).max(0) as usize;
     let mut sure: Vec<(f64, String, Label)> = vec![];
     for (p, pred) in pool.iter().zip(m.predict(&pr)) {
         let Some((g, pg)) = best_colour(&pred) else { continue };

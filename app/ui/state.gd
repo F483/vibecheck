@@ -509,7 +509,7 @@ func must_pass(taken: int) -> int:
 ## The model's colour and stars for tracks with no colour, onto the export list (core
 ## `bulk_label`); Export writes them into rekordbox like the queue's labels.
 func bulk_label(done: Callable) -> void:
-	_call(_main, "bulk_label", {"threshold": settings.threshold}, func(e: Variant) -> void:
+	_call(_main, "bulk_label", {"threshold": settings.threshold, "limit": int(settings.guesses_limit)}, func(e: Variant) -> void:
 		if e == null:
 			done.call(e)
 			return

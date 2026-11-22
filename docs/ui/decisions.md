@@ -172,7 +172,10 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    dimmed while locked, open once it may write: the number says how much of
    the pool the model would label with confidence, and when it stops moving
    per session, you write the guesses and go play. Its dialog shows the
-   count (tracks with no colour in rekordbox, capped by the limit) and a
+   count (tracks with no colour in rekordbox, capped by the limit), a
+   "Label at most" row (50 / 100 / 250 / All, default 100; the last pick is
+   kept in `[guesses] limit`: chosen when you use it, not in Settings,
+   moved there 2026-11-22) and a
    LOCKED / UNLOCKED box with the three conditions as a checklist in the
    words of Settings › Bulk label, each with where it stands: Calibration
    done (100 of 100 labels), Blind tests passed (8 of 8 · needs 7).
@@ -512,10 +515,11 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   - "Unlock after 10 blind tests": 10 / 20 / 30 (`measured`). The same count
     gates the queue's conflict cards, but the card does not say so: noise
     here, and conflicts are the queue's business.
-  - "Label at most 100 tracks at a time": 50 / 100 / 250 / All (`limit`,
-    0 = all). The surest first; the dialog then reads "100 of 1,163 tracks,
-    … surest first". A small batch is quick to check on the export list;
-    run it again for the next 100 (tracks with a label here are skipped).
+  - The per-run limit (`limit`, 0 = all) was a row here until 2026-11-22;
+    it moved into the Bulk label dialog, where it is chosen. The surest
+    first; the dialog then reads "100 of 1,163 tracks, … surest first". A
+    small batch is quick to check on the export list; run it again for the
+    next 100 (tracks with a label here are skipped).
   - The number sits in the sentence and moves with the control, no value on
     the right: "right this often where it is that sure" did not tell the user
     what unlocked the button; "Unlock … blind tests" on both gate rows does.

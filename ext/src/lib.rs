@@ -82,7 +82,7 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         }
         "unheard" => json!(app::unheard(&root, n(a, "n", 20) as usize)?),
         "export" => json!(app::export(&root, &xml, &cfg()?)?),
-        "bulk_label" => json!(app::bulk_label(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize)?),
+        "bulk_label" => json!(app::bulk_label(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize, n(a, "limit", 100).max(0) as usize)?),
         "sync" => json!(app::sync(&root, &xml)?),
         "stats" => json!(app::stats(&root, &cfg()?)?),
         "history" => json!(app::history(&root)?),

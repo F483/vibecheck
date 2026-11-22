@@ -168,8 +168,8 @@ write the guesses and go play; rekordbox corrections and plays come back
 through sync, the sure set grows, you write again.
 
 - **What**: tracks with no colour in rekordbox and no label here that the
-  model is at least `sure` of, colour and stars, at most `limit` (100) per
-  run, surest first, added to the export list. Nothing is written to
+  model is at least `sure` of, colour and stars, at most `limit` (100, picked in
+  the dialog, the last pick kept) per run, surest first, added to the export list. Nothing is written to
   rekordbox until Export, which writes them with key, energy and cues like
   the queue's labels. Nothing with a colour is touched: your labels and old
   ones stay, disagreements remain the queue's job. (First built as a direct

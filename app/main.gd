@@ -249,6 +249,14 @@ func export_guesses() -> void:
 	var lim := int(st.guesses_limit)
 	v.add_child(UI.text("%s of %s tracks" % [UI.thousands(lim), UI.thousands(n)] if lim > 0 and n > lim else "%s tracks" % UI.thousands(n), 18, UI.TEXT, "heavy"))
 	v.add_child(UI.text("no colour yet, the model %d%% sure of one%s" % [pct, ", surest first" if lim > 0 and n > lim else ""], 12, UI.MUTED, "mono"))
+	if not locked:
+		# how many per run; kept in [guesses] limit, so the next run starts from it
+		var lr := UI.row(6, [UI.text("Label at most", 12), UI.spacer()])
+		for c in [50, 100, 250, 0]:
+			lr.add_child(UI.chip("All" if c == 0 else str(c), lim == c, func() -> void:
+				state.set_setting("guesses_limit", c)
+				export_guesses()))
+		v.add_child(lr)
 	# the three conditions, in the words of Settings › Bulk label, each with where it stands
 	var checks := UI.col(6)
 	var li := UI.Icon.new("lock" if locked else "unlock")
@@ -261,7 +269,7 @@ func export_guesses() -> void:
 	var box := UI.panel(UI.DARK, 4, 12, 10)
 	box.add_child(checks)
 	v.add_child(box)
-	v.add_child(UI.wrap("Adds the model's colour and stars to the export list, surest first; Export then writes them into rekordbox like your own labels. A guess stays thin trust (not trained on) until you change it in rekordbox or label the track here. A blind test is a track the model is %d%% sure of, asked in the queue without showing its guess (every 10th card). Settings › Bulk label sets the numbers." % pct))
+	v.add_child(UI.wrap("Adds the model's colour and stars to the export list, surest first; Export then writes them into rekordbox like your own labels. A guess stays thin trust (not trained on) until you change it in rekordbox or label the track here. A blind test is a track the model is %d%% sure of, asked in the queue without showing its guess (every 10th card). Settings › Bulk label sets the unlock rule." % pct))
 	if locked:
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
 		return
