@@ -64,17 +64,19 @@ existing = 0.3
 guessed = 0.2
 
 [guesses]
-# The model's guesses written into rekordbox (Write guesses on the vibe
-# screen): tracks with no colour there, colour and stars, as one playlist;
-# key, energy and cues come with Export once a track is reviewed. A guess is
+# The model's guesses written into rekordbox (Bulk label on the vibe
+# screen): tracks with no colour there, colour and stars, as one playlist,
+# with the [rekordbox] options above; key, energy and cues come with Export
+# once a track is reviewed. A guess is
 # written when the model is at least `sure` of the colour, and only once it is
 # right at least `right` of the time where it is that sure, measured on at
 # least `measured` blind labels held back from training. `measured` also gates
-# the queue's conflict cards.
+# the queue's conflict cards. One run labels at most `limit` tracks, the
+# surest first (0 = all), so a wrong model shows up in a small batch.
 sure = 0.8
 right = 0.7
 measured = 10
-stars = true
+limit = 100
 
 [rating]
 # You are sloppier with tracks you care less about, so a label on a low-rated
@@ -86,7 +88,14 @@ per_star = 0.1
 [rekordbox]
 # Key and energy are worked out from the audio for every track a round labels
 # (and by `vibecheck analyse`), and written into the rekordbox xml with the
-# colours and ratings. Nothing changes in rekordbox until you import.
+# colours and ratings. Nothing changes in rekordbox until you import. The
+# write_* switches apply to every write: Export, Bulk label and the CLI.
+
+# The colour, into rekordbox's colour field.
+write_colour = true
+
+# The star rating.
+write_stars = true
 
 # The key, alphanumeric ("8A" is A minor, "8B" C major), into rekordbox's own
 # key field, so its key column and filters show it.

@@ -17,11 +17,13 @@ const CFG := "user://settings.cfg"
 const PALETTE := ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Pink"]
 ## settings the core keeps, in the collection's config.toml: key -> [section, key]
 const CORE_KEYS := {
+	"write_colour": ["rekordbox", "write_colour"], "write_stars": ["rekordbox", "write_stars"],
 	"write_tonality": ["rekordbox", "write_tonality"], "write_comment": ["rekordbox", "write_comment"],
 	"cues_write": ["cues", "write"], "cues_lead": ["cues", "lead"], "cues_loops": ["cues", "loops"],
 	"cues_memory": ["cues", "memory"],
 	"guesses_sure": ["guesses", "sure"], "guesses_right": ["guesses", "right"],
-	"guesses_measured": ["guesses", "measured"], "guesses_stars": ["guesses", "stars"],
+	"guesses_measured": ["guesses", "measured"],
+	"guesses_limit": ["guesses", "limit"],
 }
 
 var library: Array[Dictionary] = []
@@ -47,9 +49,9 @@ var listening := ""
 var _hearing := false  # the background listening chain is running
 var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
-	"listen": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_lead": 0,
+	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_lead": 0,
 	"cues_loops": {}, "cues_memory": true,
-	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_stars": true,
+	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_limit": 100,
 }
 
 var _main := Lane.new()
@@ -467,7 +469,7 @@ func _to_front(ts: Array, at: int, tag: String) -> void:
 # --- export and sync -------------------------------------------------------------------
 
 ## Of the pool, how many the model is at least `bar` sure of; `blank`: of those, how many
-## have no colour in rekordbox (what Write guesses would write).
+## have no colour in rekordbox (what Bulk label would write).
 func sure_at(bar: float, blank := false) -> int:
 	var n := 0
 	var h: Array = blank_hist if blank else sure_hist
@@ -487,7 +489,7 @@ func right_at(bar: float) -> Array:
 	return out
 
 
-## Why Write guesses is locked (Settings › Model guesses), or "" when it may write.
+## Why Bulk label is locked (Settings › Bulk label), or "" when it may write.
 func guesses_locked() -> String:
 	if calibrating() or sure_hist.is_empty():
 		return "still calibrating"

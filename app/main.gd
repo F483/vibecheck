@@ -242,29 +242,31 @@ func export_guesses() -> void:
 	var r: Array = state.right_at(bar)
 	var why: String = state.guesses_locked()
 	var v := dialog_box(464)
-	v.add_child(UI.caps("Model guesses → rekordbox"))
-	v.add_child(UI.text("%s tracks" % UI.thousands(state.sure_at(bar, true)), 18, UI.TEXT, "heavy"))
-	v.add_child(UI.text("no colour in rekordbox yet, the model at least %d%% sure of one" % int(round(bar * 100)), 12, UI.MUTED, "mono"))
+	v.add_child(UI.caps("Bulk label → rekordbox"))
+	var n := state.sure_at(bar, true)
+	var lim := int(st.guesses_limit)
+	v.add_child(UI.text("%s of %s tracks" % [UI.thousands(lim), UI.thousands(n)] if lim > 0 and n > lim else "%s tracks" % UI.thousands(n), 18, UI.TEXT, "heavy"))
+	v.add_child(UI.text("no colour in rekordbox yet, the model at least %d%% sure of one%s" % [int(round(bar * 100)), ", surest first" if lim > 0 and n > lim else ""], 12, UI.MUTED, "mono"))
 	v.add_child(UI.text("right %d%% of the time there, on %d blind labels" % [int(round(100.0 * r[0] / r[1])), r[1]] if r[1] > 0
 		else "not measured there yet", 12, UI.MUTED, "mono"))
-	v.add_child(UI.wrap("Colour%s only, as one playlist. Key, energy and cues come with Export once you review a track. A guess stays a guess (thin trust) until you change it in rekordbox or label the track here." % (" and stars" if st.guesses_stars else "")))
+	v.add_child(UI.wrap("Colour and stars only, as one playlist. Key, energy and cues come with Export once you review a track. A guess stays a guess (thin trust) until you change it in rekordbox or label the track here."))
 	if why != "":
-		v.add_child(UI.wrap("Locked: %s. The bar is set under Settings › Model guesses." % why, 12, UI.AMBER))
+		v.add_child(UI.wrap("Locked: %s. The bar is set under Settings › Bulk label." % why, 12, UI.AMBER))
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
 		return
-	v.add_child(UI.row(8, [UI.spacer(), UI.button("Cancel", "ESC", false, close_dialog), UI.button("Write", "ENTER", true, _write_guesses)]))
+	v.add_child(UI.row(8, [UI.spacer(), UI.button("Cancel", "ESC", false, close_dialog), UI.button("Label", "ENTER", true, _write_guesses)]))
 	dialog_ok = _write_guesses
 
 
 func _write_guesses() -> void:
 	var v := dialog_box(464)
-	v.add_child(UI.caps("Writing guesses → rekordbox"))
+	v.add_child(UI.caps("Bulk labelling → rekordbox"))
 	v.add_child(UI.wrap("A moment: the whole collection is scored.", 12))
 	state.export_guesses(func(e: Variant) -> void:
 		if e == null:
 			return
 		v = dialog_box(464)
-		v.add_child(UI.caps("Guesses written → rekordbox"))
+		v.add_child(UI.caps("Bulk labelled → rekordbox"))
 		v.add_child(UI.text("%s tracks · %s" % [UI.thousands(e.count), e.name], 18, UI.TEXT, "heavy"))
 		var parts := ["%d colours" % e.coloured, "%d ratings" % e.rated]
 		if e.not_in_xml > 0:

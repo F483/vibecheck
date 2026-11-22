@@ -372,10 +372,27 @@ fn marks_equal(a: &[Vec<(String, String)>], b: &[Vec<(String, String)>]) -> bool
 
 pub struct WriteOpts<'a> {
     pub name: &'a str,
+    pub colour: bool,
+    pub stars: bool,
     pub tonality: bool,
     pub comment: bool,
     /// keep the playlist to tracks something actually changed on
     pub changed_only: bool,
+}
+
+impl<'a> WriteOpts<'a> {
+    /// The `[rekordbox] write_*` switches: one place for every write into rekordbox.
+    pub fn from_cfg(name: &'a str, cfg: &crate::config::Config, changed_only: bool) -> Self {
+        let w = |k, d| cfg.bool("rekordbox", k, d);
+        WriteOpts {
+            name,
+            colour: w("write_colour", true),
+            stars: w("write_stars", true),
+            tonality: w("write_tonality", true),
+            comment: w("write_comment", true),
+            changed_only,
+        }
+    }
 }
 
 /// Apply entries and add one playlist holding them. Writes `xml_out` (and a
@@ -459,10 +476,10 @@ pub fn write(xml_in: &Path, xml_out: &Path, collection: &Path, entries: &[Entry]
             *n += 1;
             true
         };
-        if let Some(c) = e.label.and_then(|l| l.colour) {
+        if let (Some(c), true) = (e.label.and_then(|l| l.colour), o.colour) {
             changed |= put(&mut tag, "Colour", c.rgb.to_string(), &mut st.coloured);
         }
-        if let Some(s) = e.label.and_then(|l| l.stars).filter(|s| *s > 0) {
+        if let (Some(s), true) = (e.label.and_then(|l| l.stars).filter(|s| *s > 0), o.stars) {
             changed |= put(&mut tag, "Rating", palette::rating_from_stars(s), &mut st.rated);
         }
         if let (Some(k), true) = (&e.key, o.tonality) {

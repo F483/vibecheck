@@ -69,7 +69,7 @@ func refresh() -> void:
 	_add(bar)
 	_toggle("Analyse the rest in the background (about 5 s a track)", "listen")
 
-	_card("Calibration", "What the queue asks you, and when the model starts to guess.")
+	_card("Calibration")
 	var th := UI.text("%d labels" % st.threshold, 12, UI.TEXT, "mono")
 	_add(UI.row(8, [UI.text("Calibration ends after", 12), UI.spacer(), th]))
 	var slider := UI.Track.new(100, 300, 10, st.threshold)
@@ -85,24 +85,26 @@ func refresh() -> void:
 
 	_side = rc
 	_card("Rekordbox Export")
+	_toggle("Write the colour", "write_colour", "Orange")
+	_toggle("Write the star rating", "write_stars", "★★★★")
 	_toggle("Write the key into rekordbox's key field", "write_tonality", "8A")
 	_toggle("Start the comment with key and energy", "write_comment", "8A - Energy 6")
 	_add(UI.wrap("The rest of the comment, /* tags */ included, is kept."))
 
-	_card("Model guesses", "What Write guesses (⌥G on the vibe screen) puts into rekordbox: tracks with no colour there, as one playlist.")
-	var sb := UI.text("%d%%" % int(round(float(st.guesses_sure) * 100)), 12, UI.TEXT, "mono")
-	_add(UI.row(8, [UI.text("Write a guess when the model is at least this sure", 12), UI.spacer(), sb]))
+	_card("Bulk label")
+	var sb := UI.text("Label a track when the model is %d%% sure" % int(round(float(st.guesses_sure) * 100)), 12)
+	_add(sb)
 	var ss := UI.Track.new(60, 95, 5, float(st.guesses_sure) * 100)
-	ss.changed.connect(func(v: float) -> void: sb.text = "%d%%" % int(v))
+	ss.changed.connect(func(v: float) -> void: sb.text = "Label a track when the model is %d%% sure" % int(v))
 	ss.released.connect(func(v: float) -> void:
 		if int(v) != int(round(float(st.guesses_sure) * 100)):
 			state.set_setting("guesses_sure", int(v) / 100.0))
 	_add(ss)
 	_add(UI.row(0, [UI.text("60%", 10, UI.MUTED, "mono"), UI.spacer(), UI.text("95%", 10, UI.MUTED, "mono")]))
-	var rb := UI.text("%d%%" % int(round(float(st.guesses_right) * 100)), 12, UI.TEXT, "mono")
-	_add(UI.row(8, [UI.text("Allowed once it is right this often where it is that sure", 12), UI.spacer(), rb]))
+	var rb := UI.text("Unlock when %d%% of blind tests pass" % int(round(float(st.guesses_right) * 100)), 12)
+	_add(rb)
 	var rs := UI.Track.new(50, 95, 5, float(st.guesses_right) * 100)
-	rs.changed.connect(func(v: float) -> void: rb.text = "%d%%" % int(v))
+	rs.changed.connect(func(v: float) -> void: rb.text = "Unlock when %d%% of blind tests pass" % int(v))
 	rs.released.connect(func(v: float) -> void:
 		if int(v) != int(round(float(st.guesses_right) * 100)):
 			state.set_setting("guesses_right", int(v) / 100.0))
@@ -111,11 +113,14 @@ func refresh() -> void:
 	var meas := UI.row(6)
 	for n in [10, 20, 30]:
 		meas.add_child(UI.chip(str(n), int(st.guesses_measured) == n, func() -> void: state.set_setting("guesses_measured", n)))
-	_add(_line("Measured on at least this many blind labels", meas))
-	_toggle("Write its star rating too", "guesses_stars")
-	_add(UI.wrap("Colour and stars only: key, energy and cues come with Export once you review a track. A guess stays thin trust until you change it in rekordbox or label the track here. The blind-label count also decides when the queue starts dealing conflict cards (once the model is right 75% of the time where it is sure)."))
+	_add(_line("Unlock after %d blind tests" % int(st.guesses_measured), meas))
+	var lim := UI.row(6)
+	for n in [50, 100, 250, 0]:
+		lim.add_child(UI.chip("All" if n == 0 else str(n), int(st.guesses_limit) == n, func() -> void: state.set_setting("guesses_limit", n)))
+	_add(_line("Label all sure tracks at once" if int(st.guesses_limit) == 0 else "Label at most %d tracks at a time" % int(st.guesses_limit), lim))
+	_add(UI.wrap("Colour and stars only: key, energy and cues come with Export once you review a track. A guess stays thin trust until you change it in rekordbox or label the track here."))
 
-	_card("Cue points", "Cues Export writes, learned from the ones you set yourself.")
+	_card("Cue points")
 	_toggle("Write cue points", "cues_write")
 	_add(UI.wrap("Only on tracks with no cues, or with generated ones (\"Cue 1\", \"Cue 2\", …). A track with any cue you set yourself is never touched."))
 	var lead := UI.row(6, [UI.text("Hot cues", 12), UI.spacer()])
@@ -155,7 +160,7 @@ func _add(c: Control) -> void:
 
 ## A group of settings on its own card, titled, with a line on what it is for when that
 ## isn't plain; _add fills it.
-func _card(t: String, about := "") -> void:
+func _card(t: String) -> void:
 	_end_card()
 	var p := UI.panel(UI.PANEL, 6, 16, 14)
 	var s: StyleBoxFlat = p.get_theme_stylebox("panel")
@@ -164,10 +169,7 @@ func _card(t: String, about := "") -> void:
 	_col = UI.col(10)
 	p.add_child(_col)
 	_side.add_child(p)
-	var head := UI.col(2, [UI.text(t, 14, UI.TEXT, "bold")])
-	if about != "":
-		head.add_child(UI.wrap(about))
-	_add(UI.margin(head, 0, 0, 0, 4))
+	_add(UI.margin(UI.text(t, 18, UI.TEXT, "heavy"), 0, 0, 0, 6))
 
 
 ## No hairline under a card's last line: the card's edge closes it.

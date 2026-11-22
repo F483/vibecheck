@@ -1052,7 +1052,7 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
             cues: plan.as_ref().and_then(|c| c.marks.get(p)).map(|m| m.0.clone()),
         })
         .collect();
-    let o = WriteOpts { name: &name, tonality, comment, changed_only: false };
+    let o = WriteOpts::from_cfg(&name, cfg, false);
     let st = rekordbox::write(xml_path, xml_path, root, &entries, &o)?;
     if let Some(p) = &plan
         && !p.marks.is_empty()
@@ -1106,7 +1106,8 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
 }
 
 /// Write the model's guesses into rekordbox: tracks with no colour there that the model is
-/// at least `[guesses] sure` of, colour and (with `[guesses] stars`) stars, as one playlist.
+/// at least `[guesses] sure` of, colour and stars, as one playlist, written with the same
+/// `[rekordbox]` options as Export.
 /// Nothing else is touched: no key, energy or cues (Export adds those once a track is
 /// reviewed), and no track that has a colour. Refused while calibrating, and until the model
 /// is right at least `[guesses] right` of the time where it is that sure, on at least
@@ -1145,24 +1146,29 @@ pub fn export_guesses(root: &Path, xml_path: &Path, cfg: &Config, threshold: usi
         .collect();
     let (pool, px) = embed::load(root, &blank)?;
     let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
-    let with_stars = cfg.bool("guesses", "stars", true);
-    let mut entries = vec![];
-    let mut labels: Vec<(String, Label)> = vec![];
+    let limit = cfg.int("guesses", "limit", 100).max(0) as usize;
+    let mut sure: Vec<(f64, String, Label)> = vec![];
     for (p, pred) in pool.iter().zip(m.predict(&pr)) {
         let Some((g, pg)) = best_colour(&pred) else { continue };
         if pg < bar {
             continue;
         }
-        let stars = if with_stars { pred.top.get(STARS).and_then(|s| s.0.parse::<u8>().ok()).filter(|s| *s > 0) } else { None };
-        let label = Label { colour: palette::by_id(g), stars };
-        entries.push(Entry { rel: p.clone(), level: "colour", label: Some(label), key: None, energy: None, cues: None });
-        labels.push((p.clone(), label));
+        let stars = pred.top.get(STARS).and_then(|s| s.0.parse::<u8>().ok()).filter(|s| *s > 0);
+        sure.push((pg, p.clone(), Label { colour: palette::by_id(g), stars }));
     }
+    // the surest first; `limit` (0 = all) per run, so a wrong model shows in a small batch
+    sure.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    if limit > 0 {
+        sure.truncate(limit);
+    }
+    let labels: Vec<(String, Label)> = sure.into_iter().map(|(_, p, l)| (p, l)).collect();
+    let entries: Vec<Entry> =
+        labels.iter().map(|(p, l)| Entry { rel: p.clone(), level: "colour", label: Some(*l), key: None, energy: None, cues: None }).collect();
     if entries.is_empty() {
         return Err("nothing to write: no track without a colour in rekordbox that the model is sure of".into());
     }
-    let name = format!("vibecheck-guesses-{}", local(now(), "%Y%m%d-%H%M"));
-    let o = WriteOpts { name: &name, tonality: false, comment: false, changed_only: false };
+    let name = format!("vibecheck-bulk-{}", local(now(), "%Y%m%d-%H%M"));
+    let o = WriteOpts::from_cfg(&name, cfg, false);
     let st = rekordbox::write(xml_path, xml_path, root, &entries, &o)?;
     let ids = store::track_ids(&con)?;
     let rid = store::open_round(&con, &name, entries.len(), embed::BACKEND, &embed::fingerprint(), l.x.len())?;
@@ -1765,6 +1771,8 @@ fn audio22<'a>(
 /// The settings the app shows, as the config has them now.
 pub fn settings(cfg: &Config) -> serde_json::Value {
     serde_json::json!({
+        "write_colour": cfg.bool("rekordbox", "write_colour", true),
+        "write_stars": cfg.bool("rekordbox", "write_stars", true),
         "write_tonality": cfg.bool("rekordbox", "write_tonality", true),
         "write_comment": cfg.bool("rekordbox", "write_comment", true),
         "cues_write": cfg.bool("cues", "write", true),
@@ -1774,7 +1782,7 @@ pub fn settings(cfg: &Config) -> serde_json::Value {
         "guesses_sure": cfg.float("guesses", "sure", 0.8),
         "guesses_right": cfg.float("guesses", "right", 0.7),
         "guesses_measured": cfg.int("guesses", "measured", 10),
-        "guesses_stars": cfg.bool("guesses", "stars", true),
+        "guesses_limit": cfg.int("guesses", "limit", 100),
     })
 }
 

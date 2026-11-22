@@ -35,7 +35,7 @@ fn main() -> vibecheck::Res<()> {
             }),
         })
         .collect();
-    let o = rekordbox::WriteOpts { name: "vibecheck-parity", tonality: true, comment: true, changed_only: false };
+    let o = rekordbox::WriteOpts { name: "vibecheck-parity", colour: true, stars: true, tonality: true, comment: true, changed_only: false };
     let st = rekordbox::write(std::path::Path::new(&a[1]), std::path::Path::new(&a[2]), &root, &entries, &o)?;
     println!("{st:?}");
     Ok(())

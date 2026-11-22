@@ -358,12 +358,7 @@ pub fn label(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
                 cues: plan.as_ref().and_then(|c| c.marks.get(rel)).map(|m| m.0.clone()),
             })
             .collect();
-        let o = WriteOpts {
-            name: &name,
-            tonality: cfg.bool("rekordbox", "write_tonality", true),
-            comment: cfg.bool("rekordbox", "write_comment", true),
-            changed_only: false,
-        };
+        let o = WriteOpts::from_cfg(&name, cfg, false);
         let st = rekordbox::write(src, &dst, root, &rk, &o)?;
         println!("\nwrote {}", dst.display());
         if let Some(p) = &plan
@@ -410,12 +405,7 @@ pub fn label(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
 // --- analyse and cues: one field, many tracks ----------------------------------------
 
 fn finish_write(src: &Path, root: &Path, entries: &[Entry], name: &str, cfg: &Config, dry: bool) -> Res<rekordbox::WriteStats> {
-    let o = WriteOpts {
-        name,
-        tonality: cfg.bool("rekordbox", "write_tonality", true),
-        comment: cfg.bool("rekordbox", "write_comment", true),
-        changed_only: true,
-    };
+    let o = WriteOpts::from_cfg(name, cfg, true);
     if dry {
         let tmp = std::env::temp_dir().join(format!("vibecheck-dry-{}.xml", std::process::id()));
         let st = rekordbox::write(src, &tmp, root, entries, &o)?;

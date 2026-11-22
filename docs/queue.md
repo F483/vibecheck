@@ -161,19 +161,20 @@ Where: `queue()` already predicts the pool; count `pg >= SURE`. One number on
 - Playback starts at the second section; 1 goes back.
 - Coverage: spread n over the 2n least sure.
 
-## Write guesses: the bulk export
+## Bulk label: the bulk export
 
 The end of the loop. You label until "model 80% sure on N" flattens, then
 write the guesses and go play; rekordbox corrections and plays come back
 through sync, the sure set grows, you write again.
 
 - **What**: tracks with no colour in rekordbox that the model is at least
-  `sure` of, colour and (if on) stars, as one playlist
-  `vibecheck-guesses-<date>`. Nothing with a colour is touched: your labels
+  `sure` of, colour and stars, as one playlist
+  `vibecheck-bulk-<date>`, at most `limit` (100) per run, surest first.
+  Nothing with a colour is touched: your labels
   and old ones stay, disagreements remain the queue's job. No key, energy or
   cues: only 476 of 14,194 tracks have that analysis, the rest would take
   hours; Export adds them once a track is reviewed.
-- **Guard**, Settings › Model guesses (`[guesses]`): `sure` 0.8, `right` 0.7
+- **Guard**, Settings › Bulk label (`[guesses]`): `sure` 0.8, `right` 0.7
   on at least `measured` (10) blind held-back labels where the model is that
   sure, and past calibration. Not a hard 90% gate: the fast track showed a
   measured gate starves on real labels. The dialog shows the count, the
@@ -206,7 +207,7 @@ In `core/src/app.rs` (`queue()`, `export_guesses()`), `ext`, and the app:
    unless you already moved (`pos < 2 s`); 1 goes back.
 5. `Score::by_sure` (right, asked per 5% band from 0.5; model cache key m6);
    the queue returns `sure_hist`, `blank_hist`, `right_hist`; the queue line
-   shows "model 80% sure on N" and the Write guesses button (⌥G).
-6. Write guesses: `export_guesses(root, xml, cfg, threshold)`, the dialog in
+   shows "model 80% sure on N" and the Bulk label button (⌥G).
+6. Bulk label (was Write guesses): `export_guesses(root, xml, cfg, threshold)`, the dialog in
    `main.gd` (count, accuracy, lock reason; Cancel / Write, ENTER writes),
    the Settings card, `[guesses]` defaults in `default_config.toml`.
