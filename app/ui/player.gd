@@ -102,6 +102,7 @@ var _p_cues: Array = []
 var _p_own := false
 var _switch: HBoxContainer
 var _switch_room: Control
+var _tools_row: HBoxContainer
 ## loop lengths in beats, as rekordbox counts them
 const LOOPS := [0, 4, 8, 16, 32, 64]
 
@@ -154,7 +155,11 @@ func _init(bg: Color, s) -> void:
 	_switch.custom_minimum_size.y = 24
 	_switch_room = Control.new()
 	_switch_room.custom_minimum_size.y = 24
-	var side := UI.col(KEY_GAP, [_switch_room, meta, _parts_row])
+	# in cue mode the cue keys take the tray's place: stars, energy and key belong to Colour
+	_tools_row = UI.row(4)
+	_tools_row.custom_minimum_size.y = KEY_H
+	_tools_row.visible = false
+	var side := UI.col(KEY_GAP, [_switch_room, meta, _tools_row, _parts_row])
 	side.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# the main controls (undo | stop, play | skip, confirm) centred in a tray under the keys
 	_trays = [meta, _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
@@ -329,7 +334,8 @@ func clear(text := "Queue is empty: sync from rekordbox or add tracks from the l
 		c.queue_free()
 	for t in _trays:
 		t.visible = false
-	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars]:
+	_tools_row.visible = false
+	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars, _tools_row]:
 		for c in r.get_children():
 			c.queue_free()
 	_head.add_child(UI.text(text, 14, UI.MUTED))
@@ -362,7 +368,7 @@ func _refresh_transport() -> void:
 	if track.is_empty():
 		return
 	_lit = _section()
-	for b: Control in (_cue_tools() if cue_mode else _parts()):
+	for b: Control in _parts():
 		_parts_row.add_child(b)
 	_transport.add_child(_control("stop", "Stop", "ESC", stop, UI.PLAYBACK))
 	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing), UI.PLAYBACK)
@@ -625,6 +631,7 @@ func _refresh() -> void:
 		c.queue_free()
 	for t in _trays:
 		t.visible = true
+	_refresh_tools()
 	for c in _undo_box.get_children():
 		c.queue_free()
 	_undo_box.add_child(UI.button("Undo", "U", false, undo, UI.MOVE))
@@ -843,7 +850,7 @@ func set_cue_mode(on: bool) -> void:
 	if not on:
 		cue_sel = -1
 	_refresh_keys()
-	_refresh_transport()
+	_refresh_tools()
 	_show_cues()
 
 
@@ -854,7 +861,7 @@ func _plain(src: Array) -> Array:
 	return out
 
 
-## The two-way switch above the keys: Colour | Cues, Tab.
+## The two-way switch above the keys: Cues | Label (colour, stars, energy, key), Tab.
 func _refresh_switch() -> void:
 	for c in _switch.get_children():
 		c.queue_free()
@@ -874,7 +881,7 @@ func _refresh_switch() -> void:
 			_refresh_keys())
 		_switch.add_child(qp)
 		_switch.add_child(UI.margin(Control.new(), 0, 0, 6, 0))
-	for m: Array in [["Colour", false], ["Cues", true]]:
+	for m: Array in [["Cues", true], ["Label", false]]:
 		var lit: bool = m[1] == cue_mode
 		var p := UI.panel(UI.LIME if lit else UI.CARD, 3, 10, 2)
 		p.add_child(UI.text(m[0], 11, UI.BG if lit else UI.MUTED, "semi"))
@@ -929,7 +936,18 @@ func _pad(slot: int) -> PanelContainer:
 	return p
 
 
-## Under the tray in cue mode, where the parts are otherwise: the cue keys, clickable.
+## Colour: the tray with stars, energy and key. Cues: the cue keys in its place.
+func _refresh_tools() -> void:
+	for c in _tools_row.get_children():
+		c.queue_free()
+	_trays[0].visible = not cue_mode and not track.is_empty()
+	_tools_row.visible = cue_mode and not track.is_empty()
+	if cue_mode:
+		for b: Control in _cue_tools():
+			_tools_row.add_child(b)
+
+
+## The cue keys, clickable.
 func _cue_tools() -> Array:
 	var out: Array = []
 	for t: Array in [["← →", "beat", nudge.bind(1)], ["⇧← →", "bar", nudge.bind(4)], ["O", "loop", cycle_loop],

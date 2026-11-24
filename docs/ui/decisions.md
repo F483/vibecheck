@@ -376,8 +376,11 @@ Board 05. Cues are edited where colour, stars, energy and key are decided,
 before export (plan: `docs/cues.md`). Built as proposed; the user: "do what
 you think is best and we can iterate from there".
 
-- **Tab** switches the eight colour keys between **Colour** and **Cues**
-  (a two-way switch above them, lime on the one in use). In cue mode the
+- **Tab** switches the eight colour keys between **Label** and **Cues**
+  (a two-way switch above them, Cues | Label, lime on the one in use).
+  "Label" (was "Colour"): that side holds colour, stars, energy and key, and
+  the app calls colour and stars a label (the user picked it over Vibe,
+  Track, Tags, Rate). In cue mode the
   keys are the hot cues A–H, in two rows of four as a DDJ controller's
   performance pads (what most rekordbox users play on), and by key
   position as the colours are, so on Neo 2 the same physical keys.
@@ -390,10 +393,10 @@ you think is best and we can iterate from there".
   on rekordbox's DDJ controllers (it first moved the cue to the playhead:
   the opposite of what a rekordbox user's hands expect). To move a cue,
   delete and set it again, ← →, or drag it.
-- **Quantize** (a switch beside Colour | Cues in cue mode, on, as rekordbox's):
+- **Quantize** (a switch beside Cues | Label in cue mode, on, as rekordbox's):
   cues land on the grid's beats; off, where the playhead or the mouse is,
   and the pad reads "~33.1" (the beat nearest). ← → still step by beats.
-- **← → / ⇧← →** move the selected cue a beat / a bar. In colour mode they
+- **← → / ⇧← →** move the selected cue a beat / a bar. In Label they
   step through the parts as now; 1–6 jump to parts in both modes.
 - **O** cycles the selected cue's loop: off, 4, 8, 16, 32, 64 beats; pads
   read "loop 64". In beats, as rekordbox counts loops (bars at first). **M** sets a
@@ -402,8 +405,9 @@ you think is best and we can iterate from there".
   no shortcut lands on a pad.
 - **Mouse**: drag a flag (top) or a memory triangle (bottom) along the
   waveform, snapping to beats; click one to select it; right-click deletes.
-- The tray beside the keys keeps stars, energy and key; under it, where the
-  parts row is in colour mode, the cue keys as a legend.
+- Beside the keys, Cues shows the cue keys (clickable) where Label shows the
+  tray with stars, energy and key: those belong to Colour (the user). The
+  parts row stays under both.
 - **Confirm** saves colour, stars, energy, key and cues together. Cues
   confirmed as suggested count as kept (0.5); moved, added, deleted or
   looped, as confirmed (0.7).
