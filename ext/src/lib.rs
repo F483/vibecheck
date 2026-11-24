@@ -57,7 +57,13 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
                 shown: Some(n(a, "shown", 0)).filter(|c| *c > 0),
                 shown_stars: Some(n(a, "shown_stars", -1)).filter(|s| *s >= 0),
             };
-            app::decide(&root, s(a, "path"), n(a, "colour", 0), n(a, "stars", 0), key, energy, made)?;
+            // your cues from the player, with the suggestion that was on screen; absent when it
+            // doesn't ask for cues
+            let cues = a.get("cues").and_then(|c| serde_json::from_value(c.clone()).ok()).map(|cues| app::CuesSet {
+                cues,
+                shown: a.get("shown_cues").and_then(|c| serde_json::from_value(c.clone()).ok()),
+            });
+            app::decide(&root, s(a, "path"), n(a, "colour", 0), n(a, "stars", 0), key, energy, made, cues)?;
             json!(true)
         }
         "embed" => {

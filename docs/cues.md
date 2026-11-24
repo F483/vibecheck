@@ -104,12 +104,13 @@ model only if hot cues exact is not below today's **50.1%**.
 
 ### Order
 
-1. Mockup and `ui/decisions.md`: the cue part of the card, and the card's
-   configuration. Keyboard by key position (Neo 2).
-2. Data: a cue decision per track (cues as set, what was shown, which card),
-   trust from it as for labels; Export writes cue decisions like labels;
-   sync reads cue changes in rekordbox as corrections.
-3. The editor in the player card.
+1. Mockup and `ui/decisions.md`: the cue part of the card (board 05).
+   Keyboard by key position (Neo 2). **Done.**
+2. Data: a cue decision per track (`cue_decisions`, schema v9: cues as set,
+   the suggestion shown, which card); Export writes them like labels.
+   **Done**; still to do: trust from it as for labels, and sync reading cue
+   changes in rekordbox as corrections.
+3. The editor in the player card (Tab). **Done.**
 4. The generic model, weighted, validated against 50.1%.
 5. Settings: placement settings go; `cues::writable` reworked (a cue decision
    made in the card is yours to write, whatever rekordbox had).

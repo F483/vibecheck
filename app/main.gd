@@ -414,7 +414,7 @@ func _hidpi() -> void:
 	w.move_to_center()
 
 
-## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why|filter:colours|energy|…] [--wait=s] [--after=s]: once loaded, wait,
+## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why|cues|filter:colours|energy|…] [--wait=s] [--after=s]: once loaded, wait,
 ## show the screen, wait again, render one frame to a file and quit.
 func _shot() -> void:
 	var args := {}
@@ -436,6 +436,14 @@ func _shot() -> void:
 			export_guesses()
 		"sync":
 			sync_now()
+		"cues":
+			# cue mode on the track playing, its hot cue D selected
+			var pl = screens.vibe.player
+			while not pl._cues_ready and Time.get_ticks_msec() - t < 180000:
+				await get_tree().process_frame
+			pl.set_cue_mode(true)
+			pl.cue_sel = pl._hot(3)
+			pl._cues_changed()
 		"why":
 			screens.vibe.player.open_why()
 			await get_tree().create_timer(0.5).timeout

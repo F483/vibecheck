@@ -206,7 +206,7 @@ func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
 	var nxt := _next_row() if relisten else {}
 	relisten = not nxt.is_empty()
 	var t := player.track
-	state.decide(t, colour, rating, "vibe", energy, key, player.shown, player.shown_stars, player.card())
+	state.decide(t, colour, rating, "vibe", energy, key, player.shown, player.shown_stars, player.card(), player.cue_decision())
 	if relisten:
 		open_row(nxt)
 	elif player.track == t:

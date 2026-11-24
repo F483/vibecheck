@@ -19,7 +19,7 @@ const PALETTE := ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", 
 const CORE_KEYS := {
 	"write_colour": ["rekordbox", "write_colour"], "write_stars": ["rekordbox", "write_stars"],
 	"write_tonality": ["rekordbox", "write_tonality"], "write_comment": ["rekordbox", "write_comment"],
-	"cues_write": ["cues", "write"], "cues_lead": ["cues", "lead"], "cues_loops": ["cues", "loops"],
+	"cues_write": ["cues", "write"], "cues_edit": ["cues", "edit"], "cues_lead": ["cues", "lead"], "cues_loops": ["cues", "loops"],
 	"cues_memory": ["cues", "memory"],
 	"guesses_sure": ["guesses", "sure"], "guesses_right": ["guesses", "right"],
 	"guesses_measured": ["guesses", "measured"],
@@ -49,7 +49,7 @@ var listening := ""
 var _hearing := false  # the background listening chain is running
 var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
-	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_lead": 0,
+	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_edit": true, "cues_lead": 0,
 	"cues_loops": {}, "cues_memory": true,
 	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_limit": 100,
 }
@@ -315,10 +315,16 @@ func _apply_queue(q: Dictionary) -> void:
 ## energy and key only when you corrected them (0 and "" otherwise).
 ## `shown`/`shown_stars`: the guess that was on screen (UI colour index, -1 for none), and
 ## `card` which card asked: saved with the label, which is trusted by them.
-func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, key := "", shown := -1, shown_stars := -1, card := "") -> void:
-	_call(_main, "decide", {"path": t.path, "colour": PALETTE.find(UI.COLOURS[colour].name) + 1, "stars": rating,
+## `cues`: [your cues, the suggestion shown] from the player, or empty when it doesn't ask for
+## cues (`player.cue_decision`).
+func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, key := "", shown := -1, shown_stars := -1, card := "", cues: Array = []) -> void:
+	var args := {"path": t.path, "colour": PALETTE.find(UI.COLOURS[colour].name) + 1, "stars": rating,
 		"energy": energy, "key": key, "shown": (PALETTE.find(UI.COLOURS[shown].name) + 1) if shown >= 0 else 0,
-		"shown_stars": shown_stars, "card": card}, func(_r: Variant) -> void: pass)
+		"shown_stars": shown_stars, "card": card}
+	if not cues.is_empty():
+		args.cues = cues[0]
+		args.shown_cues = cues[1]
+	_call(_main, "decide", args, func(_r: Variant) -> void: pass)
 	if energy > 0:
 		t.energy = energy
 	if key != "":

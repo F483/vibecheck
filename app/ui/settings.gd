@@ -118,7 +118,8 @@ func refresh() -> void:
 
 	_card("Cue points")
 	_toggle("Write cue points", "cues_write")
-	_add(UI.wrap("Only on tracks with no cues, or with generated ones (\"Cue 1\", \"Cue 2\", …). A track with any cue you set yourself is never touched."))
+	_toggle("Set cues in the player · Tab", "cues_edit")
+	_add(UI.wrap("Tab turns the colour keys into hot cues A–H. Cues you confirm in the player go out with the next Export, in place of the track's cues in rekordbox. Otherwise only tracks with no cues, or with generated ones (\"Cue 1\", \"Cue 2\", …), get cues; a track with cues of your own keeps them."))
 	var lead := UI.row(6, [UI.text("Hot cues", 12), UI.spacer()])
 	for i in 2:
 		lead.add_child(UI.chip(["At each change · A–D", "16 + 8 bars before · A–H"][i], st.cues_lead == i, func() -> void:

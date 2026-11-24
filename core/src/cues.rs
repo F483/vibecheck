@@ -59,6 +59,11 @@ fn start(m: &Mark) -> f64 {
 /// Every bar start of rekordbox's grid, in seconds. Each TEMPO entry runs until
 /// the next; the first is extended back to the start of the track.
 pub fn downbeats(tempos: &[(f64, f64, i64)], duration: f64) -> Vec<f64> {
+    beats(tempos, duration).into_iter().filter(|x| x.1 == 0).map(|x| x.0).collect()
+}
+
+/// Every beat of rekordbox's grid, in seconds, with its place in the bar (0 the downbeat).
+pub fn beats(tempos: &[(f64, f64, i64)], duration: f64) -> Vec<(f64, i64)> {
     let (mut times, mut pos) = (vec![], vec![]);
     for (i, &(ini, bpm, beat)) in tempos.iter().enumerate() {
         let end = tempos.get(i + 1).map_or(duration, |t| t.0);
@@ -78,7 +83,7 @@ pub fn downbeats(tempos: &[(f64, f64, i64)], duration: f64) -> Vec<f64> {
         p = (p - 1).rem_euclid(4);
     }
     pre.reverse();
-    pre.into_iter().chain(times.into_iter().zip(pos)).filter(|x| x.1 == 0).map(|x| x.0).collect()
+    pre.into_iter().chain(times.into_iter().zip(pos)).collect()
 }
 
 /// The grid's identity, as the prototype computes it: part of the cache key.
@@ -1071,6 +1076,26 @@ pub fn place(t: &[usize], down: &[f64], lead: &[i64], loops: &[(String, i64)], m
     out.push(first);
     out.extend(copies);
     out
+}
+
+/// One cue as rekordbox's xml holds it: hot cue `num` 0..7 (A..H) or memory (-1), a loop
+/// when it has an end; hot cues coloured as `place` colours them.
+pub fn mark(num: i64, start: f64, end: Option<f64>) -> Mark {
+    let s = |v: &str| v.to_string();
+    let mut m: Mark = vec![
+        (s("Name"), s("")),
+        (s("Type"), s(if end.is_some() { "4" } else { "0" })),
+        (s("Start"), format!("{start:.3}")),
+    ];
+    if let Some(e) = end {
+        m.push((s("End"), format!("{e:.3}")));
+    }
+    m.push((s("Num"), num.to_string()));
+    if num >= 0 {
+        let (r, g, b) = if end.is_some() { LOOP_RGB } else { CUE_RGB };
+        m.extend([(s("Red"), r.to_string()), (s("Green"), g.to_string()), (s("Blue"), b.to_string())]);
+    }
+    m
 }
 
 /// Tracks whose cues you set, and the transition points behind them: not

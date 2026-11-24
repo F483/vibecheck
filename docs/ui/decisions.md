@@ -370,6 +370,46 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   carries no position, so the app reads where the mouse let go.
 - Files outside the collection are listed in a short notice, not added.
 
+### Cue points in the player (2026-11-24)
+
+Board 05. Cues are edited where colour, stars, energy and key are decided,
+before export (plan: `docs/cues.md`). Built as proposed; the user: "do what
+you think is best and we can iterate from there".
+
+- **Tab** switches the eight colour keys between **Colour** and **Cues**
+  (a two-way switch above them, lime on the one in use). In cue mode the
+  keys are the hot cues A–H, in two rows of four as a CDJ's pads, and by key
+  position as the colours are, so on Neo 2 the same physical keys.
+- Each pad shows its slot (green cue, orange loop, as rekordbox draws them),
+  where it sits as bar.beat, and "cue" or "loop 16"; an empty slot shows
+  "—". What you changed from the suggestion turns lime, as a corrected energy
+  or key does; the selected cue has a white outline on its pad and flag.
+- **A pad** jumps to its cue, plays from it and selects it; **an empty pad**
+  sets its cue at the playhead on the nearest beat; **⇧ + pad** moves it to
+  the playhead.
+- **← → / ⇧← →** move the selected cue a beat / a bar. In colour mode they
+  step through the parts as now; 1–6 jump to parts in both modes.
+- **O** cycles the selected cue's loop: off, 4, 8, 16, 32 bars. **M** sets a
+  memory cue at the playhead. **⌫** deletes the selected cue. Letters
+  chosen outside the colour keys' positions on Neo 2 (x v l c / u i a e), so
+  no shortcut lands on a pad.
+- **Mouse**: drag a flag (top) or a memory triangle (bottom) along the
+  waveform, snapping to beats; click one to select it; right-click deletes.
+- The tray beside the keys keeps stars, energy and key; under it, where the
+  parts row is in colour mode, the cue keys as a legend.
+- **Confirm** saves colour, stars, energy, key and cues together. Cues
+  confirmed as suggested count as kept (0.5); moved, added, deleted or
+  looped, as confirmed (0.7).
+- **Settings › Cue points › Set cues in the player · Tab** (`[cues] edit`,
+  on): with it off there is no cue mode, the cues shown are what an export
+  would write as before, and none are saved as yours. A Settings › Player
+  card with the same switch for energy and key is still to come.
+- With it on, Confirm saves the cues on screen even if you never opened cue
+  mode: the suggestion as shown is a decision too (kept), and Export writes
+  it in place of the track's cues in rekordbox.
+- The "your cues · kept on export" mark goes: the player starts from the
+  model's suggestion (fresh start, `docs/cues.md`).
+
 ## Calibration
 
 - There is no button to end or skip calibration. It is just the queue's early

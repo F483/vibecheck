@@ -114,6 +114,11 @@ write_comment = true
 # "Cue 2", ...). A track with any cue you set yourself is never touched.
 write = true
 
+# Set cues in the player (Tab turns the colour keys into hot cues A-H). What you
+# confirm there is yours: Export writes it in place of the track's cues in
+# rekordbox, and the cue model learns from it (docs/cues.md).
+edit = true
+
 # How many bars ahead of each transition point to cue. Four transition points
 # per track: the mix-in, two between, the mix-out.
 #

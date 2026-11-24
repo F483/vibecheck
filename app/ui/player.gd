@@ -87,6 +87,21 @@ var _actions: HBoxContainer
 var _undo_box: HBoxContainer
 ## hidden with no track open, so no empty outlines show
 var _trays: Array[Control] = []
+## Cue mode (Tab): the eight colour keys are the hot cues A–H, by the same key positions.
+## Your cues as edited ({num, start, end}: num 0..7 hot, -1 memory; seconds), the model's
+## suggestion they started from, the one selected, and rekordbox's grid to place them on.
+var cue_mode := false
+var cues_now: Array = []
+var cues_shown: Array = []
+var cue_sel := -1
+var _cues_ready := false
+var _beats := PackedFloat64Array()
+var _bars := PackedFloat64Array()
+var _p_cues: Array = []
+var _p_own := false
+var _switch: HBoxContainer
+var _switch_room: Control
+const LOOPS := [0, 4, 8, 16, 32]
 
 
 func _init(bg: Color, s) -> void:
@@ -102,6 +117,14 @@ func _init(bg: Color, s) -> void:
 	_head.resized.connect(_fit_title)
 	_wave = Wave.new(UI.font("mono"))
 	_wave.seek.connect(func(f: float) -> void: seek(f * length))
+	_wave.pick.connect(func(i: int) -> void:
+		_remember()
+		cue_sel = i
+		_cues_changed())
+	_wave.drag.connect(_move_cue)
+	_wave.drop.connect(func(i: int) -> void:
+		cue_sel = i
+		delete_cue())
 	_wave.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	# the cover in front of the waveform, as tall as the peaks
 	_art = TextureRect.new()
@@ -125,13 +148,17 @@ func _init(bg: Color, s) -> void:
 	_parts_row.custom_minimum_size.y = KEY_H
 	var meta := _tray(UI.row(12, [_stars, _vline(), _meta]), false)
 	meta.custom_minimum_size.y = KEY_H
-	var side := UI.col(KEY_GAP, [meta, _parts_row])
+	_switch = UI.row(6)
+	_switch.custom_minimum_size.y = 24
+	_switch_room = Control.new()
+	_switch_room.custom_minimum_size.y = 24
+	var side := UI.col(KEY_GAP, [_switch_room, meta, _parts_row])
 	side.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# the main controls (undo | stop, play | skip, confirm) centred in a tray under the keys
 	_trays = [meta, _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
 	# keys left of the centre, tray and parts right of it: two equal halves, each pushed
 	# against the middle; narrower than both, they just sit side by side
-	var left := UI.row(0, [_keys])
+	var left := UI.row(0, [UI.col(KEY_GAP, [_switch, _keys])])
 	left.alignment = BoxContainer.ALIGNMENT_END
 	var right := UI.row(0, [side])
 	for h: HBoxContainer in [left, right]:
@@ -228,6 +255,12 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 	sections = [0.0]
 	_undo.clear()
 	_wave.clear()
+	cues_now = []
+	cues_shown = []
+	cue_sel = -1
+	_cues_ready = false
+	_p_cues = []
+	_p_own = false
 	var stream := AudioStreamMP3.load_from_file(state.audio_path(t))
 	_audio.stream = stream
 	if stream:
@@ -252,6 +285,15 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 			sections.append(float(sec[0]))
 			names.append(str(sec[1]))
 		_wave.show_parts(sections, names, p.cues, p.own_cues)
+		# the cues to edit: yours if set here before, else the model's (a fresh start)
+		_p_cues = p.cues
+		_p_own = p.own_cues
+		_beats = PackedFloat64Array(p.beats)
+		_bars = PackedFloat64Array(p.bars)
+		cues_shown = _plain(p.suggested)
+		cues_now = _plain(p.cues) if p.set else cues_shown.duplicate(true)
+		_cues_ready = not _beats.is_empty()
+		_cues_changed()
 		# start where the track does, past the intro, unless you already moved; 1 goes back
 		if sections.size() > 1 and pos < 2.0:
 			seek(sections[1])
@@ -318,7 +360,7 @@ func _refresh_transport() -> void:
 	if track.is_empty():
 		return
 	_lit = _section()
-	for b: Control in _parts():
+	for b: Control in (_cue_tools() if cue_mode else _parts()):
 		_parts_row.add_child(b)
 	_transport.add_child(_control("stop", "Stop", "ESC", stop, UI.PLAYBACK))
 	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing), UI.PLAYBACK)
@@ -615,6 +657,11 @@ func fill_guess(t: Dictionary) -> void:
 func _refresh_keys() -> void:
 	for c in _keys.get_children():
 		c.queue_free()
+	_refresh_switch()
+	if cue_mode:
+		for slot in 8:
+			_keys.add_child(_pad(slot))
+		return
 	for i in 8:
 		var cd: Dictionary = UI.COLOURS[i]
 		var on := i == colour
@@ -653,7 +700,7 @@ func set_rating(n: int) -> void:
 
 
 func _remember() -> void:
-	_undo.append([colour, rating, energy, key])
+	_undo.append([colour, rating, energy, key, cues_now.duplicate(true), cue_sel])
 
 
 func undo() -> void:
@@ -664,6 +711,9 @@ func undo() -> void:
 	rating = u[1]
 	energy = u[2]
 	key = u[3]
+	cues_now = u[4]
+	cue_sel = u[5]
+	_show_cues()
 	_refresh_keys()
 	_refresh_stars()
 	_refresh_meta()
@@ -724,12 +774,20 @@ func handle_key(k: InputEventKey) -> bool:
 		return true
 	if k.alt_pressed or k.ctrl_pressed or k.meta_pressed:
 		return false
+	if k.keycode == KEY_TAB:
+		set_cue_mode(not cue_mode)
+		return true
 	# by position: the colour grid and the number row; by the letter typed: everything else
 	var key := k.physical_keycode
 	for i in 8:
 		if key == UI.COLOURS[i].key:
-			set_colour(i)
+			if cue_mode:
+				pad(i, k.shift_pressed)
+			else:
+				set_colour(i)
 			return true
+	if cue_mode and _cue_key(k):
+		return true
 	if key >= KEY_1 and key <= KEY_6:
 		var n := key - KEY_1
 		if k.shift_pressed:
@@ -763,11 +821,293 @@ func handle_key(k: InputEventKey) -> bool:
 	return true
 
 
+# --- cues ------------------------------------------------------------------------------
+
+## Cues are edited in the player when Settings › Cue points asks for it and the track has a grid.
+func cues_on() -> bool:
+	return bool(state.settings.get("cues_edit", true)) and _cues_ready
+
+
+## Your cues and the suggestion they started from, for Confirm; empty when the player doesn't
+## ask for cues (then nothing is saved and Export does as before).
+func cue_decision() -> Array:
+	return [cues_now, cues_shown] if cues_on() else []
+
+
+func set_cue_mode(on: bool) -> void:
+	if on and not bool(state.settings.get("cues_edit", true)):
+		return
+	cue_mode = on
+	if not on:
+		cue_sel = -1
+	_refresh_keys()
+	_refresh_transport()
+	_show_cues()
+
+
+func _plain(src: Array) -> Array:
+	var out: Array = []
+	for c: Dictionary in src:
+		out.append({"num": int(c.num), "start": float(c.start), "end": null if c.end == null else float(c.end)})
+	return out
+
+
+## The two-way switch above the keys: Colour | Cues, Tab.
+func _refresh_switch() -> void:
+	for c in _switch.get_children():
+		c.queue_free()
+	var on := bool(state.settings.get("cues_edit", true))
+	_switch.visible = on
+	_switch_room.visible = on
+	if not on:
+		return
+	_switch.alignment = BoxContainer.ALIGNMENT_END
+	for m: Array in [["Colour", false], ["Cues", true]]:
+		var lit: bool = m[1] == cue_mode
+		var p := UI.panel(UI.LIME if lit else UI.CARD, 3, 10, 2)
+		p.add_child(UI.text(m[0], 11, UI.BG if lit else UI.MUTED, "semi"))
+		UI.clickable(p, set_cue_mode.bind(m[1]))
+		_switch.add_child(p)
+	_switch.add_child(UI.kbd("TAB"))
+
+
+func _hot(slot: int) -> int:
+	for i in cues_now.size():
+		if int(cues_now[i].num) == slot:
+			return i
+	return -1
+
+
+## Changed from the suggestion: lime, as a corrected energy or key.
+func _edited(c: Dictionary) -> bool:
+	for s: Dictionary in cues_shown:
+		if int(s.num) == int(c.num) and absf(float(s.start) - float(c.start)) < 0.01 and (s.end == null) == (c.end == null) \
+				and (c.end == null or absf(float(s.end) - float(c.end)) < 0.01):
+			return false
+	return true
+
+
+## One pad: its key, the slot in its colour (green cue, orange loop), where it sits as bar.beat.
+func _pad(slot: int) -> PanelContainer:
+	var i := _hot(slot)
+	var p := UI.panel(Color("#3a3b40") if i >= 0 and i == cue_sel else UI.CARD, 4, 10, 0)
+	if i >= 0 and i == cue_sel:
+		var sb: StyleBoxFlat = p.get_theme_stylebox("panel")
+		sb.border_color = Color.WHITE
+		sb.set_border_width_all(2)
+	p.custom_minimum_size = Vector2(124, KEY_H)
+	var c: Dictionary = cues_now[i] if i >= 0 else {}
+	var loop := i >= 0 and c.end != null
+	var sq := UI.panel(Color("#ff8c00") if loop else Color("#28e214") if i >= 0 else Color("#4a4b52"), 2, 0, 0)
+	sq.custom_minimum_size = Vector2(16, 16)
+	sq.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	var l := UI.text("ABCDEFGH"[slot], 11, UI.BG, "mono")
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sq.add_child(l)
+	var where := UI.text(_bar_beat(float(c.start)) if i >= 0 else "—", 12, UI.LIME if i >= 0 and _edited(c) else UI.TEXT if i >= 0 else UI.MUTED, "mono")
+	var what := UI.text(("loop %d" % roundi(_loop_beats(i) / 4.0)) if loop else "cue" if i >= 0 else "empty", 9, Color("#ffb07a") if loop else UI.MUTED, "mono")
+	var col := UI.col(0, [where, what])
+	col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	p.add_child(UI.row(7, [UI.kbd(UI.key_label(UI.COLOURS[slot].key)), sq, col]))
+	UI.clickable(p, pad.bind(slot, false))
+	return p
+
+
+## Under the tray in cue mode, where the parts are otherwise: the cue keys, clickable.
+func _cue_tools() -> Array:
+	var out: Array = []
+	for t: Array in [["← →", "beat", nudge.bind(1)], ["⇧← →", "bar", nudge.bind(4)], ["O", "loop", cycle_loop],
+			["M", "memory", add_memory], ["⌫", "delete", delete_cue]]:
+		var p := UI.panel(UI.CARD, 3, 8, 0)
+		p.custom_minimum_size.y = 30
+		p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		p.add_child(UI.row(6, [UI.kbd(t[0]), UI.text(t[1], 12, UI.TEXT, "semi")]))
+		UI.clickable(p, t[2])
+		out.append(p)
+	return out
+
+
+## A pad: jump to its cue and play from it; an empty one, or with ⇧, set it at the playhead.
+func pad(slot: int, move: bool) -> void:
+	if not _cues_ready:
+		return
+	var i := _hot(slot)
+	if i < 0 or move:
+		_remember()
+		var at := _snap(pos)
+		if i < 0:
+			cues_now.append({"num": slot, "start": at, "end": null})
+			i = cues_now.size() - 1
+		else:
+			_place(i, _beat_i(at))
+	else:
+		seek(float(cues_now[i].start))
+		if not playing:
+			play(true)
+	cue_sel = i
+	_cues_changed()
+
+
+## ← → a beat, ⇧ a bar; O loop; M memory; ⌫ delete.
+func _cue_key(k: InputEventKey) -> bool:
+	match k.keycode:
+		KEY_LEFT, KEY_RIGHT:
+			if cue_sel < 0:
+				return false
+			nudge((4 if k.shift_pressed else 1) * (-1 if k.keycode == KEY_LEFT else 1))
+		KEY_O:
+			cycle_loop()
+		KEY_M:
+			add_memory()
+		KEY_BACKSPACE, KEY_DELETE:
+			delete_cue()
+		_:
+			return false
+	return true
+
+
+func nudge(beats: int) -> void:
+	if cue_sel < 0:
+		return
+	_remember()
+	_place(cue_sel, _beat_i(float(cues_now[cue_sel].start)) + beats)
+	_cues_changed()
+
+
+## Off, 4, 8, 16, 32 bars, round again.
+func cycle_loop() -> void:
+	if cue_sel < 0:
+		return
+	_remember()
+	var c: Dictionary = cues_now[cue_sel]
+	var bars := roundi(_loop_beats(cue_sel) / 4.0)
+	var n: int = LOOPS[(LOOPS.find(bars) + 1) % LOOPS.size()] if bars in LOOPS else 4
+	var b := _beat_i(float(c.start))
+	c.end = null if n == 0 else _beat_at(b + n * 4)
+	_cues_changed()
+
+
+func add_memory() -> void:
+	if not _cues_ready:
+		return
+	var at := _snap(pos)
+	var mem := 0
+	for i in cues_now.size():
+		if int(cues_now[i].num) < 0:
+			mem += 1
+			if absf(float(cues_now[i].start) - at) < 0.01:
+				cue_sel = i
+				_cues_changed()
+				return
+	if mem >= 10:
+		return
+	_remember()
+	cues_now.append({"num": -1, "start": at, "end": null})
+	cue_sel = cues_now.size() - 1
+	_cues_changed()
+
+
+func delete_cue() -> void:
+	if cue_sel < 0 or cue_sel >= cues_now.size():
+		return
+	_remember()
+	cues_now.remove_at(cue_sel)
+	cue_sel = -1
+	_cues_changed()
+
+
+## Dragged on the waveform: to the nearest beat, its loop keeping its length.
+func _move_cue(i: int, seconds: float) -> void:
+	if i >= 0 and i < cues_now.size():
+		_place(i, _beat_i(seconds))
+		cue_sel = i
+		_cues_changed()
+
+
+## A cue to beat `b`, a loop keeping its length in beats.
+func _place(i: int, b: int) -> void:
+	var c: Dictionary = cues_now[i]
+	var lb := _loop_beats(i)
+	b = clampi(b, 0, _beats.size() - 1)
+	c.start = _beats[b]
+	if lb > 0:
+		c.end = _beat_at(b + lb)
+
+
+func _loop_beats(i: int) -> int:
+	if i < 0 or cues_now[i].end == null:
+		return 0
+	return _beat_i(float(cues_now[i].end)) - _beat_i(float(cues_now[i].start))
+
+
+func _beat_i(t: float) -> int:
+	if _beats.is_empty():
+		return 0
+	var i := _beats.bsearch(t)
+	if i >= _beats.size():
+		# past the grid: extrapolate, so a loop running off the end keeps its length
+		var step := _beats[-1] - _beats[-2] if _beats.size() > 1 else 0.5
+		return _beats.size() - 1 + roundi((t - _beats[-1]) / step)
+	if i > 0 and t - _beats[i - 1] < _beats[i] - t:
+		return i - 1
+	return i
+
+
+func _beat_at(i: int) -> float:
+	if i < _beats.size():
+		return _beats[maxi(i, 0)]
+	var step := _beats[-1] - _beats[-2] if _beats.size() > 1 else 0.5
+	return _beats[-1] + (i - _beats.size() + 1) * step
+
+
+func _snap(t: float) -> float:
+	return _beats[clampi(_beat_i(t), 0, _beats.size() - 1)] if not _beats.is_empty() else t
+
+
+## "33.1": the bar from rekordbox's grid, counted from 1, and the beat in it.
+func _bar_beat(t: float) -> String:
+	var bar := _bars.bsearch(t + 0.01)
+	if bar == 0:
+		return "0.%d" % (_beat_i(t) + 1)
+	var beat := _beat_i(t) - _beat_i(_bars[bar - 1])
+	return "%d.%d" % [bar, beat + 1]
+
+
+func _cues_changed() -> void:
+	_show_cues()
+	_refresh_keys()
+
+
+## What the waveform shows: your cues as edited when the player asks for them, else what an
+## export would write.
+func _show_cues() -> void:
+	if not cues_on():
+		_wave.edit = false
+		_wave.sel = -1
+		_wave.cues = _p_cues
+		_wave.own_cues = _p_own
+		_wave.queue_redraw()
+		return
+	var shown_list: Array = []
+	for c: Dictionary in cues_now:
+		var col := "" if int(c.num) < 0 else "#ff8c00" if c.end != null else "#28e214"
+		shown_list.append({"num": c.num, "start": c.start, "end": c.end, "colour": col})
+	_wave.cues = shown_list
+	_wave.own_cues = false
+	_wave.sel = cue_sel
+	_wave.edit = cue_mode
+	_wave.queue_redraw()
+
+
 ## The whole track as bars of loudness, played part lit, with its parts underneath and its
 ## cue points as rekordbox draws them: lettered hot cues on top (loops shaded to their end),
 ## red triangles along the bottom for memory cues.
 class Wave extends Control:
 	signal seek(f: float)
+	## cue mode: a cue clicked (selected), dragged to a time, right-clicked (deleted)
+	signal pick(i: int)
+	signal drag(i: int, seconds: float)
+	signal drop(i: int)
 	const FLAG := 14.0
 	const H := 100.0
 	const LABELS := 18.0
@@ -776,6 +1116,9 @@ class Wave extends Control:
 	var names: Array[String] = []
 	var cues: Array = []
 	var own_cues := false
+	var sel := -1
+	var edit := false
+	var _dragging := -1
 	var length := 1.0
 	var frac := 0.0
 	var font: Font
@@ -806,7 +1149,43 @@ class Wave extends Control:
 		own_cues = own
 		queue_redraw()
 
+	## The cue under the mouse: a hot cue by its flag or line, a memory cue by its triangle.
+	func _cue_at(p: Vector2) -> int:
+		var h := size.y - LABELS
+		for i in cues.size():
+			var x := _x(float(cues[i].start))
+			if int(cues[i].num) >= 0:
+				if p.y < h - 12 and p.x >= x - 4 and p.x <= x + FLAG + 2:
+					return i
+			elif p.y >= h - 14 and p.y <= h + 2 and absf(p.x - x) <= 8:
+				return i
+		return -1
+
 	func _gui_input(e: InputEvent) -> void:
+		if edit:
+			var b := e as InputEventMouseButton
+			if b and b.pressed and (b.button_index == MOUSE_BUTTON_LEFT or b.button_index == MOUSE_BUTTON_RIGHT):
+				var i := _cue_at(b.position)
+				if i >= 0:
+					if b.button_index == MOUSE_BUTTON_RIGHT:
+						drop.emit(i)
+					else:
+						_dragging = i
+						pick.emit(i)
+					accept_event()
+					return
+			if b and not b.pressed and b.button_index == MOUSE_BUTTON_LEFT and _dragging >= 0:
+				_dragging = -1
+				accept_event()
+				return
+			var m := e as InputEventMouseMotion
+			if m and _dragging >= 0:
+				if m.button_mask & MOUSE_BUTTON_MASK_LEFT:
+					drag.emit(_dragging, clampf(m.position.x / size.x, 0, 1) * length)
+				else:
+					_dragging = -1
+				accept_event()
+				return
 		var down: bool = (e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT) \
 			or (e is InputEventMouseMotion and e.button_mask & MOUSE_BUTTON_MASK_LEFT)
 		if down:
@@ -854,12 +1233,19 @@ class Wave extends Control:
 			if c.end != null and int(c.num) >= 0:
 				var col := Color(c.colour) if c.colour != "" else Color("#ff8c00")
 				draw_rect(Rect2(_x(c.start), FLAG, _x(c.end) - _x(c.start), h - FLAG), Color(col, 0.22))
-		for c: Dictionary in cues:
+		for ci in cues.size():
+			var c: Dictionary = cues[ci]
 			var x := _x(c.start)
 			if int(c.num) < 0:
 				# memory cue: a red triangle on the bottom edge, clear of the hot cue flags
-				draw_colored_polygon(PackedVector2Array([Vector2(x - 6, h), Vector2(x + 6, h), Vector2(x, h - 9)]), Color("#e5332a"))
+				var tri := PackedVector2Array([Vector2(x - 6, h), Vector2(x + 6, h), Vector2(x, h - 9)])
+				draw_colored_polygon(tri, Color("#e5332a"))
+				if ci == sel:
+					draw_polyline(PackedVector2Array([tri[0], tri[1], tri[2], tri[0]]), Color.WHITE, 1.5)
 				continue
+			if ci == sel:
+				draw_line(Vector2(x, FLAG), Vector2(x, h), Color.WHITE, 1.5)
+				draw_rect(Rect2(x - 1.5, -1.5, FLAG + 3, FLAG + 3), Color.WHITE)
 			var col := Color(c.colour) if c.colour != "" else Color("#28e214")
 			draw_line(Vector2(x, FLAG), Vector2(x, h), Color(col, 0.8), 1.0)
 			draw_rect(Rect2(x, 0, FLAG, FLAG), col)

@@ -99,7 +99,7 @@ func _after() -> Dictionary:
 func _on_next(colour: int, rating: int, energy: int, key: String) -> void:
 	# picked before saving: a new colour re-sorts the saved track elsewhere
 	var nxt := _after()
-	state.decide(player.track, colour, rating, "library", energy, key, player.shown, player.shown_stars, player.card())
+	state.decide(player.track, colour, rating, "library", energy, key, player.shown, player.shown_stars, player.card(), player.cue_decision())
 	if nxt.is_empty():
 		return
 	table.select(nxt.path)

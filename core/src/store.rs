@@ -30,8 +30,9 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (6, "batches", include_str!("../migrations/0006_batches.sql")),
     (7, "label_origin", include_str!("../migrations/0007_label_origin.sql")),
     (8, "label_card", include_str!("../migrations/0008_label_card.sql")),
+    (9, "cue_decisions", include_str!("../migrations/0009_cue_decisions.sql")),
 ];
-pub const SCHEMA_VERSION: i64 = 8;
+pub const SCHEMA_VERSION: i64 = 9;
 const BASELINE: i64 = 3;
 
 pub fn vibecheck_dir(root: &Path) -> Res<PathBuf> {
@@ -456,6 +457,24 @@ pub fn cues_written(con: &Connection) -> Res<HashMap<String, Vec<f64>>> {
          WHERE w.id = (SELECT MAX(id) FROM cue_writes WHERE track_id = w.track_id)",
     )?;
     Ok(m.into_iter().map(|(p, h)| (p, serde_json::from_str(&h).unwrap_or_default())).collect())
+}
+
+/// Your cues for a track as set in the player (JSON), with the suggestion shown then.
+pub fn log_cue_decision(con: &Connection, track_id: i64, cues: &str, shown: Option<&str>, card: Option<&str>) -> Res<()> {
+    con.execute(
+        "INSERT INTO cue_decisions (track_id, cues, shown, card, ts) VALUES (?1,?2,?3,?4,?5)",
+        params![track_id, cues, shown, card, now()],
+    )?;
+    Ok(())
+}
+
+/// Your cues per track, the newest decision of each, as JSON.
+pub fn cue_decisions(con: &Connection) -> Res<HashMap<String, String>> {
+    pairs(
+        con,
+        "SELECT t.path, d.cues FROM cue_decisions d JOIN tracks t ON t.id = d.track_id
+         WHERE d.id = (SELECT MAX(id) FROM cue_decisions WHERE track_id = d.track_id)",
+    )
 }
 
 /// Your key and energy for a track, as corrected; None leaves that one alone.

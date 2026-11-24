@@ -913,19 +913,39 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
 /// Your label for one track: a colour (palette id), and stars when given (1..5);
 /// with a key ("8A") and energy (1..10) when you corrected them.
 /// Save a label you made in the app. `made`: which card asked and what was on screen.
-pub fn decide(root: &Path, path: &str, colour: i64, stars: i64, key: Option<&str>, energy: Option<i64>, made: store::Made) -> Res<()> {
+/// Your cues from the player, with the suggestion that was on screen: saved with the label.
+pub struct CuesSet {
+    pub cues: Vec<Cue>,
+    pub shown: Option<Vec<Cue>>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn decide(root: &Path, path: &str, colour: i64, stars: i64, key: Option<&str>, energy: Option<i64>, made: store::Made, cues: Option<CuesSet>) -> Res<()> {
     let con = store::labels_db(root)?;
     let id: i64 = con.query_row("SELECT id FROM tracks WHERE path = ?1", [path], |r| r.get(0))?;
     let colour = Some(palette::by_id(colour).ok_or("no such colour")?);
     let stars = (1..=5).contains(&stars).then_some(stars as u8);
     let key = key.filter(|k| is_key(k));
     let energy = energy.filter(|e| (1..=10).contains(e)).map(|e| e as u8);
+    let made_card = made.card.clone();
     con.execute_batch("BEGIN")?;
     store::log_label_as(&con, id, Label { colour, stars }, "user", None, made)?;
     if key.is_some() || energy.is_some() {
         // a correction of one keeps the other as it was corrected before
         let (k0, e0) = store::key_energy(&con)?.remove(path).unwrap_or_default();
         store::log_key_energy(&con, id, key.or(k0.as_deref()), energy.or(e0))?;
+    }
+    if let Some(c) = cues {
+        let clean = |v: &[Cue]| -> Res<String> {
+            let v: Vec<Cue> = v
+                .iter()
+                .filter(|c| c.start >= 0.0 && (-1..=7).contains(&c.num))
+                .map(|c| Cue { colour: String::new(), end: c.end.filter(|e| *e > c.start), ..c.clone() })
+                .collect();
+            Ok(serde_json::to_string(&v)?)
+        };
+        let shown = c.shown.as_deref().map(clean).transpose()?;
+        store::log_cue_decision(&con, id, &clean(&c.cues)?, shown.as_deref(), made_card.as_deref())?;
     }
     con.execute_batch("COMMIT")?;
     Ok(())
@@ -1122,7 +1142,16 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
             a.energy = e.unwrap_or(a.energy);
         }
     }
-    let plan = if cue { Some(workflow::plan_cues(root, cfg, &paths, &x)?) } else { None };
+    // your cues, set in the player, go out whatever the track has (a fresh start)
+    let set: HashMap<String, Vec<Cue>> = store::cue_decisions(&con)?
+        .into_iter()
+        .filter(|(p, _)| cue && paths.contains(p))
+        .filter_map(|(p, j)| Some((p, serde_json::from_str(&j).ok()?)))
+        .collect();
+    let plan = if cue { {
+        let rest: Vec<String> = paths.iter().filter(|p| !set.contains_key(*p)).cloned().collect();
+        Some(workflow::plan_cues(root, cfg, &rest, &x)?)
+    } } else { None };
     let name = format!("vibecheck-{}", local(now(), "%Y%m%d-%H%M"));
     let entries: Vec<Entry> = paths
         .iter()
@@ -1132,7 +1161,10 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
             label: labels.get(p).copied(),
             key: ke.get(p).map(|k| k.key.clone()),
             energy: ke.get(p).map(|k| k.energy),
-            cues: plan.as_ref().and_then(|c| c.marks.get(p)).map(|m| m.0.clone()),
+            cues: match set.get(p) {
+                Some(c) => Some(marks_of(c)),
+                None => plan.as_ref().and_then(|c| c.marks.get(p)).map(|m| m.0.clone()),
+            },
         })
         .collect();
     let o = WriteOpts::from_cfg(&name, cfg, false);
@@ -1141,6 +1173,15 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
         && !p.marks.is_empty()
     {
         workflow::log_cues(root, p, None)?;
+    }
+    // what was written of yours, so a later change in rekordbox reads as one
+    if !set.is_empty() {
+        let ids = store::track_ids(&con)?;
+        con.execute_batch("BEGIN")?;
+        for (p, c) in &set {
+            store::log_cue_write(&con, ids[p], None, "set", &[], &cues::hot_starts(&marks_of(c)))?;
+        }
+        con.execute_batch("COMMIT")?;
     }
     let ts = now();
     // the ones with no label here: remember what rekordbox had, to see a change at the next sync
@@ -1677,13 +1718,20 @@ pub struct Parts {
     /// what an export would write: your correction, else the analysis
     pub key: String,
     pub energy: i64,
-    /// the cue points: what an export would write, or yours when the track has
-    /// cues of your own (export never touches those)
+    /// the cue points: what an export would write: yours as set in the player, else the
+    /// model's on a track free to write, else the track's own (export never touches those)
     pub cues: Vec<Cue>,
     pub own_cues: bool,
+    /// `cues` are yours, set in the player
+    pub set: bool,
+    /// the model's cues for the track whatever it has now: where the player starts (fresh start)
+    pub suggested: Vec<Cue>,
+    /// rekordbox's grid: every beat and every bar start, seconds, for placing cues
+    pub beats: Vec<f64>,
+    pub bars: Vec<f64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Cue {
     pub start: f64,
     /// loops only
@@ -1691,7 +1739,18 @@ pub struct Cue {
     /// hot cue slot 0..7 (A..H), -1 for a memory cue
     pub num: i64,
     /// "#rrggbb" as rekordbox shows it; "" for none
+    #[serde(default)]
     pub colour: String,
+}
+
+/// Your cues for a track as set in the player, newest decision; None without one.
+fn cues_set(con: &rusqlite::Connection, path: &str) -> Res<Option<Vec<Cue>>> {
+    Ok(store::cue_decisions(con)?.remove(path).and_then(|j| serde_json::from_str(&j).ok()))
+}
+
+/// Your cues as the xml's marks: hot cues coloured as the model's are.
+fn marks_of(set: &[Cue]) -> Vec<cues::Mark> {
+    set.iter().map(|c| cues::mark(c.num, c.start, c.end)).collect()
 }
 
 fn cue_of(m: &cues::Mark) -> Option<Cue> {
@@ -1760,6 +1819,13 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
     let mut marks: Vec<cues::Mark> = t.map(|t| t.marks.clone()).unwrap_or_default();
     let own_cues = t.is_some_and(|t| !cues::writable(t));
     let mut sections = vec![(0.0, "start")];
+    let mut suggested = vec![];
+    let (mut beats, mut bars) = (vec![], vec![]);
+    if let Some(t) = t.filter(|t| !t.tempos.is_empty()) {
+        let g = cues::beats(&t.tempos, t.duration + 2.0);
+        bars = g.iter().filter(|b| b.1 == 0).map(|b| b.0).collect();
+        beats = g.into_iter().map(|b| b.0).collect();
+    }
     if let (Some(t), Some(h)) = (t.filter(|t| !t.tempos.is_empty()), &hash) {
         let f = match cues::cached_features(&cache, h, t) {
             Some(f) => Some(f),
@@ -1775,9 +1841,11 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
             let down = cues::downbeats(&t.tempos, t.duration + 2.0);
             let names = ["mix in", "change", "change", "mix out"];
             let trans = cues::Model::load(root)?.transitions(&f);
+            let lead = cfg.ints("cues", "lead", &[0]);
+            let placed = cues::place(&trans, &down, &lead, &cfg.int_map("cues", "loops"), cfg.bool("cues", "memory", true));
+            suggested = placed.iter().filter_map(cue_of).collect();
             if !own_cues && cfg.bool("cues", "write", true) {
-                let lead = cfg.ints("cues", "lead", &[0]);
-                marks = cues::place(&trans, &down, &lead, &cfg.int_map("cues", "loops"), cfg.bool("cues", "memory", true));
+                marks = placed;
             }
             for (b, name) in trans.iter().zip(names) {
                 let s = cues::bar_time(&down, *b);
@@ -1812,8 +1880,13 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
         key = k.unwrap_or(key);
         energy = e.map(i64::from).unwrap_or(energy);
     }
-    let cues = marks.iter().filter_map(cue_of).collect();
-    Ok(Parts { sections, key, energy, cues, own_cues })
+    let mine = cues_set(&labels, path)?;
+    let set = mine.is_some();
+    let cues = match mine {
+        Some(c) => marks_of(&c).iter().filter_map(cue_of).collect(),
+        None => marks.iter().filter_map(cue_of).collect(),
+    };
+    Ok(Parts { sections, key, energy, cues, own_cues, set, suggested, beats, bars })
 }
 
 /// The track at the analysis rate, decoded (or taken from `kept`) the first time it is asked for.
@@ -1844,6 +1917,7 @@ pub fn settings(cfg: &Config) -> serde_json::Value {
         "write_tonality": cfg.bool("rekordbox", "write_tonality", true),
         "write_comment": cfg.bool("rekordbox", "write_comment", true),
         "cues_write": cfg.bool("cues", "write", true),
+        "cues_edit": cfg.bool("cues", "edit", true),
         "cues_lead": cfg.ints("cues", "lead", &[0]),
         "cues_loops": cfg.int_map("cues", "loops").into_iter().collect::<HashMap<_, _>>(),
         "cues_memory": cfg.bool("cues", "memory", true),
