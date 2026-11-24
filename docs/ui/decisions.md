@@ -378,19 +378,26 @@ you think is best and we can iterate from there".
 
 - **Tab** switches the eight colour keys between **Colour** and **Cues**
   (a two-way switch above them, lime on the one in use). In cue mode the
-  keys are the hot cues A–H, in two rows of four as a CDJ's pads, and by key
+  keys are the hot cues A–H, in two rows of four as a DDJ controller's
+  performance pads (what most rekordbox users play on), and by key
   position as the colours are, so on Neo 2 the same physical keys.
 - Each pad shows its slot (green cue, orange loop, as rekordbox draws them),
   where it sits as bar.beat, and "cue" or "loop 16"; an empty slot shows
   "—". What you changed from the suggestion turns lime, as a corrected energy
   or key does; the selected cue has a white outline on its pad and flag.
 - **A pad** jumps to its cue, plays from it and selects it; **an empty pad**
-  sets its cue at the playhead on the nearest beat; **⇧ + pad** moves it to
-  the playhead.
+  sets its cue at the playhead; **⇧ + pad** deletes it, as Shift + pad does
+  on rekordbox's DDJ controllers (it first moved the cue to the playhead:
+  the opposite of what a rekordbox user's hands expect). To move a cue,
+  delete and set it again, ← →, or drag it.
+- **Quantize** (a switch beside Colour | Cues in cue mode, on, as rekordbox's):
+  cues land on the grid's beats; off, where the playhead or the mouse is,
+  and the pad reads "~33.1" (the beat nearest). ← → still step by beats.
 - **← → / ⇧← →** move the selected cue a beat / a bar. In colour mode they
   step through the parts as now; 1–6 jump to parts in both modes.
-- **O** cycles the selected cue's loop: off, 4, 8, 16, 32 bars. **M** sets a
-  memory cue at the playhead. **⌫** deletes the selected cue. Letters
+- **O** cycles the selected cue's loop: off, 4, 8, 16, 32, 64 beats; pads
+  read "loop 64". In beats, as rekordbox counts loops (bars at first). **M** sets a
+  memory cue at the playhead. **⌫** also deletes the selected cue. Letters
   chosen outside the colour keys' positions on Neo 2 (x v l c / u i a e), so
   no shortcut lands on a pad.
 - **Mouse**: drag a flag (top) or a memory triangle (bottom) along the

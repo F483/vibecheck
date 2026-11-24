@@ -49,7 +49,7 @@ var listening := ""
 var _hearing := false  # the background listening chain is running
 var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
-	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_edit": true, "cues_lead": 0,
+	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_edit": true, "cues_quantize": true, "cues_lead": 0,
 	"cues_loops": {}, "cues_memory": true,
 	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_limit": 100,
 }

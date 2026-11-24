@@ -87,7 +87,8 @@ var _actions: HBoxContainer
 var _undo_box: HBoxContainer
 ## hidden with no track open, so no empty outlines show
 var _trays: Array[Control] = []
-## Cue mode (Tab): the eight colour keys are the hot cues A–H, by the same key positions.
+## Cue mode (Tab): the eight colour keys are the hot cues A–H, by the same key positions, in
+## two rows of four as a DDJ controller's pads; ⇧ + pad deletes, as there.
 ## Your cues as edited ({num, start, end}: num 0..7 hot, -1 memory; seconds), the model's
 ## suggestion they started from, the one selected, and rekordbox's grid to place them on.
 var cue_mode := false
@@ -101,7 +102,8 @@ var _p_cues: Array = []
 var _p_own := false
 var _switch: HBoxContainer
 var _switch_room: Control
-const LOOPS := [0, 4, 8, 16, 32]
+## loop lengths in beats, as rekordbox counts them
+const LOOPS := [0, 4, 8, 16, 32, 64]
 
 
 func _init(bg: Color, s) -> void:
@@ -862,6 +864,16 @@ func _refresh_switch() -> void:
 	if not on:
 		return
 	_switch.alignment = BoxContainer.ALIGNMENT_END
+	if cue_mode:
+		# rekordbox's Quantize: cues land on the grid's beats; off, where the playhead is
+		var q := quantize()
+		var qp := UI.panel(UI.LIME if q else UI.CARD, 3, 10, 2)
+		qp.add_child(UI.text("Quantize", 11, UI.BG if q else UI.MUTED, "semi"))
+		UI.clickable(qp, func() -> void:
+			state.set_setting("cues_quantize", not q)
+			_refresh_keys())
+		_switch.add_child(qp)
+		_switch.add_child(UI.margin(Control.new(), 0, 0, 6, 0))
 	for m: Array in [["Colour", false], ["Cues", true]]:
 		var lit: bool = m[1] == cue_mode
 		var p := UI.panel(UI.LIME if lit else UI.CARD, 3, 10, 2)
@@ -869,6 +881,10 @@ func _refresh_switch() -> void:
 		UI.clickable(p, set_cue_mode.bind(m[1]))
 		_switch.add_child(p)
 	_switch.add_child(UI.kbd("TAB"))
+
+
+func quantize() -> bool:
+	return bool(state.settings.get("cues_quantize", true))
 
 
 func _hot(slot: int) -> int:
@@ -905,7 +921,7 @@ func _pad(slot: int) -> PanelContainer:
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	sq.add_child(l)
 	var where := UI.text(_bar_beat(float(c.start)) if i >= 0 else "—", 12, UI.LIME if i >= 0 and _edited(c) else UI.TEXT if i >= 0 else UI.MUTED, "mono")
-	var what := UI.text(("loop %d" % roundi(_loop_beats(i) / 4.0)) if loop else "cue" if i >= 0 else "empty", 9, Color("#ffb07a") if loop else UI.MUTED, "mono")
+	var what := UI.text(("loop %d" % _loop_beats(i)) if loop else "cue" if i >= 0 else "empty", 9, Color("#ffb07a") if loop else UI.MUTED, "mono")
 	var col := UI.col(0, [where, what])
 	col.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	p.add_child(UI.row(7, [UI.kbd(UI.key_label(UI.COLOURS[slot].key)), sq, col]))
@@ -917,7 +933,7 @@ func _pad(slot: int) -> PanelContainer:
 func _cue_tools() -> Array:
 	var out: Array = []
 	for t: Array in [["← →", "beat", nudge.bind(1)], ["⇧← →", "bar", nudge.bind(4)], ["O", "loop", cycle_loop],
-			["M", "memory", add_memory], ["⌫", "delete", delete_cue]]:
+			["M", "memory", add_memory], ["⇧ pad", "delete", delete_cue]]:
 		var p := UI.panel(UI.CARD, 3, 8, 0)
 		p.custom_minimum_size.y = 30
 		p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
@@ -927,19 +943,21 @@ func _cue_tools() -> Array:
 	return out
 
 
-## A pad: jump to its cue and play from it; an empty one, or with ⇧, set it at the playhead.
-func pad(slot: int, move: bool) -> void:
+## A pad as on a DDJ controller: an empty one sets its cue at the playhead; a set one jumps
+## there and plays; ⇧ + pad deletes it (to move one: delete and set again, or ← →).
+func pad(slot: int, shift: bool) -> void:
 	if not _cues_ready:
 		return
 	var i := _hot(slot)
-	if i < 0 or move:
+	if shift:
+		if i >= 0:
+			cue_sel = i
+			delete_cue()
+		return
+	if i < 0:
 		_remember()
-		var at := _snap(pos)
-		if i < 0:
-			cues_now.append({"num": slot, "start": at, "end": null})
-			i = cues_now.size() - 1
-		else:
-			_place(i, _beat_i(at))
+		cues_now.append({"num": slot, "start": _snap(pos), "end": null})
+		i = cues_now.size() - 1
 	else:
 		seek(float(cues_now[i].start))
 		if not playing:
@@ -974,16 +992,15 @@ func nudge(beats: int) -> void:
 	_cues_changed()
 
 
-## Off, 4, 8, 16, 32 bars, round again.
+## Off, 4, 8, 16, 32, 64 beats, round again.
 func cycle_loop() -> void:
 	if cue_sel < 0:
 		return
 	_remember()
 	var c: Dictionary = cues_now[cue_sel]
-	var bars := roundi(_loop_beats(cue_sel) / 4.0)
-	var n: int = LOOPS[(LOOPS.find(bars) + 1) % LOOPS.size()] if bars in LOOPS else 4
-	var b := _beat_i(float(c.start))
-	c.end = null if n == 0 else _beat_at(b + n * 4)
+	var lb := _loop_beats(cue_sel)
+	var n: int = LOOPS[(LOOPS.find(lb) + 1) % LOOPS.size()] if lb in LOOPS else 4
+	c.end = null if n == 0 else _loop_end(float(c.start), n)
 	_cues_changed()
 
 
@@ -1016,12 +1033,21 @@ func delete_cue() -> void:
 	_cues_changed()
 
 
-## Dragged on the waveform: to the nearest beat, its loop keeping its length.
+## Dragged on the waveform: to the nearest beat (to the spot, with Quantize off), its loop
+## keeping its length.
 func _move_cue(i: int, seconds: float) -> void:
-	if i >= 0 and i < cues_now.size():
+	if i < 0 or i >= cues_now.size():
+		return
+	if quantize():
 		_place(i, _beat_i(seconds))
-		cue_sel = i
-		_cues_changed()
+	else:
+		var c: Dictionary = cues_now[i]
+		var lb := _loop_beats(i)
+		c.start = clampf(seconds, 0.0, length)
+		if lb > 0:
+			c.end = _loop_end(c.start, lb)
+	cue_sel = i
+	_cues_changed()
 
 
 ## A cue to beat `b`, a loop keeping its length in beats.
@@ -1031,7 +1057,13 @@ func _place(i: int, b: int) -> void:
 	b = clampi(b, 0, _beats.size() - 1)
 	c.start = _beats[b]
 	if lb > 0:
-		c.end = _beat_at(b + lb)
+		c.end = _loop_end(c.start, lb)
+
+
+## `beats` beats on from `start`, by the grid's tempo there.
+func _loop_end(start: float, beats: int) -> float:
+	var b := _beat_i(start)
+	return start + _beat_at(b + beats) - _beat_at(b)
 
 
 func _loop_beats(i: int) -> int:
@@ -1061,16 +1093,20 @@ func _beat_at(i: int) -> float:
 
 
 func _snap(t: float) -> float:
-	return _beats[clampi(_beat_i(t), 0, _beats.size() - 1)] if not _beats.is_empty() else t
+	if _beats.is_empty() or not quantize():
+		return t
+	return _beats[clampi(_beat_i(t), 0, _beats.size() - 1)]
 
 
-## "33.1": the bar from rekordbox's grid, counted from 1, and the beat in it.
+## "33.1": the bar from rekordbox's grid, counted from 1, and the beat in it; "~33.1" for a
+## cue off the grid (set with Quantize off), at the beat nearest.
 func _bar_beat(t: float) -> String:
+	var off := "~" if absf(_beat_at(_beat_i(t)) - t) > 0.02 else ""
 	var bar := _bars.bsearch(t + 0.01)
 	if bar == 0:
-		return "0.%d" % (_beat_i(t) + 1)
+		return "%s0.%d" % [off, _beat_i(t) + 1]
 	var beat := _beat_i(t) - _beat_i(_bars[bar - 1])
-	return "%d.%d" % [bar, beat + 1]
+	return "%s%d.%d" % [off, bar, beat + 1]
 
 
 func _cues_changed() -> void:
