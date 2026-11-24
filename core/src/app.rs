@@ -1765,6 +1765,9 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
             }
         }
     }
+    if crate::stopping() {
+        return Err("stopped".into());
+    }
     let (mut key, mut energy) = Default::default();
     if let Some(h) = &hash {
         let k = match keyenergy::cached(&cache, h) {

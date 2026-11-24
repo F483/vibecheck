@@ -72,6 +72,7 @@ var _said_at := -1  # when the console last got the listening line, msec
 ## path -> {"wave": …, "parts": …}. Others are forgotten; the core keeps them in its cache.
 var _wv := {}
 var _wv_now := ""
+var _wv_want: Array[String] = []  # the track on screen first, then those read ahead
 var _wv_cb := {}
 var _seen_mtime := 0
 var _exporting := false
@@ -148,12 +149,12 @@ func busy() -> bool:
 	return _main.busy > 0
 
 
-func _call(lane: Lane, cmd: String, args: Dictionary, done: Callable, what := "") -> void:
+func _call(lane: Lane, cmd: String, args: Dictionary, done: Callable, what := "", front := false) -> void:
 	args.root = settings.music
 	args.xml = settings.xml
 	if what != "":
 		status.emit(what)
-	lane.push(cmd, JSON.stringify(args), str(args.get("path", "")), func(r: Variant) -> void:
+	lane.push(front, cmd, JSON.stringify(args), str(args.get("path", "")), func(r: Variant) -> void:
 		if what != "":
 			status.emit("")
 		if not r is Dictionary or r.has("error"):
@@ -574,24 +575,34 @@ func poll() -> void:
 
 ## The player's track: `on_wave` gets {duration, peaks}, then `on_parts` {sections, key,
 ## energy, cues, own_cues}; null on failure. Those of `ahead`, the tracks it may load next,
-## are read meanwhile, so theirs are there when they come; calls for any other track that
-## have not started yet are dropped, so stepping through fast doesn't wait for each one.
+## are read after it, so theirs are there when they come. The track on screen never waits:
+## its reads go first, and a read already running for any other track (a long one takes
+## seconds) gives up part way; one still read ahead is queued again behind it.
 func wave(t: Dictionary, on_wave: Callable, on_parts: Callable, ahead: Array = []) -> void:
 	_wv_now = t.path
 	_wv_cb = {"wave": on_wave, "parts": on_parts}
-	var want: Array[String] = [t.path]
+	_wv_want = [t.path]
 	for a: Dictionary in ahead:
-		if not a.is_empty() and a.path not in want:
-			want.append(a.path)
+		if not a.is_empty() and a.path not in _wv_want:
+			_wv_want.append(a.path)
 	for p: String in _wv.keys():
-		if p not in want:
+		if p not in _wv_want:
 			_wv.erase(p)
-	_waves.drop(func(path: String) -> bool: return path in want)
-	for p in want:
+	_waves.drop(func(path: String) -> bool: return path in _wv_want)
+	for p in _wv_want:
 		_wv_load(p)
+	_wv_allow()
 	for k: String in ["wave", "parts"]:
 		if _wv[t.path].has(k):
 			_wv_cb[k].call(_wv[t.path][k])
+
+
+## Which reads may run on: only the track on screen until it has both answers, then those
+## read ahead too.
+func _wv_allow() -> void:
+	var got: Dictionary = _wv.get(_wv_now, {})
+	var ready := got.has("wave") and got.has("parts")
+	ClassDB.class_call_static("Vibecheck", "want", PackedStringArray(_wv_want if ready else [_wv_now]))
 
 
 func _wv_load(path: String) -> void:
@@ -599,13 +610,23 @@ func _wv_load(path: String) -> void:
 		return
 	var got := {}
 	_wv[path] = got
-	for k: String in ["wave", "parts"]:
+	var front := path == _wv_now
+	# the track on screen jumps the queue, wave before parts (parts reuses its decoded audio)
+	for k: String in (["parts", "wave"] if front else ["wave", "parts"]):
 		_call(_waves, k, {"path": path, "bins": 600}, func(r: Variant) -> void:
 			if not is_same(_wv.get(path), got):
 				return  # dropped while it was read
+			if r is Dictionary and r.has("dropped"):
+				# given up for the track on screen: read it again after
+				_wv.erase(path)
+				_waves.drop(func(p: String) -> bool: return p != path)
+				if path in _wv_want:
+					_wv_load(path)
+				return
 			got[k] = r
 			if path == _wv_now:
-				_wv_cb[k].call(r))
+				_wv_cb[k].call(r)
+				_wv_allow(), "", front)
 
 
 func audio_path(t: Dictionary) -> String:
@@ -793,11 +814,14 @@ class Lane:
 	var _quit := false
 
 	## `key` names what the call is for, for `drop`.
-	func push(cmd: String, args: String, key: String, done: Callable) -> void:
+	func push(front: bool, cmd: String, args: String, key: String, done: Callable) -> void:
 		if not _thread.is_started():
 			_thread.start(_work)
 		_mutex.lock()
-		_jobs.append([cmd, args, done, key])
+		if front:
+			_jobs.push_front([cmd, args, done, key])
+		else:
+			_jobs.append([cmd, args, done, key])
 		_mutex.unlock()
 		busy += 1
 		_sem.post()

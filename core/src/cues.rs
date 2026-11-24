@@ -251,6 +251,7 @@ fn power_to_db(v: &mut [f64]) {
     }
 }
 
+#[derive(Default)]
 pub struct Bars {
     pub mel: Vec<Vec<f64>>,
     pub chroma: Vec<Vec<f64>>,
@@ -270,6 +271,9 @@ pub fn bar_audio(y: &[f32], down: &[f64]) -> Bars {
     // power spectrogram, frames x bins, centred and zero-padded
     let mut s: Vec<Vec<f64>> = Vec::with_capacity(frames);
     for t in 0..frames {
+        if t % 4096 == 0 && crate::stopping() {
+            return Bars::default();
+        }
         let c = (t * HOP) as isize - half;
         for i in 0..N_FFT {
             let k = c + i as isize;
@@ -299,6 +303,9 @@ pub fn bar_audio(y: &[f32], down: &[f64]) -> Bars {
     let cb = chroma_basis(estimate_tuning(&s));
     let mut chroma = vec![0f64; frames * 12];
     for (t, fr) in s.iter().enumerate() {
+        if t % 4096 == 0 && crate::stopping() {
+            return Bars::default();
+        }
         let row: Vec<f64> = cb.iter().map(|c| c.iter().zip(fr).map(|(a, b)| a * b).sum()).collect();
         let mx = row.iter().cloned().fold(0f64, |m, v| m.max(v.abs()));
         for (c, v) in row.iter().enumerate() {
@@ -490,7 +497,27 @@ fn kmeans(y: &[Vec<f64>], k: usize, starts: usize) -> Vec<usize> {
 
 /// Laplacian structural segmentation (McFee & Ellis 2014): a section label
 /// per bar, for each section count.
+/// Tracks of at most this many bars are segmented bar by bar, as the prototype did: every
+/// normal track (512 bars is 16 minutes at 128 BPM). The eigendecomposition is cubic in bars,
+/// 100 s on a 100-minute mix and not interruptible, so a longer one is averaged in groups of
+/// 2, 4, 8.. bars first (phrase-aligned) and the labels spread back over the bars.
+const SEGMENT_MAX: usize = 512;
+
 fn segment(x: &[Vec<f64>], ks: &[usize]) -> Vec<(usize, Vec<usize>)> {
+    let n = x.len();
+    let mut f = 1;
+    while n.div_ceil(f) > SEGMENT_MAX {
+        f *= 2;
+    }
+    if f == 1 {
+        return segment_bars(x, ks);
+    }
+    let pooled: Vec<Vec<f64>> =
+        x.chunks(f).map(|c| (0..c[0].len()).map(|j| c.iter().map(|r| r[j]).sum::<f64>() / c.len() as f64).collect()).collect();
+    segment_bars(&pooled, ks).into_iter().map(|(k, lab)| (k, (0..n).map(|i| lab[i / f]).collect())).collect()
+}
+
+fn segment_bars(x: &[Vec<f64>], ks: &[usize]) -> Vec<(usize, Vec<usize>)> {
     let n = x.len();
     let m = x[0].len();
     let mut xn = x.to_vec();

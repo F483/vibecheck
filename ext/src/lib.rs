@@ -88,8 +88,11 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
         "history" => json!(app::history(&root)?),
         "batch" => json!(app::batch_tracks(&root, n(a, "id", 0))?),
         "curve" => json!(app::curve(&root, &cfg()?)?),
-        "wave" => json!(app::wave(&root, s(a, "path"), n(a, "bins", 600) as usize)?),
-        "parts" => json!(app::parts(&root, &xml, &cfg()?, s(a, "path"))?),
+        // the player's reads: {"dropped": true} once it no longer wants the track, given up part way
+        "wave" => vibecheck::for_player(s(a, "path"), || app::wave(&root, s(a, "path"), n(a, "bins", 600) as usize))
+            .map_or(Ok(json!({"dropped": true})), |r| r.map(|w| json!(w)))?,
+        "parts" => vibecheck::for_player(s(a, "path"), || app::parts(&root, &xml, &cfg()?, s(a, "path")))
+            .map_or(Ok(json!({"dropped": true})), |r| r.map(|p| json!(p)))?,
         "settings" => app::settings(&cfg()?),
         "set" => {
             app::set(&root, s(a, "section"), s(a, "key"), a.get("value").unwrap_or(&Value::Null))?;
@@ -128,6 +131,12 @@ impl Vibecheck {
     fn export_progress() -> Vector2i {
         let get = |a: &std::sync::atomic::AtomicUsize| a.load(std::sync::atomic::Ordering::Relaxed) as i32;
         Vector2i::new(get(&app::EXPORT_DONE), get(&app::EXPORT_TOTAL))
+    }
+
+    /// The tracks the player still wants; a read for any other gives up part way.
+    #[func]
+    fn want(paths: PackedStringArray) {
+        vibecheck::want(paths.as_slice().iter().map(|p| p.to_string()).collect());
     }
 
     /// The app is closing: long work stops at its next safe point.
