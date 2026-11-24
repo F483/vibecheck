@@ -659,6 +659,25 @@ pub fn train(root: &Path, cfg: &Config) -> Res<()> {
     Ok(())
 }
 
+/// The cue model is behind your cues, as the colour model is behind your labels: you have
+/// `[cues] retrain_after` more tracks of your own cues than it learned from. Your own cues
+/// only (`cues::yours`): cues this app wrote and you left alone are its guesses, not yours.
+/// It retrains in steps, not on every track as colours do: training takes minutes.
+pub fn cues_stale(root: &Path, x: &HashMap<String, Track>, cfg: &Config) -> Res<bool> {
+    let own = crate::cue_train::yours(root, x, cfg)?.len();
+    Ok(own >= cues::Model::load(root)?.n_tracks + cfg.int("cues", "retrain_after", 50).max(1) as usize)
+}
+
+/// Learn from your cues when the cue model is behind them; the number of tracks it learned
+/// from, or None when it was not behind. Minutes, on all cores; gives up when the app closes.
+pub fn train_cues(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Option<usize>> {
+    let x = xml(root, xml_path)?;
+    if !cues_stale(root, &x, cfg)? {
+        return Ok(None);
+    }
+    Ok(Some(crate::cue_train::train(root, &x, cfg)?.tracks))
+}
+
 // --- the queue ---------------------------------------------------------------------
 
 #[derive(Serialize)]
@@ -682,6 +701,8 @@ pub struct Queue {
     pub pool: usize,
     /// asked of a model trained before your latest labels: retrain, then ask again
     pub stale: bool,
+    /// the cue model is behind your cues: learn from them (`train_cues`)
+    pub cues_stale: bool,
     /// the pool by how sure the model is of its colour, per band (`band`): all of it, and
     /// the part with no colour in rekordbox (what the guesses export would write); empty
     /// while calibrating
@@ -752,6 +773,7 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
         measured: s.colour_n,
         pool: pool.len(),
         stale,
+        cues_stale: cues_stale(root, &*xml(root, xml_path)?, cfg).unwrap_or(false),
         sure_hist: vec![],
         blank_hist: vec![],
         right_hist: s.by_sure.clone(),

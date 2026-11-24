@@ -7,6 +7,7 @@ pub mod app;
 pub mod audio;
 pub mod config;
 pub mod cover;
+pub mod cue_train;
 pub mod cues;
 pub mod embed;
 pub mod evaluate;

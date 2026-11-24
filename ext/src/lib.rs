@@ -42,6 +42,7 @@ fn run(cmd: &str, a: &Value) -> Res<Value> {
             let stale_ok = a.get("stale_ok").and_then(Value::as_bool).unwrap_or(false);
             json!(app::queue(&root, &xml, &cfg()?, n(a, "threshold", 100) as usize, n(a, "n", 200) as usize, &skip, stale_ok)?)
         }
+        "train_cues" => json!(app::train_cues(&root, &xml, &cfg()?)?),
         "train" => {
             app::train(&root, &cfg()?)?;
             json!(true)

@@ -130,17 +130,12 @@ pub fn discard(root: &Path, args: &Args) -> Res<()> {
 
 // --- cues --------------------------------------------------------------------
 
-/// Learning from your own cues is not ported yet; say when it would have run.
-fn cue_learning_note(root: &Path, cfg: &Config, xml: &HashMap<String, rekordbox::Track>) -> Res<()> {
-    let written = store::cues_written(&store::labels_db(root)?)?;
-    let own = cues::yours(xml, &written, &cfg.ints("cues", "lead", &[0]));
-    let model = cues::Model::load(root)?;
-    if own.len() >= model.n_tracks + cfg.int("cues", "retrain_after", 50) as usize {
-        println!(
-            "      note: {} tracks carry your cues, the model in use knew {}; learning from them is not in\n      this version yet (the prototype's `vibecheck cues --train`, then scripts/export_cue_model.py)",
-            own.len(),
-            model.n_tracks
-        );
+/// Learn from your own cues first when the cue model is behind them (`app::cues_stale`).
+fn cue_learning(root: &Path, cfg: &Config, xml: &HashMap<String, rekordbox::Track>) -> Res<()> {
+    if vibecheck::app::cues_stale(root, xml, cfg)? {
+        println!("      learning from your cue points (a few minutes)");
+        let t = vibecheck::cue_train::train(root, xml, cfg)?;
+        println!("      learned from {} tracks", t.tracks);
     }
     Ok(())
 }
@@ -252,7 +247,7 @@ pub fn label(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
             println!("      no rekordbox export found; skipping");
         } else {
             let tracks = rekordbox::read(x, root)?;
-            cue_learning_note(root, cfg, &tracks)?;
+            cue_learning(root, cfg, &tracks)?;
             let p = plan_cues(root, cfg, &batch, &tracks)?;
             println!(
                 "      {} tracks get cues{}{}",
@@ -499,14 +494,13 @@ pub fn cues(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
         )
         .into());
     }
-    if args.flag("--train") {
-        return Err("learning from your cues is not in this version yet: use the prototype's `vibecheck cues --train`,\n  \
-                    then `uv run python -I scripts/export_cue_model.py <collection>/.vibecheck/cue_model.pt \
-                    <collection>/.vibecheck/cue_model.bin`"
-            .into());
-    }
     println!("reading {}", src.display());
     let xml = rekordbox::read(&src, root)?;
+    if args.flag("--train") {
+        let t = vibecheck::cue_train::train(root, &xml, cfg)?;
+        println!("learned from your cue points on {} tracks: .vibecheck/{}", t.tracks, cues::MODEL_FILE);
+        return Ok(());
+    }
     let con = store::labels_db(root)?;
     let live = store::live_paths(&con)?;
     let rels: Vec<String> = if args.pos.first().is_some() || args.flag("--all") {
@@ -517,7 +511,7 @@ pub fn cues(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
         live.into_iter().filter(|p| have.contains(p)).collect()
     };
     println!("cue points for {} tracks", rels.len());
-    cue_learning_note(root, cfg, &xml)?;
+    cue_learning(root, cfg, &xml)?;
     let plan = plan_cues(root, cfg, &rels, &xml)?;
     println!(
         "   {} placed, {} from the cache{}{}",

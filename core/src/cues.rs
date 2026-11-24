@@ -764,7 +764,7 @@ fn sigmoid(x: f32) -> f32 {
 }
 
 /// erf, Abramowitz & Stegun 7.1.26 refined: |error| < 1.2e-7.
-fn erf(x: f64) -> f64 {
+pub(crate) fn erf(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.5 * x.abs());
     let y = 1.0
         - t * (-x * x - 1.26551223

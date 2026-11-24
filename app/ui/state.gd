@@ -72,6 +72,7 @@ var _said_at := -1  # when the console last got the listening line, msec
 ## path -> {"wave": …, "parts": …}. Others are forgotten; the core keeps them in its cache.
 var _wv := {}
 var _wv_now := ""
+var _cues_training := false
 var _wv_want: Array[String] = []  # the track on screen first, then those read ahead
 var _wv_cb := {}
 var _seen_mtime := 0
@@ -299,6 +300,12 @@ func _apply_queue(q: Dictionary) -> void:
 			if r != null:
 				refresh_queue()
 				_measure_ahead())
+	# the cue model, behind your own cues as the colour model is behind your labels
+	if q.get("cues_stale", false) and not _cues_training:
+		_cues_training = true
+		_call(_model, "train_cues", {}, func(_r: Variant) -> void:
+			_cues_training = false
+			_wv.clear(), "Learning from your cue points…")
 	changed.emit()
 
 
