@@ -112,7 +112,7 @@ fn now_ms() -> i64 {
 fn joined(con: &rusqlite::Connection, s: &Saved, after: i64) -> Res<HashMap<String, i64>> {
     let mut st = con.prepare(
         "SELECT t.path, MIN(l.ts) FROM labels l JOIN tracks t ON t.id = l.track_id
-         WHERE l.ts > ?1 AND l.round_id IS NULL AND l.source IN ('user', 'model') GROUP BY t.path",
+         WHERE l.ts > ?1 AND l.round_id IS NULL AND l.origin IS NULL AND l.source IN ('user', 'model') GROUP BY t.path",
     )?;
     let mut out: HashMap<String, i64> = st.query_map([after], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? * 1000)))?.collect::<Result<_, _>>()?;
     for (p, at) in &s.dropped_at {
@@ -143,9 +143,11 @@ fn unsent(con: &rusqlite::Connection, s: &Saved) -> Res<HashSet<String>> {
     Ok(out)
 }
 
+/// The export list: labels made here since `after`; what was read from rekordbox is not sent back.
 fn batch(con: &rusqlite::Connection, after: i64) -> Res<Vec<String>> {
     let mut st = con.prepare(
-        "SELECT path FROM current WHERE source IN ('user', 'model') AND round_id IS NULL AND ts > ?1 AND missing_at IS NULL ORDER BY ts",
+        "SELECT path FROM current WHERE source IN ('user', 'model') AND origin IS NULL AND round_id IS NULL AND ts > ?1
+         AND missing_at IS NULL ORDER BY ts",
     )?;
     let out = st.query_map([after], |r| r.get(0))?.collect::<Result<_, _>>()?;
     Ok(out)
@@ -2118,6 +2120,8 @@ mod tests {
             .query_row("SELECT label_id, count_was, count_now FROM plays WHERE track_id = ?1", [ids["d.mp3"]], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
             .unwrap();
         assert_eq!(d, (None, 0, 1));
+        // what rekordbox told us is not sent back to it: only labels made here are on the export list
+        assert_eq!(batch(&con, 0).unwrap(), vec!["a.mp3".to_string(), "d.mp3".to_string()]);
         // the same counts again: no new plays
         assert_eq!(sync(&root, &xml("3.xml", [3, 1, 1, 1, 0])).unwrap().played, 0);
         let _ = std::fs::remove_dir_all(&root);

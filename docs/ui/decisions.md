@@ -28,9 +28,11 @@ touching the saved settings or the collection's state.
 How the app maps onto the core:
 
 - A decision in the player is a `user` label outside any round. What was
-  labelled since the last export is the export list and the next export.
-  The export is remembered in `.vibecheck/app.json`, with each track's play
-  count at the time, so the next sync can count plays.
+  labelled here since the last export is the export list and the next
+  export; labels read from rekordbox at a sync are not sent back (2026-11-26,
+  before they joined the list). The export is remembered in
+  `.vibecheck/app.json`; each track's play count is kept in the database
+  (`play_counts`), so the next sync can count plays.
 - Sync is the command line's, plus two rules: a guess the app exported that
   comes back unchanged stays a guess (only the command line's open rounds
   are confirmed that way); and a track labelled after the xml was
