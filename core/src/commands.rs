@@ -499,7 +499,7 @@ pub fn cues(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
     if args.flag("--train") {
         // as the app reads it: paths as the library spells them
         let t = vibecheck::cue_train::train(root, &*vibecheck::app::xml(root, &src)?, cfg)?;
-        println!("learned from your cue points on {} tracks: .vibecheck/{}; {} cue conflicts", t.tracks, cues::MODEL_FILE, t.conflicts);
+        println!("learned from your cue points on {} tracks: .vibecheck/{}; {} cue conflicts, {} to refresh", t.tracks, cues::MODEL_FILE, t.conflicts, t.refresh);
         return Ok(());
     }
     let con = store::labels_db(root)?;

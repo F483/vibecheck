@@ -31,7 +31,7 @@ Past calibration, five lists, dealt by position (`train_slot`):
 | every | card | what it is | shown guess | new track? |
 |---|---|---|---|---|
 | 10th | **blind** | a track the model is ≥ 0.8 sure of, asked blind: the accuracy check | no | yes |
-| 5th | **conflict** | your label, the model ≥ 0.5 sure of another colour, surest first | no | **no** |
+| 5th | **conflict** | your label of high trust (kept, confirmed, played; not one from before vibecheck: that is Bulk label's since 2026-11-26), the model ≥ 0.5 sure of another colour, surest first | no | **no** |
 | 7th | **old label** | a rekordbox colour from before vibecheck, the model ≥ 0.5 sure of another; surest first | no | yes (to the app) |
 | 9th | **cue conflict** | your cues, which the cue model, having learned them, would mostly put elsewhere (2026-11-26; `docs/cues.md`) | its cues, faint | no |
 | rest | **unsure** | least sure first | yes | yes |

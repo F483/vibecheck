@@ -27,17 +27,22 @@ Two models read the same per-bar features with the same network:
 | there before vibecheck | existing, 0.3 | existing, 0.3: your hand-set cues in rekordbox |
 | played since | played, 1.0 | played, 1.0: played after the cues were set |
 | times | rating (`[rating]`), recency (`[recency]`) | the same, from the track's stars and when you last set, edited or played them |
-| asked again | conflict cards: the model sure of another colour | cue conflict cards: the model would put most of your hot cues elsewhere |
+| the model disagrees, low trust | Bulk label changes it (sure of another colour) | Bulk label refreshes them (would set at most a quarter, sure of its own): yours from before vibecheck, ours left as written |
+| the model disagrees, high trust | conflict cards | cue conflict cards |
 | retrains | in the background when behind your labels | in the background once `[cues] retrain_after` (50) tracks are new, or changed since it was trained (set, edited, played) |
-| once written | only you change it | only you change it (`cues::writable`) |
+| once written | only you change it; Bulk label may refresh a guess | only you change it; Bulk label may refresh ours (`cues::writable`) |
 
-**Cue conflicts** (2026-11-26). After training, the model decodes every
-track it learned from; where it would set at most a quarter of your hot cues
-itself (`CONFLICT_SHARE`), even having learned them, and it is on average
-more likely right than not about its own (`CONFLICT_SURE`, 0.5: a colour
-conflict needs the model sure too), the track is a cue conflict (60 of 1,859
-on the first run) (`.vibecheck/cue_conflicts.json`, surest first: the model's own
-cues, how sure it is of them). The queue deals one every 9th card, once a
+**Cue conflicts and refreshes** (2026-11-26; label-weights.md,
+"self-healing"). After training, the model decodes every track it learned
+from, and every track with cues of ours left as written; where it would set
+at most a quarter of their hot cues itself (`CONFLICT_SHARE`), even having
+learned them, and it is on average more likely right than not about its own
+(`CONFLICT_SURE`, 0.5: a colour conflict needs the model sure too), it
+disagrees. Kept, confirmed or played cues become a **cue conflict**
+(`.vibecheck/cue_conflicts.json`); low trust ones (existing, ours left
+alone) go to `cue_refresh.json` with the model's own cues, which **Bulk
+label** puts on the export list as a cue decision of the model's (card
+`guessed`, not learned from). The queue deals a cue conflict every 9th card, once a
 model of yours found it, not again within 60 days (as colour conflicts), and
 not if you changed its cues since. The card opens in Cues with your cues on
 the pads and the model's faint on the waveform; keeping yours or moving them
@@ -168,9 +173,13 @@ model only if hot cues exact is not below today's **50.1%**.
 3. The editor in the player card (Tab). **Done.**
 4. The generic model, weighted, validated against 50.1%. **Done**
    (2026-11-26, above).
-5. Settings: placement settings go (**done** 2026-11-26); `cues::writable`
-   reworked (a cue decision made in the card is yours to write, whatever
-   rekordbox had).
+5. Settings: placement settings go; `cues::writable` reworked: cues of ours
+   left as written (the same hot cues as our last write, and no change seen
+   by a sync since) are no longer "your cues" in the player, and Bulk label
+   refreshes them where the model now disagrees, as it does untouched colour
+   guesses; an export alone keeps them, as it keeps a colour guess. A cue
+   decision made in the card was already written whatever rekordbox had.
+   **Done** (2026-11-26).
 
 Decided 2026-11-24: slots learned per slot, not fixed to time order (tastes
 differ, keep it generic); cues on beats too.

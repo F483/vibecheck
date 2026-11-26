@@ -378,6 +378,36 @@ fn labelled(root: &Path, cfg: &Config) -> Res<Labelled> {
     Ok(Labelled { paths, x, y, hashes, w, blind })
 }
 
+/// Labels and cues of low trust (none of yours, from before vibecheck, or a guess of ours
+/// left alone) the model may change itself, by Bulk label; high trust ones (kept, confirmed,
+/// played) are asked again as conflicts instead (docs/label-weights.md, "self-healing").
+pub struct Low {
+    made: HashMap<String, store::Current>,
+    played: HashSet<String>,
+    /// waiting for Export: left alone
+    hold: HashSet<String>,
+}
+
+impl Low {
+    fn load(con: &rusqlite::Connection, saved: &Saved) -> Res<Low> {
+        Ok(Low { made: store::current_made(con)?, played: store::played(con)?, hold: unsent(con, saved)? })
+    }
+
+    /// Bulk label may change this track's colour.
+    fn colour(&self, p: &str) -> bool {
+        !self.hold.contains(p)
+            && self.made.get(p).is_none_or(|c| {
+                let t = trust(&c.source, c.origin.as_deref(), c.card.as_deref(), c.shown, c.label.colour.map(|c| c.id), self.played.contains(p));
+                matches!(t, Trust::Guessed | Trust::Existing)
+            })
+    }
+
+    /// The colour it has now: here, else in rekordbox.
+    fn now(&self, p: &str, x: &HashMap<String, Track>) -> Option<i64> {
+        self.made.get(p).and_then(|c| c.label.colour).or_else(|| x.get(p).and_then(|t| t.label).and_then(|l| l.colour)).map(|c| c.id)
+    }
+}
+
 /// How far a label is to be trusted, from what you did with it (docs/label-weights.md).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Trust {
@@ -862,14 +892,25 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     // how much of the pool the model is sure about, and how much of that has no colour in
     // rekordbox nor a label here: the queue line's "sure on N" and Bulk label's size
     let any = store::current(&con, None)?;
+    // and how much of all of it Bulk label would change: low trust, sure of another colour
+    let low = Low::load(&con, &load_saved(root))?;
+    let lpreds = m.predict(&xr);
     q.sure_hist = vec![0; BANDS];
     q.blank_hist = vec![0; BANDS];
     for (i, p) in preds.iter().enumerate() {
-        if let Some(b) = best_colour(p).and_then(|(_, pg)| band(pg)) {
+        if let Some((g, b)) = best_colour(p).and_then(|(g, pg)| Some((g, band(pg)?))) {
             q.sure_hist[b] += 1;
-            if !any.contains_key(&pool[i]) && x.get(&pool[i]).and_then(|t| t.label).and_then(|l| l.colour).is_none() {
+            if low.colour(&pool[i]) && low.now(&pool[i], &x) != Some(g) {
                 q.blank_hist[b] += 1;
             }
+        }
+    }
+    for (p, path) in lpreds.iter().zip(&l.paths) {
+        if let Some((g, b)) = best_colour(p).and_then(|(g, pg)| Some((g, band(pg)?)))
+            && low.colour(path)
+            && low.now(path, &x) != Some(g)
+        {
+            q.blank_hist[b] += 1;
         }
     }
     // least sure first; the head of it (2n) thinned for coverage as calibration is, so one
@@ -891,12 +932,13 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let (rk, rn) = right_at(&s.by_sure, SURE);
     let measured = cfg.int("guesses", "measured", 10).max(1) as usize;
     let rested = store::recent_cards(&con, "conflict", now() - CONFLICT_REST)?;
+    // high trust only: a low one (from before vibecheck) is Bulk label's to change
     let mut conflicts: Vec<(f64, String)> = if rk >= must_pass(rn, CONFLICT_RIGHT, measured) {
-        m.predict(&xr)
+        lpreds
             .iter()
             .zip(&l.y)
             .zip(&l.paths)
-            .filter(|((_, y), p)| y.colour.is_some() && !skip.contains(p) && !rested.contains(*p))
+            .filter(|((_, y), p)| y.colour.is_some() && !skip.contains(p) && !rested.contains(*p) && !low.colour(p))
             .filter_map(|((p, y), path)| {
                 let (g, pg) = best_colour(p)?;
                 (g != y.colour?.id && pg >= SURE).then(|| (pg, path.clone()))
@@ -1342,18 +1384,16 @@ pub fn bulk_label(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, 
         return Err(format!("{k} of {kn} blind tests passed where the model is {:.0}% sure, needs {want}", bar * 100.0).into());
     }
     let x = xml(root, xml_path)?;
-    // a label here already (yours, or a guess waiting for Export) is not guessed over
-    let any = store::current(&con, None)?;
-    let blank: Vec<String> = store::live_paths(&con)?
-        .into_iter()
-        .filter(|p| !any.contains_key(p) && x.get(p).and_then(|t| t.label).and_then(|l| l.colour).is_none())
-        .collect();
-    let (pool, px) = embed::load(root, &blank)?;
+    // low trust only (none of yours, from before vibecheck, a guess of ours left alone), and
+    // only where the model is sure of another colour than it has: self-healing as it learns
+    let low = Low::load(&con, &load_saved(root))?;
+    let open: Vec<String> = store::live_paths(&con)?.into_iter().filter(|p| low.colour(p)).collect();
+    let (pool, px) = embed::load(root, &open)?;
     let pr: Vec<&[f32]> = px.iter().map(|v| v.as_slice()).collect();
     let mut sure: Vec<(f64, String, Label)> = vec![];
     for (p, pred) in pool.iter().zip(m.predict(&pr)) {
         let Some((g, pg)) = best_colour(&pred) else { continue };
-        if pg < bar {
+        if pg < bar || low.now(p, &x) == Some(g) {
             continue;
         }
         let stars = pred.top.get(STARS).and_then(|s| s.0.parse::<u8>().ok()).filter(|s| *s > 0);
@@ -1364,12 +1404,42 @@ pub fn bulk_label(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, 
     if limit > 0 {
         sure.truncate(limit);
     }
-    if sure.is_empty() {
-        return Err("nothing to label: no track without a colour that the model is sure of".into());
+    // cues the same way: low trust ones (yours from before vibecheck, ours left as written)
+    // where the cue model, trained since, disagrees, its own in their place, surest first
+    let mut refresh = vec![];
+    let cm = cues::Model::load(root)?;
+    if cfg.bool("cues", "write", true) && cm.source == "yours" {
+        let own = crate::cue_train::yours(root, &x)?;
+        let ours = cues::Written::load(&con)?;
+        let decided = store::cue_decisions_made(&con)?;
+        for c in crate::cue_train::load_refresh(root) {
+            let Some(t) = x.get(&c.rel) else { continue };
+            let still = match own.get(&c.rel) {
+                Some(s) => crate::cue_train::low(s.trust) && s.at <= cm.trained,
+                None => ours.untouched(&c.rel, t),
+            };
+            // not one set since it was trained (a refresh of ours waiting for Export, say)
+            if still && decided.get(&c.rel).is_none_or(|d| d.2 <= cm.trained) {
+                refresh.push(c);
+            }
+        }
+        if limit > 0 {
+            refresh.truncate(limit);
+        }
+    }
+    if sure.is_empty() && refresh.is_empty() {
+        return Err("nothing to label: no track of low trust the model is sure of another colour or other cues for".into());
     }
     let ids = store::track_ids(&con)?;
     let mut out = Bulked::default();
     con.execute_batch("BEGIN")?;
+    for c in &refresh {
+        if let Some(t) = ids.get(&c.rel) {
+            let set: Vec<Cue> = c.cues.iter().map(|&(num, start, end)| Cue { start, end, num, colour: String::new() }).collect();
+            store::log_cue_decision(&con, *t, &serde_json::to_string(&set)?, None, Some("guessed"))?;
+            out.cues += 1;
+        }
+    }
     for (_, p, lab) in &sure {
         if let Some(t) = ids.get(p) {
             store::log_label_as(&con, *t, *lab, "model", None, store::Made { card: Some("guessed"), ..Default::default() })?;
@@ -1387,6 +1457,8 @@ pub struct Bulked {
     pub count: usize,
     /// of them with stars
     pub rated: usize,
+    /// tracks given the cue model's cues in place of low trust ones, on the export list too
+    pub cues: usize,
 }
 
 #[derive(Serialize, Default)]
@@ -1992,7 +2064,9 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
     let x = xml(root, xml_path)?;
     let t = x.get(path);
     let mut marks: Vec<cues::Mark> = t.map(|t| t.marks.clone()).unwrap_or_default();
-    let own_cues = t.is_some_and(|t| !cues::writable(t));
+    // yours: not free to write, and not ours as we wrote them
+    let ours = cues::Written::load(&labels)?;
+    let own_cues = t.is_some_and(|t| !cues::writable(t) && !ours.untouched(path, t));
     let mut sections = vec![(0.0, "start")];
     let mut suggested = vec![];
     let (mut beats, mut bars) = (vec![], vec![]);
@@ -2017,7 +2091,9 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
             let names = ["mix in", "change", "change", "mix out"];
             let (placed, trans) = cues::Model::load(root)?.suggest(&f, t);
             suggested = placed.iter().filter_map(cue_of).collect();
-            if !own_cues && cfg.bool("cues", "write", true) {
+            // what an export would set: the suggestion where it is free to (ours as written
+            // stay until Bulk label refreshes them)
+            if cues::writable(t) && cfg.bool("cues", "write", true) {
                 marks = placed;
             }
             for (b, name) in trans.iter().zip(names) {
@@ -2408,6 +2484,37 @@ mod tests {
         assert!((w(Trust::Kept, None) - 0.25).abs() < 1e-9);
         assert!((w(Trust::Confirmed, Some(5)) - 0.7).abs() < 1e-9);
         assert!((w(Trust::Existing, Some(5)) - 0.3).abs() < 1e-9);
+    }
+
+    /// Low trust is Bulk label's to change, high trust is asked again: colours as cues.
+    #[test]
+    fn low_trust_is_bulk_labels_to_change() {
+        let cur = |source: &str, origin: Option<&str>, card: Option<&str>, shown: Option<i64>| store::Current {
+            label: Label { colour: palette::by_id(1), stars: Some(3) },
+            source: source.into(),
+            origin: origin.map(String::from),
+            card: card.map(String::from),
+            shown,
+            ts: 0,
+        };
+        let made: HashMap<String, store::Current> = [
+            ("existing", cur("user", Some("xml"), Some("existing"), None)),
+            ("guess", cur("model", None, Some("guessed"), None)),
+            ("confirmed", cur("user", None, Some("unsure"), None)),
+            ("kept", cur("user", None, Some("unsure"), Some(1))),
+            ("corrected", cur("user", Some("xml"), Some("corrected"), None)),
+            ("held", cur("model", None, Some("guessed"), None)),
+            ("played", cur("user", Some("xml"), Some("existing"), None)),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let low = Low { made, played: ["played".to_string()].into(), hold: ["held".to_string()].into() };
+        for (p, want) in [("none", true), ("existing", true), ("guess", true), ("confirmed", false), ("kept", false), ("corrected", false), ("held", false), ("played", false)] {
+            assert_eq!(low.colour(p), want, "{p}");
+        }
+        assert!(crate::cue_train::low(Trust::Existing) && crate::cue_train::low(Trust::Guessed));
+        assert!(!crate::cue_train::low(Trust::Kept) && !crate::cue_train::low(Trust::Confirmed) && !crate::cue_train::low(Trust::Played));
     }
 
     #[test]

@@ -105,7 +105,7 @@ fn main() -> vibecheck::Res<()> {
         let train: Vec<cue_train::Example> = train
             .into_iter()
             .filter(|(_, e)| e.hand || !hand_only)
-            .map(|(_, e)| cue_train::Example { rel: e.rel.clone(), x: e.x.clone(), target: e.target.clone(), w: e.w, hand: e.hand })
+            .map(|(_, e)| cue_train::Example { rel: e.rel.clone(), x: e.x.clone(), target: e.target.clone(), w: e.w, hand: e.hand, trust: e.trust })
             .collect();
         let m = cues::Model::from_bytes(&cue_train::fit(&train, "cv", cue_train::SEEDS, epochs)?)?;
         for (_, e) in test.into_iter().filter(|(_, e)| e.hand) {

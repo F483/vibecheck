@@ -626,6 +626,15 @@ you think is best and we can iterate from there".
   - No stars toggle (dropped 2026-11-22, with `[guesses] stars`): Bulk label
     always labels colour and stars; what goes into rekordbox is decided in
     the Rekordbox Export card, not per button.
+  - **What it changes** (2026-11-26, the user: low trust is changed in bulk,
+    high trust resurfaces as a conflict; `docs/label-weights.md`,
+    "self-healing"): tracks of low trust (no label of yours, one from before
+    vibecheck, or a guess left alone) where the model is sure of another
+    colour, not only tracks with no colour; and cues of low trust the cue
+    model now disagrees with get its cues. The dialog's count line reads
+    "low trust, the model 80% sure of another colour", its note says yours
+    (kept, confirmed, played) are never changed here, and the result adds
+    "cues refreshed on N".
   - Bulk label adds to the export list, it does not write rekordbox
     (changed 2026-11-22): the model's colour and stars for tracks with no
     colour in rekordbox and no label here, then Export writes them with key,
@@ -636,7 +645,10 @@ you think is best and we can iterate from there".
     decides, within these bounds.
 - **Cue points**
   - Write cue points (`[cues] write`). They go only on tracks with no cues or
-    with generated ones; a track with any cue you set yourself is never touched.
+    with generated ones; a track with any cue you set or changed yourself is
+    never touched. vibecheck's own, left as written, are no longer "your
+    cues" in the player, and Bulk label refreshes them where the cue model
+    now disagrees, as it does untouched colour guesses (2026-11-26).
   - Set cues in the player · Tab (`[cues] edit`).
   - One line: where cues go, loops and memory cues are learned from yours,
     set in the player or in rekordbox.

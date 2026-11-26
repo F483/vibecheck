@@ -53,6 +53,7 @@ pub struct Example {
     /// set by hand (rekordbox, or changed in the app), not a suggestion kept: what accuracy
     /// is measured on
     pub hand: bool,
+    pub trust: Trust,
 }
 
 // --- the parameters, laid out as the model file names them -----------------------
@@ -647,7 +648,9 @@ pub fn yours(root: &Path, xml: &HashMap<String, Track>) -> Res<HashMap<String, S
     };
     let decided: HashMap<String, (Vec<Raw>, bool, i64)> = store::cue_decisions_made(&con)?
         .into_iter()
-        .map(|(p, (c, shown, ts))| {
+        // Bulk label's (card "guessed") are the model's, not yours
+        .filter(|(_, (_, _, _, card))| card.as_deref() != Some("guessed"))
+        .map(|(p, (c, shown, ts, _))| {
             let c = parse(&c);
             let kept = shown.is_some_and(|s| same(&c, &parse(&s)));
             (p, (c, kept, ts))
@@ -692,7 +695,7 @@ pub fn examples(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<
                 return None;
             }
             let w = (s.trust.weight(cfg) * rating_factor(stars.get(&rel).copied().flatten(), cfg) * recency(s.at, cfg)) as f32;
-            Some(Example { rel, x, target, w, hand: s.hand })
+            Some(Example { rel, x, target, w, hand: s.hand, trust: s.trust })
         })
         .collect();
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
@@ -702,29 +705,35 @@ pub fn examples(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<
 pub struct Trained {
     pub tracks: usize,
     pub conflicts: usize,
+    pub refresh: usize,
 }
 
-// --- cue conflicts -------------------------------------------------------------------
+// --- where the model now disagrees -----------------------------------------------------
 
-/// A track whose cues the model, having learned them, still puts elsewhere: asked again,
-/// as a colour conflict is (docs/cues.md). `mine`: the share of your hot cues it would set
-/// itself; `sure`: how sure it is of its own, on average.
+/// A track whose cues the model, having learned them, still puts elsewhere (docs/cues.md):
+/// yours of high trust are asked again (a cue conflict), low trust ones (from before
+/// vibecheck, or ours left alone) Bulk label refreshes with `cues`. `mine`: the share of the
+/// track's hot cues it would set itself; `sure`: how sure it is of its own, on average.
 #[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
 pub struct Conflict {
     pub rel: String,
     pub mine: f32,
     pub sure: f32,
+    /// what it would set instead
+    #[serde(default)]
+    pub cues: Vec<Raw>,
 }
 
-/// At most this share of your hot cues where the model would set them is a conflict,
+/// At most this share of the hot cues where the model would set them is a disagreement,
 pub const CONFLICT_SHARE: f32 = 0.25;
 /// when it is at least this sure of its own, on average: more likely right than not (as a
 /// colour conflict needs the model sure of its colour).
 pub const CONFLICT_SURE: f32 = 0.5;
 const CONFLICTS_FILE: &str = "cue_conflicts.json";
+const REFRESH_FILE: &str = "cue_refresh.json";
 
-/// The cue conflicts in `data` by the model `m` (trained on them), surest first.
-pub fn conflicts(m: &cues::Model, data: &[Example]) -> Vec<Conflict> {
+/// Where `m` disagrees with the cues of `data` (each with its trust), surest first.
+pub fn disagree(m: &cues::Model, data: &[Example], xml: &HashMap<String, Track>) -> Vec<(Trust, Conflict)> {
     let next = AtomicUsize::new(0);
     let found = Mutex::new(vec![]);
     let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
@@ -734,12 +743,14 @@ pub fn conflicts(m: &cues::Model, data: &[Example]) -> Vec<Conflict> {
                 loop {
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(e) = data.get(i) else { break };
+                    let Some(t) = xml.get(&e.rel) else { continue };
                     let mine: Vec<usize> = e.target.hot.iter().flatten().map(|a| a.bar).collect();
                     if mine.len() < 2 {
                         continue;
                     }
                     let (sc, emp) = m.scores(&e.x);
-                    let got: Vec<usize> = cues::decode_generic(&sc, &emp).hot.iter().flatten().map(|a| a.bar).collect();
+                    let decoded = cues::decode_generic(&sc, &emp);
+                    let got: Vec<usize> = decoded.hot.iter().flatten().map(|a| a.bar).collect();
                     let share = mine.iter().filter(|b| got.contains(b)).count() as f32 / mine.len() as f32;
                     if share > CONFLICT_SHARE || got.is_empty() {
                         continue;
@@ -748,22 +759,27 @@ pub fn conflicts(m: &cues::Model, data: &[Example]) -> Vec<Conflict> {
                     let p = |b: usize| sigmoid(sc[b][out::HOT] - POS_WEIGHT.ln());
                     let sure = got.iter().map(|b| p(*b)).sum::<f32>() / got.len() as f32;
                     if sure >= CONFLICT_SURE {
-                        found.lock().unwrap().push(Conflict { rel: e.rel.clone(), mine: share, sure });
+                        let cues = cues::cue_list(&cues::marks_of(&decoded, &Grid::of(t)));
+                        found.lock().unwrap().push((e.trust, Conflict { rel: e.rel.clone(), mine: share, sure, cues }));
                     }
                 }
             });
         }
     });
     let mut out = found.into_inner().unwrap();
-    out.sort_by(|a, b| b.sure.total_cmp(&a.sure).then_with(|| a.rel.cmp(&b.rel)));
+    out.sort_by(|a, b| b.1.sure.total_cmp(&a.1.sure).then_with(|| a.1.rel.cmp(&b.1.rel)));
     out
 }
 
-/// The cue conflicts the last training found; none before one.
-pub fn load_conflicts(root: &Path) -> Vec<Conflict> {
+/// Low trust: Bulk label's to change; high: asked again.
+pub fn low(t: Trust) -> bool {
+    matches!(t, Trust::Existing | Trust::Guessed)
+}
+
+fn load_list(root: &Path, file: &str) -> Vec<Conflict> {
     store::vibecheck_dir(root)
         .ok()
-        .and_then(|d| std::fs::read_to_string(d.join(CONFLICTS_FILE)).ok())
+        .and_then(|d| std::fs::read_to_string(d.join(file)).ok())
         .and_then(|s| serde_json::from_str::<Vec<Conflict>>(&s).ok())
         .unwrap_or_default()
         .into_iter()
@@ -771,8 +787,37 @@ pub fn load_conflicts(root: &Path) -> Vec<Conflict> {
         .collect()
 }
 
+/// The cue conflicts the last training found (high trust), surest first; none before one.
+pub fn load_conflicts(root: &Path) -> Vec<Conflict> {
+    load_list(root, CONFLICTS_FILE)
+}
+
+/// The low trust cues the last training would refresh, with its own, surest first.
+pub fn load_refresh(root: &Path) -> Vec<Conflict> {
+    load_list(root, REFRESH_FILE)
+}
+
+/// Cues of ours left as written (guessed: not learned from) on tracks with a grid, with
+/// their features: what the model may refresh.
+fn ours_left(root: &Path, xml: &HashMap<String, Track>, own: &HashMap<String, Source>) -> Res<Vec<Example>> {
+    let ours = cues::Written::load(&store::labels_db(root)?)?;
+    let tracks: HashMap<String, Track> = xml
+        .iter()
+        .filter(|(p, t)| !own.contains_key(*p) && !t.tempos.is_empty() && !t.marks.is_empty() && ours.untouched(p, t))
+        .map(|(p, t)| (p.clone(), t.clone()))
+        .collect();
+    let (f, _) = cues::features_all(root, &tracks)?;
+    Ok(f.into_iter()
+        .map(|(rel, x)| {
+            let target = cues::target_of(&cues::cue_list(&tracks[&rel].marks), &Grid::of(&tracks[&rel]), x.len());
+            Example { rel, x, target, w: 0.0, hand: false, trust: Trust::Guessed }
+        })
+        .collect())
+}
+
 /// Learn from your cues and save the model as yours; it takes over from the shipped one,
-/// and the one it replaces is kept next to it (`cue_model.prev.bin`).
+/// and the one it replaces is kept next to it (`cue_model.prev.bin`). Then where it
+/// disagrees: high trust cues become cue conflicts, low trust ones Bulk label's to refresh.
 pub fn train(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<Trained> {
     let data = examples(root, xml, cfg)?;
     if data.len() < 20 {
@@ -780,16 +825,23 @@ pub fn train(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<Tra
     }
     let bytes = fit(&data, "yours", SEEDS, EPOCHS)?;
     cues::Model::from_bytes(&bytes)?;
-    let path = store::vibecheck_dir(root)?.join(cues::MODEL_FILE);
+    let dir = store::vibecheck_dir(root)?;
+    let path = dir.join(cues::MODEL_FILE);
     if path.exists() {
         std::fs::copy(&path, path.with_extension("prev.bin"))?;
     }
     let tmp = path.with_extension("bin.tmp");
     std::fs::write(&tmp, &bytes)?;
     std::fs::rename(&tmp, &path)?;
-    let found = conflicts(&cues::Model::from_bytes(&bytes)?, &data);
-    std::fs::write(store::vibecheck_dir(root)?.join(CONFLICTS_FILE), serde_json::to_string(&found)?)?;
-    Ok(Trained { tracks: data.len(), conflicts: found.len() })
+    let m = cues::Model::from_bytes(&bytes)?;
+    let mut all = disagree(&m, &data, xml);
+    all.extend(disagree(&m, &ours_left(root, xml, &yours(root, xml)?)?, xml));
+    all.sort_by(|a, b| b.1.sure.total_cmp(&a.1.sure).then_with(|| a.1.rel.cmp(&b.1.rel)));
+    let (lo, hi): (Vec<_>, Vec<_>) = all.into_iter().partition(|(t, _)| low(*t));
+    let (lo, hi): (Vec<Conflict>, Vec<Conflict>) = (lo.into_iter().map(|x| x.1).collect(), hi.into_iter().map(|x| x.1).collect());
+    std::fs::write(dir.join(CONFLICTS_FILE), serde_json::to_string(&hi)?)?;
+    std::fs::write(dir.join(REFRESH_FILE), serde_json::to_string(&lo)?)?;
+    Ok(Trained { tracks: data.len(), conflicts: hi.len(), refresh: lo.len() })
 }
 
 #[cfg(test)]
@@ -886,6 +938,7 @@ mod tests {
                 target: target(),
                 w: 0.5,
                 hand: true,
+                trust: Trust::Confirmed,
             })
             .collect();
         let b = fit(&data, "test", 1, 1).unwrap();

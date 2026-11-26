@@ -526,16 +526,16 @@ pub fn cue_decisions(con: &Connection) -> Res<HashMap<String, String>> {
 }
 
 /// A cue decision: cues, the suggestion shown then, when.
-pub type Decided = (String, Option<String>, i64);
+pub type Decided = (String, Option<String>, i64, Option<String>);
 
 /// Your cues per track as set in the app, the newest decision of each: (cues, the
-/// suggestion shown then, when), JSON as `log_cue_decision` keeps them.
+/// suggestion shown then, when, which card), JSON as `log_cue_decision` keeps them.
 pub fn cue_decisions_made(con: &Connection) -> Res<HashMap<String, Decided>> {
     let mut st = con.prepare(
-        "SELECT t.path, d.cues, d.shown, d.ts FROM cue_decisions d JOIN tracks t ON t.id = d.track_id
+        "SELECT t.path, d.cues, d.shown, d.ts, d.card FROM cue_decisions d JOIN tracks t ON t.id = d.track_id
          WHERE d.id = (SELECT MAX(id) FROM cue_decisions WHERE track_id = d.track_id)",
     )?;
-    let out = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))?.collect::<Result<_, _>>()?;
+    let out = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))))?.collect::<Result<_, _>>()?;
     Ok(out)
 }
 

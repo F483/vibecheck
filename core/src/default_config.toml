@@ -123,7 +123,9 @@ write_comment = true
 [cues]
 # Cue points, written with every labelling round and by `vibecheck cues` --
 # only on tracks with no cues, or with cues another tool generated ("Cue 1",
-# "Cue 2", ...). A track with any cue you set yourself is never touched.
+# "Cue 2", ...). A track with any cue you set or changed yourself is never
+# touched; vibecheck's own, left as written, are refreshed by Bulk label where
+# the cue model now disagrees, as untouched colour guesses are.
 write = true
 
 # Set cues in the player (Tab turns the colour keys into hot cues A-H). What you

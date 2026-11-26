@@ -63,6 +63,23 @@ last export's tracks, so a play of anything exported earlier was lost (34
 tracks of one set, 10 counted); backfilled from the xml's `.bak` before that
 set.
 
+## Self-healing: low trust is changed, high trust is asked (2026-11-26)
+
+The same rule for colours and cues, as the model improves or things change
+(the user: "I want everything to be aligned and self healing over time"):
+
+| trust | the model now disagrees |
+|---|---|
+| low: none of yours, existing (before vibecheck), guessed (ours left alone) | **Bulk label changes it**: colour and stars where the model is `[guesses] sure` of another colour; cues where the cue model would set at most a quarter of them and is sure of its own |
+| high: kept, confirmed, played | **asked again**: a conflict card (colour), a cue conflict card (cues), not within 60 days of the last |
+
+So a colour conflict is never about a label from before vibecheck any more
+(Bulk label's), and Bulk label never touches a label or cues of yours. Bulk
+label leaves alone what waits for Export. An export never refreshes cues of
+ours left as written by itself, as it never re-guesses a colour: only Bulk
+label does, where the model disagrees. `Low` in `core/src/app.rs`,
+`cue_train::low`.
+
 ## Recency (2026-11-26)
 
 Newer counts more, so a change of taste shows once you have acted on it:

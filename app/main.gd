@@ -265,7 +265,7 @@ func export_guesses() -> void:
 	var n := state.sure_at(bar, true)
 	var lim := int(st.guesses_limit)
 	v.add_child(UI.text("%s of %s tracks" % [UI.thousands(lim), UI.thousands(n)] if lim > 0 and n > lim else "%s tracks" % UI.thousands(n), 18, UI.TEXT, "heavy"))
-	v.add_child(UI.text("no colour yet, the model %d%% sure of one%s" % [pct, ", surest first" if lim > 0 and n > lim else ""], 12, UI.MUTED, "mono"))
+	v.add_child(UI.text("low trust, the model %d%% sure of another colour%s" % [pct, ", surest first" if lim > 0 and n > lim else ""], 12, UI.MUTED, "mono"))
 	if not locked:
 		# how many per run; kept in [guesses] limit, so the next run starts from it
 		var lr := UI.row(6, [UI.text("Label at most", 12), UI.spacer()])
@@ -286,7 +286,7 @@ func export_guesses() -> void:
 	var box := UI.panel(UI.DARK, 4, 12, 10)
 	box.add_child(checks)
 	v.add_child(box)
-	v.add_child(UI.wrap("Adds the model's colour and stars to the export list, surest first; Export then writes them into rekordbox like your own labels. A guess stays thin trust (not trained on) until you change it in rekordbox or label the track here. A blind test is a track the model is %d%% sure of, asked in the queue without showing its guess (every 10th card). Settings › Bulk label sets the unlock rule." % pct))
+	v.add_child(UI.wrap("Low trust: no label of yours, one from before vibecheck, or a guess left alone. Where the model is now sure of another colour, it puts its colour and stars on the export list, surest first; cues of low trust it now disagrees with get its cues too. Export writes them like your own. Your own labels and cues (kept, confirmed, played) are never changed here: the queue asks about them again as conflicts. A guess stays thin trust (not trained on) until you change it. A blind test is a track the model is %d%% sure of, asked in the queue without showing its guess (every 10th card). Settings › Bulk label sets the unlock rule." % pct))
 	if locked:
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)]))
 		return
@@ -310,7 +310,8 @@ func _write_guesses() -> void:
 		v = dialog_box(464)
 		v.add_child(UI.caps("Bulk labelled → export list"))
 		v.add_child(UI.text("%s tracks" % UI.thousands(e.count), 18, UI.TEXT, "heavy"))
-		v.add_child(UI.text("%d with stars · on the export list now" % e.rated, 12, UI.MUTED, "mono"))
+		var cue_n := int(e.get("cues", 0))
+		v.add_child(UI.text("%d with stars%s · on the export list now" % [e.rated, " · cues refreshed on %d" % cue_n if cue_n > 0 else ""], 12, UI.MUTED, "mono"))
 		v.add_child(UI.wrap("Check them in the list below, then Export (X) writes them into rekordbox with key, energy and cues, like the labels you made in the queue.", 12, UI.TEXT))
 		v.add_child(UI.row(0, [UI.spacer(), UI.button("OK", "ENTER", true, close_dialog)])))
 	dialog_ok = Callable()

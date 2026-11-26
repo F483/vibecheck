@@ -127,7 +127,7 @@ func refresh() -> void:
 	_card("Cue points")
 	_toggle("Write cue points", "cues_write")
 	_toggle("Set cues in the player · Tab", "cues_edit")
-	_add(UI.wrap("Tab turns the colour keys into hot cues A–H. Cues you confirm in the player go out with the next Export, in place of the track's cues in rekordbox. Otherwise only tracks with no cues, or with generated ones (\"Cue 1\", \"Cue 2\", …), get cues; a track with cues of your own keeps them."))
+	_add(UI.wrap("Tab turns the colour keys into hot cues A–H. Cues you confirm in the player go out with the next Export, in place of the track's cues in rekordbox. Otherwise only tracks with no cues or generated ones (\"Cue 1\", \"Cue 2\", …) get cues; a track with cues of your own keeps them, and Bulk label refreshes vibecheck's own where the model now disagrees."))
 	_add(UI.wrap("Where cues go, which loop and how long, and the memory cues are learned from yours: set them in the player or in rekordbox."))
 
 	_end_card()

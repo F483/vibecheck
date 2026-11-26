@@ -1266,8 +1266,30 @@ pub fn generated(marks: &[Mark]) -> bool {
         })
 }
 
-/// Nothing of yours to lose: no cues, only generated ones, or a lone memory
-/// cue on the first downbeat (what clearing generated cues leaves).
+/// What this app last wrote per track, and when a sync last saw you change a track's cues:
+/// enough to tell our cues, left as written, from yours.
+pub struct Written {
+    hot: HashMap<String, (Vec<f64>, i64)>,
+    changed: HashMap<String, i64>,
+}
+
+impl Written {
+    pub fn load(con: &Connection) -> Res<Written> {
+        let changed = store::cues_seen(con)?.into_iter().filter_map(|(p, (_, c))| Some((p, c?))).collect();
+        Ok(Written { hot: store::cue_writes_last(con)?, changed })
+    }
+
+    /// The track's cues are ours as we last wrote them: the same hot cues, and no change of
+    /// yours seen since (a memory cue moved, say).
+    pub fn untouched(&self, rel: &str, t: &Track) -> bool {
+        self.hot.get(rel).is_some_and(|(h, at)| *h == hot_starts(&t.marks) && self.changed.get(rel).is_none_or(|c| c <= at))
+    }
+}
+
+/// Free for an export to set: no cues, only generated ones, or a lone memory cue on the
+/// first downbeat (what clearing generated cues leaves). Ours as we wrote them stay, as an
+/// untouched colour guess does, until Bulk label refreshes them where the model now
+/// disagrees (`cue_train::load_refresh`); yours are asked again as cue conflicts.
 pub fn writable(t: &Track) -> bool {
     let m = &t.marks;
     if m.is_empty() || generated(m) {
@@ -1591,6 +1613,17 @@ mod tests {
         assert!(!writable(&tr(vec![m("Cue 1", "0", "10.0"), m("", "0", "10.0")])));
         assert!(writable(&tr(vec![m("", "-1", "0.500")])));
         assert!(!writable(&tr(vec![m("", "-1", "10.500")])));
+        // ours as written, or changed since: hot cues moved, or a change a sync saw
+        let w = |at: i64, changed: Option<i64>| Written {
+            hot: [("a".to_string(), (vec![10.0], at))].into(),
+            changed: changed.map(|c| ("a".to_string(), c)).into_iter().collect(),
+        };
+        let t = tr(vec![m("", "0", "10.0"), m("", "-1", "30.0")]);
+        assert!(w(5, None).untouched("a", &t));
+        assert!(w(5, Some(4)).untouched("a", &t));
+        assert!(!w(5, Some(6)).untouched("a", &t));
+        assert!(!w(5, None).untouched("a", &tr(vec![m("", "0", "12.0")])));
+        assert!(!w(5, None).untouched("b", &t));
     }
 
     /// v2 decoding: the expected number of hot cues on the best-ranked bars, each in the slot
