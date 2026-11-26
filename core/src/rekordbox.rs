@@ -324,6 +324,13 @@ pub fn comment_with(old: Option<&str>, key: &str, energy: u8) -> String {
     if rest.is_empty() { head } else { format!("{head} {rest}") }
 }
 
+/// rekordbox's My Tags as it writes them into the comment (when asked to): "/* Atmo / Rytm */".
+pub fn tags(comment: &str) -> Vec<String> {
+    let Some(a) = comment.find("/*") else { return vec![] };
+    let Some(b) = comment[a + 2..].find("*/") else { return vec![] };
+    comment[a + 2..a + 2 + b].split('/').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect()
+}
+
 /// Drops a leading `\s*\d{1,2}[AB]\s*-\s*Energy\s*\d{1,2}\b\s*`, whoever wrote it.
 fn strip_key_energy(s: &str) -> &str {
     let t = s.trim_start();
@@ -686,6 +693,8 @@ mod tests {
     #[test]
     fn the_key_energy_prefix_is_replaced_and_the_rest_kept() {
         assert_eq!(comment_with(Some("5A - Energy 7 /* Atmo / Rytm */"), "8A", 6), "8A - Energy 6 /* Atmo / Rytm */");
+        assert_eq!(tags("8A - Energy 6 /* Atmo / Rytm */"), ["Atmo", "Rytm"]);
+        assert_eq!(tags("no tags"), Vec::<String>::new());
         assert_eq!(comment_with(Some("  12B-Energy 10"), "1A", 3), "1A - Energy 3");
         assert_eq!(comment_with(None, "1A", 3), "1A - Energy 3");
         assert_eq!(comment_with(Some("great track"), "2B", 5), "2B - Energy 5 great track");

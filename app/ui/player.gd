@@ -68,7 +68,6 @@ var length := 1.0
 ## where each part starts, seconds; from the cue model when rekordbox has a beat grid
 var sections: Array[float] = [0.0]
 var _undo: Array[Array] = []
-var _lit := -1
 var _audio: AudioStreamPlayer
 
 var _head: HBoxContainer
@@ -82,7 +81,6 @@ var _picker: PopupPanel
 var _boxes := {}
 var _pick_pos := Vector2i.ZERO
 var _transport: HBoxContainer
-var _parts_row: HBoxContainer
 var _actions: HBoxContainer
 var _undo_box: HBoxContainer
 ## hidden with no track open, so no empty outlines show
@@ -103,6 +101,13 @@ var _p_own := false
 var _switch: HBoxContainer
 var _switch_room: Control
 var _tools_row: HBoxContainer
+## Tags: rekordbox's My Tags for the track, read from its comment; shown in place of the keys
+## (a placeholder: editing them comes later)
+var tags_view := false
+var _tags: Array = []
+var _tags_ready := false
+var _tags_box: VBoxContainer
+var _tags_note: Control
 ## loop lengths in beats, as rekordbox counts them
 const LOOPS := [0, 4, 8, 16, 32, 64]
 
@@ -143,12 +148,10 @@ func _init(bg: Color, s) -> void:
 	_stars = UI.row(4)
 	_meta = UI.row(12)
 	_transport = UI.row(6)
-	_parts_row = UI.row(4)
 	_actions = UI.row(8)
 	_undo_box = UI.row(0)
-	# beside the colour keys, a row each: what you say about the track (stars, energy, key)
-	# in a tray level with the top keys, the parts of the track with the bottom ones
-	_parts_row.custom_minimum_size.y = KEY_H
+	# beside the colour keys, level with the top ones: what you say about the track (stars,
+	# energy, key) in a tray, or in Cues the cue keys
 	var meta := _tray(UI.row(12, [_stars, _vline(), _meta]), false)
 	meta.custom_minimum_size.y = KEY_H
 	_switch = UI.row(6)
@@ -159,13 +162,21 @@ func _init(bg: Color, s) -> void:
 	_tools_row = UI.row(4)
 	_tools_row.custom_minimum_size.y = KEY_H
 	_tools_row.visible = false
-	var side := UI.col(KEY_GAP, [_switch_room, meta, _tools_row, _parts_row])
+	_tags_note = UI.wrap("rekordbox's My Tags, read from the track's comment, where rekordbox can write them. Editing them here comes later.", 12)
+	_tags_note.custom_minimum_size = Vector2(420, KEY_H)
+	_tags_note.visible = false
+	var side := UI.col(KEY_GAP, [_switch_room, meta, _tools_row, _tags_note])
 	side.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	# the main controls (undo | stop, play | skip, confirm) centred in a tray under the keys
+	# no buttons for the parts: the hot cue pads jump through the track (the user); 1–6 and ← →
+	# still do from the keyboard
 	_trays = [meta, _tray(UI.row(12, [_undo_box, _vline(), _transport, _vline(), _actions]))]
 	# keys left of the centre, tray and parts right of it: two equal halves, each pushed
 	# against the middle; narrower than both, they just sit side by side
-	var left := UI.row(0, [UI.col(KEY_GAP, [_switch, _keys])])
+	_tags_box = UI.col(8)
+	_tags_box.custom_minimum_size = Vector2(4 * 124 + 3 * KEY_GAP, 2 * KEY_H + KEY_GAP)
+	_tags_box.visible = false
+	var left := UI.row(0, [UI.col(KEY_GAP, [_switch, _keys, _tags_box])])
 	left.alignment = BoxContainer.ALIGNMENT_END
 	var right := UI.row(0, [side])
 	for h: HBoxContainer in [left, right]:
@@ -268,7 +279,12 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 	_cues_ready = false
 	_p_cues = []
 	_p_own = false
+	_tags = []
+	_tags_ready = false
 	var stream := AudioStreamMP3.load_from_file(state.audio_path(t))
+	if stream:
+		# at the end, back to the start and on playing (the user)
+		stream.loop = true
 	_audio.stream = stream
 	if stream:
 		length = stream.get_length()
@@ -300,6 +316,8 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 		cues_shown = _plain(p.suggested)
 		cues_now = _plain(p.cues) if p.set else cues_shown.duplicate(true)
 		_cues_ready = not _beats.is_empty()
+		_tags = p.tags
+		_tags_ready = true
 		_cues_changed()
 		# start where the track does, past the intro, unless you already moved; 1 goes back
 		if sections.size() > 1 and pos < 2.0:
@@ -317,7 +335,6 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 		if wk != "":
 			_key0 = wk
 			t.key = wk
-		_lit = -1
 		_refresh_meta()
 		_tick(),
 	ahead.call() if ahead.is_valid() else [])
@@ -335,7 +352,7 @@ func clear(text := "Queue is empty: sync from rekordbox or add tracks from the l
 	for t in _trays:
 		t.visible = false
 	_tools_row.visible = false
-	for r: Control in [_actions, _undo_box, _transport, _parts_row, _meta, _stars, _tools_row]:
+	for r: Control in [_actions, _undo_box, _transport, _meta, _stars, _tools_row]:
 		for c in r.get_children():
 			c.queue_free()
 	_head.add_child(UI.text(text, 14, UI.MUTED))
@@ -360,43 +377,17 @@ func stop() -> void:
 	seek(0)
 
 
-## Stop and play, and the parts of the track (← one back, a button per part, → one on).
+## Stop and play.
 func _refresh_transport() -> void:
-	for r: Control in [_transport, _parts_row]:
-		for c in r.get_children():
-			c.queue_free()
+	for c in _transport.get_children():
+		c.queue_free()
 	if track.is_empty():
 		return
-	_lit = _section()
-	for b: Control in _parts():
-		_parts_row.add_child(b)
 	_transport.add_child(_control("stop", "Stop", "ESC", stop, UI.PLAYBACK))
 	var p := _control("pause" if playing else "play", "Pause" if playing else "Play", "SPACE", func() -> void: play(not playing), UI.PLAYBACK)
 	p.custom_minimum_size.x = 132
 	(p.get_child(0) as HBoxContainer).alignment = BoxContainer.ALIGNMENT_CENTER
 	_transport.add_child(p)
-
-
-func _parts() -> Array:
-	var out: Array = [_square("←", false, back)]
-	for i in sections.size():
-		out.append(_square(str(i + 1), i == _lit, jump.bind(i)))
-	out.append(_square("→", false, func() -> void: jump(_section() + 1)))
-	return out
-
-
-## A key-shaped button; lit for the part playing.
-func _square(t: String, on: bool, cb: Callable) -> PanelContainer:
-	var p := UI.panel(UI.LIME if on else Color("#d6d7db"), 3, 0, 0)
-	p.custom_minimum_size = Vector2(28, 28)
-	p.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	var l := UI.text(t, 12, UI.BG, "mono")
-	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	l.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	p.add_child(l)
-	UI.clickable(p, cb)
-	return p
 
 
 ## Energy and key, each a value that opens a picker (N, K). Lime once changed.
@@ -667,6 +658,11 @@ func _refresh_keys() -> void:
 	for c in _keys.get_children():
 		c.queue_free()
 	_refresh_switch()
+	_keys.visible = not tags_view
+	_tags_box.visible = tags_view
+	if tags_view:
+		_refresh_tags()
+		return
 	if cue_mode:
 		for slot in 8:
 			_keys.add_child(_pad(slot))
@@ -740,8 +736,6 @@ func _tick() -> void:
 		var tl := _head.get_child(_head.get_child_count() - 1) as Label
 		if tl:
 			tl.text = "%s / %s" % [_clock(pos), _clock(length)]
-	if not track.is_empty() and _section() != _lit:
-		_refresh_transport()
 
 
 func _clock(s: float) -> String:
@@ -784,12 +778,15 @@ func handle_key(k: InputEventKey) -> bool:
 	if k.alt_pressed or k.ctrl_pressed or k.meta_pressed:
 		return false
 	if k.keycode == KEY_TAB:
-		set_cue_mode(not cue_mode)
+		var vs := views()
+		set_view(vs[(vs.find(view()) + (-1 if k.shift_pressed else 1) + vs.size()) % vs.size()])
 		return true
 	# by position: the colour grid and the number row; by the letter typed: everything else
 	var key := k.physical_keycode
 	for i in 8:
 		if key == UI.COLOURS[i].key:
+			if tags_view:
+				return true  # nothing on these keys here yet
 			if cue_mode:
 				pad(i, k.shift_pressed)
 			else:
@@ -843,9 +840,30 @@ func cue_decision() -> Array:
 	return [cues_now, cues_shown] if cues_on() else []
 
 
+## The views the switch offers, in its order: Cues (when the player asks for cues), Label, Tags.
+func views() -> Array[String]:
+	var out: Array[String] = ["label", "tags"]
+	if bool(state.settings.get("cues_edit", true)):
+		out.push_front("cues")
+	return out
+
+
+func view() -> String:
+	return "tags" if tags_view else "cues" if cue_mode else "label"
+
+
+func set_view(v: String) -> void:
+	if v not in views():
+		return
+	tags_view = v == "tags"
+	set_cue_mode(v == "cues")
+
+
 func set_cue_mode(on: bool) -> void:
 	if on and not bool(state.settings.get("cues_edit", true)):
 		return
+	if on:
+		tags_view = false
 	cue_mode = on
 	if not on:
 		cue_sel = -1
@@ -865,11 +883,6 @@ func _plain(src: Array) -> Array:
 func _refresh_switch() -> void:
 	for c in _switch.get_children():
 		c.queue_free()
-	var on := bool(state.settings.get("cues_edit", true))
-	_switch.visible = on
-	_switch_room.visible = on
-	if not on:
-		return
 	_switch.alignment = BoxContainer.ALIGNMENT_END
 	if cue_mode:
 		# rekordbox's Quantize: cues land on the grid's beats; off, where the playhead is
@@ -881,13 +894,39 @@ func _refresh_switch() -> void:
 			_refresh_keys())
 		_switch.add_child(qp)
 		_switch.add_child(UI.margin(Control.new(), 0, 0, 6, 0))
-	for m: Array in [["Cues", true], ["Label", false]]:
-		var lit: bool = m[1] == cue_mode
+	for v in views():
+		var lit := v == view()
 		var p := UI.panel(UI.LIME if lit else UI.CARD, 3, 10, 2)
-		p.add_child(UI.text(m[0], 11, UI.BG if lit else UI.MUTED, "semi"))
-		UI.clickable(p, set_cue_mode.bind(m[1]))
+		p.add_child(UI.text(v.capitalize(), 11, UI.BG if lit else UI.MUTED, "semi"))
+		UI.clickable(p, set_view.bind(v))
 		_switch.add_child(p)
-	_switch.add_child(UI.kbd("TAB"))
+	# the key badge does what its key does, as N and K do
+	var tab := UI.kbd("TAB")
+	UI.clickable(tab, func() -> void:
+		var vs := views()
+		set_view(vs[(vs.find(view()) + 1) % vs.size()]))
+	_switch.add_child(tab)
+
+
+## The track's tags as chips, in place of the keys.
+func _refresh_tags() -> void:
+	for c in _tags_box.get_children():
+		c.queue_free()
+	_tags_box.add_child(UI.caps("Tags"))
+	if not _tags_ready:
+		_tags_box.add_child(UI.text("reading…", 12, UI.MUTED))
+		return
+	if _tags.is_empty():
+		_tags_box.add_child(UI.text("No tags on this track.", 12, UI.MUTED))
+		return
+	var flow := HFlowContainer.new()
+	flow.add_theme_constant_override("h_separation", 6)
+	flow.add_theme_constant_override("v_separation", 6)
+	for t: String in _tags:
+		var p := UI.panel(UI.CARD, 3, 10, 5)
+		p.add_child(UI.text(t, 13, UI.TEXT, "semi"))
+		flow.add_child(p)
+	_tags_box.add_child(flow)
 
 
 func quantize() -> bool:
@@ -940,8 +979,9 @@ func _pad(slot: int) -> PanelContainer:
 func _refresh_tools() -> void:
 	for c in _tools_row.get_children():
 		c.queue_free()
-	_trays[0].visible = not cue_mode and not track.is_empty()
+	_trays[0].visible = not cue_mode and not tags_view and not track.is_empty()
 	_tools_row.visible = cue_mode and not track.is_empty()
+	_tags_note.visible = tags_view and not track.is_empty()
 	if cue_mode:
 		for b: Control in _cue_tools():
 			_tools_row.add_child(b)

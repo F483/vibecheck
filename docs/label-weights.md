@@ -32,7 +32,7 @@ Derived at training time (`trust()`):
 
 | trust | from | weight |
 |---|---|---|
-| 4 played | an export of ours holding the label was played since (sync's fate) | 1.0 |
+| 4 played | played with the label on it: a sync saw the play count rise while rekordbox had it (`plays`) | 1.0 |
 | 3 confirmed | labelled blind here, corrected here (`colour_id != shown`), or changed in rekordbox | 0.7 |
 | 3 kept | the model's guess was on screen and you kept it (`colour_id = shown`) | 0.5 |
 | 2 existing | there before vibecheck, never confirmed | 0.3 |
@@ -41,8 +41,27 @@ Derived at training time (`trust()`):
 The model's own guesses are not trained on: at 14,000 of them even 0.2 would
 outvote 1,300 labels. The weight stays in config for when that is revisited.
 
-The library's trust ring and the stats bar use the same `trust()`, so
-"played" means an export of ours was played since, not any play count.
+The library's trust ring and the stats bar use the same `trust()`.
+
+## Plays (schema v10)
+
+Every sync compares each track's rekordbox play count with the one last seen
+(`play_counts`: the last sync, or the export that wrote the track, since its
+label changes there). A rise is a play (`plays`), with the label the track
+had here, when rekordbox had that same label; NULL when it had another
+(labelled here since, not exported yet). So a play counts whichever export
+the label went out in, or none:
+
+- a label of yours, from any export: played;
+- a guess of ours, played: becomes yours (`card` `played`), played;
+- rekordbox's own colour on a track with no label here: taken (`existing`),
+  played.
+
+Only a rise counts, not a play count from before vibecheck: an old play may
+have been with another colour. Until 2026-11-26 a sync compared only the
+last export's tracks, so a play of anything exported earlier was lost (34
+tracks of one set, 10 counted); backfilled from the xml's `.bak` before that
+set.
 
 ## Rating
 
@@ -98,8 +117,8 @@ Edge cases, as the code reads them (`trust()` in `app.rs`):
   and every blind card are confirmed (0.7) whatever you pick. Changing only
   the stars of a shown guess is still kept: the colour matched.
 - **Played** wins over everything: a kept guess that was then played in a
-  set is 1.0. It means an export of ours was played since (sync's fate), not
-  the track's rekordbox play count.
+  set is 1.0. It means a sync saw a play with the label on it (see Plays),
+  not the track's rekordbox play count.
 - **Rekordbox labels**: `corrected` and `confirmed` (left as exported, read
   back) are 0.7; `existing` and older rows without a card are 0.3.
 - **Pre-v8 labels** have `shown` NULL, so they all count as confirmed:

@@ -326,12 +326,16 @@ func sync_now() -> void:
 			return
 		v = dialog_box(420)
 		v.add_child(UI.caps("rekordbox.xml · synced"))
-		v.add_child(UI.text("Last export, %d tracks" % r.out if r.out > 0 else "No export from here yet", 18, UI.TEXT, "heavy"))
-		for line: Array in [[4, r.played, "played", "counts most"], [3, r.corrected, "corrected", "now confirmed"],
-				[1, r.untouched, "untouched", "still guessed"]]:
-			var n := UI.text(str(int(line[1])), 18, UI.TEXT if line[0] > 1 else UI.MUTED, "mono")
+		# played: anywhere in the collection, whichever export the label went out in
+		var line := func(ring: int, k: int, what: String, hint: String) -> void:
+			var n := UI.text(str(k), 18, UI.TEXT if ring > 1 else UI.MUTED, "mono")
 			n.custom_minimum_size.x = 40
-			v.add_child(UI.row(10, [UI.Ring.new(line[0]), n, UI.text(line[2], 12), UI.spacer(), UI.text(line[3], 12, UI.MUTED, "mono")]))
+			v.add_child(UI.row(10, [UI.Ring.new(ring), n, UI.text(what, 12), UI.spacer(), UI.text(hint, 12, UI.MUTED, "mono")]))
+		line.call(4, int(r.played), "played", "counts most")
+		v.add_child(UI.text("Last export, %d tracks" % r.out if r.out > 0 else "No export from here yet", 12, UI.MUTED, "mono"))
+		if r.out > 0:
+			line.call(3, int(r.corrected), "corrected", "now confirmed")
+			line.call(1, int(r.untouched), "untouched", "still guessed")
 		var more := []
 		if r.added + r.changed > r.corrected:
 			more.append("%d more labels taken from rekordbox" % (r.added + r.changed - r.corrected))
@@ -414,7 +418,7 @@ func _hidpi() -> void:
 	w.move_to_center()
 
 
-## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why|cues|filter:colours|energy|…] [--wait=s] [--after=s]: once loaded, wait,
+## --shot=path.png [--screen=id] [--dialog=export|sync|batch|why|cues|tags|filter:colours|energy|…] [--wait=s] [--after=s]: once loaded, wait,
 ## show the screen, wait again, render one frame to a file and quit.
 func _shot() -> void:
 	var args := {}
@@ -444,6 +448,11 @@ func _shot() -> void:
 			pl.set_cue_mode(true)
 			pl.cue_sel = pl._hot(3)
 			pl._cues_changed()
+		"tags":
+			var pt = screens.vibe.player
+			while not pt._tags_ready and Time.get_ticks_msec() - t < 180000:
+				await get_tree().process_frame
+			pt.set_view("tags")
 		"why":
 			screens.vibe.player.open_why()
 			await get_tree().create_timer(0.5).timeout

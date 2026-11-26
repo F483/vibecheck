@@ -230,7 +230,7 @@ pub fn library(root: &Path, xml_path: &Path) -> Res<Vec<Row>> {
     let mut in_batch: HashSet<String> = batch(&con, after)?.into_iter().collect();
     in_batch.extend(saved.dropped.iter().cloned());
     let joined = joined(&con, &saved, after)?;
-    let played = store::played_after_export(&con)?;
+    let played = store::played(&con)?;
     let mut st = con.prepare(
         "SELECT path, hash, colour_id, stars, source, ts, origin, card, shown FROM current WHERE missing_at IS NULL ORDER BY path",
     )?;
@@ -343,7 +343,7 @@ struct Labelled {
 fn labelled(root: &Path, cfg: &Config) -> Res<Labelled> {
     let con = store::labels_db(root)?;
     let made = store::current_made(&con)?;
-    let played = store::played_after_export(&con)?;
+    let played = store::played(&con)?;
     let mut keys: Vec<String> = made.iter().filter(|(_, c)| c.source == "user").map(|(p, _)| p.clone()).collect();
     keys.sort();
     let (paths, x) = embed::load(root, &keys)?;
@@ -1202,6 +1202,11 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
     saved.dropped.clear();
     saved.dropped_at.clear();
     save(root, &saved)?;
+    // their labels change here: a play before this export was with the old one
+    let ids = store::track_ids(&con)?;
+    let counts: Vec<(i64, i64)> =
+        paths.iter().filter_map(|p| Some((*ids.get(p)?, x.get(p).map(|t| t.info.plays).unwrap_or(0)))).collect();
+    store::set_play_counts(&con, &counts, ts)?;
     let out = Exported {
         name: name.clone(),
         count: paths.len(),
@@ -1306,7 +1311,9 @@ pub struct Bulked {
 pub struct Synced {
     /// tracks in the last export
     pub out: usize,
+    /// played since the last sync with a label of yours, anywhere in the collection
     pub played: usize,
+    /// of the last export: corrected, or left as written (played ones are in `played`)
     pub corrected: usize,
     pub untouched: usize,
     /// labels taken from rekordbox anywhere in the collection
@@ -1319,50 +1326,101 @@ pub struct Synced {
     pub unknown: usize,
 }
 
-/// Read what changed in rekordbox: corrections become your labels, and the
-/// tracks of the last export that were played since are counted.
+/// Read what changed in rekordbox: corrections become your labels, and every track played
+/// since the last sync, wherever its label came from, counts as played with it.
 pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
     let mut saved = load_saved(root);
     let con = store::labels_db(root)?;
     let out_id = out_batch(&con, &saved)?;
     let was = store::current(&con, None)?;
+    let x = xml(root, xml_path)?;
+    let ids = store::track_ids(&con)?;
+    // played: its count above the one last seen (the last sync, or the export that wrote it;
+    // before schema v10 only the last export's were kept). Seen the first time: only noted.
+    let mut seen = store::play_counts(&con)?;
+    if let Some(e) = &saved.export {
+        for (p, n) in &e.plays {
+            seen.entry(p.clone()).or_insert(*n);
+        }
+    }
+    let mut played: Vec<(&String, i64, i64)> = x
+        .iter()
+        .filter(|(p, _)| ids.contains_key(*p))
+        .filter_map(|(p, t)| seen.get(p).filter(|n| t.info.plays > **n).map(|n| (p, *n, t.info.plays)))
+        .collect();
+    played.sort();
     // tracks exported with rekordbox's own colour are compared below, not taken as new labels
-    let scope: Option<HashSet<String>> =
+    let mut scope: Option<HashSet<String>> =
         saved.export.as_ref().map(|e| e.plays.keys().filter(|p| !e.theirs.contains_key(*p)).cloned().collect());
+    // a played track's colour is taken even with no label here: playing it confirmed it
+    if let Some(s) = scope.as_mut() {
+        s.extend(played.iter().map(|p| p.0.clone()));
+    }
     // stale_ok: the app saves guesses for dropped tracks at any time, so an export older
     // than the newest guess is normal; the tracks labelled after it are skipped one by one
     // (`newer`), which is all the command line's whole-file refusal protects
     let hold = unsent(&con, &saved)?;
-    let mut n = workflow::read_corrections(root, xml_path, scope.clone(), false, true, &hold)?;
-    let x = xml(root, xml_path)?;
+    let mut n = workflow::read_corrections(root, xml_path, scope, false, true, &hold)?;
     if let Some(e) = &saved.export {
         let theirs = their_corrections(root, e, &x)?;
         n.changed += theirs.len();
         n.paths.extend(theirs);
     }
     let mut s = Synced { added: n.added, changed: n.changed, confirmed: n.confirmed, newer: n.newer, unknown: n.unknown, ..Default::default() };
+    let made = store::current_made(&con)?;
+    let fixed: HashSet<&String> = n.paths.iter().collect();
+    let mut rows: Vec<Kept> = vec![];
+    let ts = now();
+    let mut yours: HashSet<&String> = HashSet::new();
+    con.execute_batch("BEGIN")?;
+    for (p, before, plays) in &played {
+        let t = ids[*p];
+        // played with the label it has here: rekordbox had it so (corrections are read by now)
+        let l = x.get(*p).and_then(|t| t.label).filter(|l| l.said());
+        let mine = made.get(*p).filter(|c| l == Some(c.label));
+        if let (Some(c), Some(l)) = (mine, l)
+            && c.source == "model"
+        {
+            // a guess of ours, played: yours now
+            store::log_label_as(&con, t, l, "user", None, store::Made { origin: Some("xml"), card: Some("played"), ..Default::default() })?;
+        }
+        let label = if mine.is_some() { store::label_id(&con, t)? } else { None };
+        store::log_play(&con, t, label, *before, *plays, ts)?;
+        if label.is_some() {
+            s.played += 1;
+            yours.insert(*p);
+            // its fate in the newest export that held it, for the history page
+            con.execute(
+                "UPDATE batch_tracks SET fate = 'played' WHERE track_id = ?1 AND batch_id =
+                 (SELECT MAX(bt.batch_id) FROM batch_tracks bt JOIN batches b ON b.id = bt.batch_id
+                  WHERE b.dir = 'out' AND bt.track_id = ?1)",
+                [t],
+            )?;
+        }
+    }
+    // the counts as they are now, for the next sync
+    let counts: Vec<(i64, i64)> = x.iter().filter_map(|(p, t)| Some((*ids.get(p)?, t.info.plays))).collect();
+    store::set_play_counts(&con, &counts, ts)?;
+    con.execute_batch("COMMIT")?;
     let is = store::current(&con, None)?;
-    let ids = store::track_ids(&con)?;
-    let mut rows: Vec<Kept> = n
-        .paths
-        .iter()
-        .map(|p| Kept::label(p, if was.contains_key(p) { "corrected" } else { "added" }, was.get(p), is.get(p)))
-        .collect();
+    for p in &n.paths {
+        rows.push(Kept::label(p, if was.contains_key(p) { "corrected" } else { "added" }, was.get(p), is.get(p)));
+    }
+    for p in &yours {
+        if !fixed.contains(*p) {
+            rows.push(Kept::label(p, "played", was.get(*p), is.get(*p)));
+        }
+    }
     if let Some(e) = saved.export.as_mut() {
-        let fixed: HashSet<&String> = n.paths.iter().collect();
         s.out = e.plays.len();
         for (p, before) in e.plays.iter_mut() {
-            let plays = x.get(p).map(|t| t.info.plays).unwrap_or(*before);
-            // what became of it, for the history page: played stays played, a
+            *before = x.get(p).map(|t| t.info.plays).unwrap_or(*before);
+            // what became of it, for the history page: played stays played (set above), a
             // correction outranks untouched
-            let fate = if plays > *before {
-                s.played += 1;
-                *before = plays;
-                if !fixed.contains(p) {
-                    rows.push(Kept::label(p, "played", was.get(p), is.get(p)));
-                }
-                "played"
-            } else if fixed.contains(p) {
+            if yours.contains(p) {
+                continue;
+            }
+            let fate = if fixed.contains(p) {
                 s.corrected += 1;
                 "corrected"
             } else {
@@ -1372,7 +1430,7 @@ pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
             if let (Some(b), Some(t)) = (out_id, ids.get(p)) {
                 con.execute(
                     "UPDATE batch_tracks SET fate = ?3 WHERE batch_id = ?1 AND track_id = ?2
-                     AND (fate IS NULL OR ?3 = 'played' OR (?3 = 'corrected' AND fate = 'untouched'))",
+                     AND (fate IS NULL OR (?3 = 'corrected' AND fate = 'untouched'))",
                     rusqlite::params![b, t, fate],
                 )?;
             }
@@ -1380,7 +1438,7 @@ pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
         save(root, &saved)?;
     }
     let name = xml_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
-    log_batch(&con, "in", now(), &name, rekordbox::exported(xml_path), &serde_json::to_value(&s)?, &rows)?;
+    log_batch(&con, "in", ts, &name, rekordbox::exported(xml_path), &serde_json::to_value(&s)?, &rows)?;
     Ok(s)
 }
 
@@ -1729,6 +1787,8 @@ pub struct Parts {
     /// rekordbox's grid: every beat and every bar start, seconds, for placing cues
     pub beats: Vec<f64>,
     pub bars: Vec<f64>,
+    /// rekordbox's My Tags, from the comment (`rekordbox::tags`)
+    pub tags: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1886,7 +1946,8 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
         Some(c) => marks_of(&c).iter().filter_map(cue_of).collect(),
         None => marks.iter().filter_map(cue_of).collect(),
     };
-    Ok(Parts { sections, key, energy, cues, own_cues, set, suggested, beats, bars })
+    let tags = t.map(|t| rekordbox::tags(&t.info.comment)).unwrap_or_default();
+    Ok(Parts { sections, key, energy, cues, own_cues, set, suggested, beats, bars, tags })
 }
 
 /// The track at the analysis rate, decoded (or taken from `kept`) the first time it is asked for.
@@ -1996,6 +2057,71 @@ fn set_in(text: &str, section: &str, key: &str, value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A play counts wherever the label came from: an old export, a guess, or rekordbox's own
+    /// colour; not when rekordbox had another label than the one here (labelled since).
+    #[test]
+    fn a_sync_sees_plays_across_the_collection() {
+        let root = std::env::temp_dir().join(format!("vibecheck-plays-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let con = store::labels_db(&root).unwrap();
+        for p in ["a.mp3", "b.mp3", "c.mp3", "d.mp3", "e.mp3"] {
+            con.execute("INSERT INTO tracks (path, hash, size, mtime, first_seen, last_seen) VALUES (?1, ?1, 0, 0, 0, 0)", [p]).unwrap();
+        }
+        let ids = store::track_ids(&con).unwrap();
+        let lab = |c: i64, s: u8| Label { colour: palette::by_id(c), stars: Some(s) };
+        let red = palette::by_id(1).unwrap();
+        let blue = palette::by_id(6).unwrap();
+        // a: yours, exported long ago; b: a guess of ours; c: none here; d: yours, newer than the xml
+        store::log_label_as(&con, ids["a.mp3"], lab(1, 3), "user", None, Default::default()).unwrap();
+        store::log_label_as(&con, ids["b.mp3"], lab(1, 4), "model", None, store::Made { card: Some("guessed"), ..Default::default() }).unwrap();
+        store::log_label_as(&con, ids["d.mp3"], lab(6, 2), "user", None, Default::default()).unwrap();
+        // the last export held only e
+        let saved = Saved { export: Some(Export { ts: 0, name: "x".into(), plays: [("e.mp3".to_string(), 0)].into(), theirs: Default::default() }), ..Default::default() };
+        save(&root, &saved).unwrap();
+        let xml = |name: &str, plays: [i64; 5]| {
+            let tr = |p: &str, c: palette::C, stars: i64, n: i64| {
+                format!(
+                    r#"<TRACK TrackID="{p}" Location="file://localhost{}/{p}" Colour="{}" Rating="{}" PlayCount="{n}"/>"#,
+                    root.display(),
+                    c.rgb,
+                    stars * 51
+                )
+            };
+            let body = [
+                tr("a.mp3", red, 3, plays[0]),
+                tr("b.mp3", red, 4, plays[1]),
+                tr("c.mp3", palette::by_id(2).unwrap(), 5, plays[2]),
+                tr("d.mp3", red, 1, plays[3]),
+                tr("e.mp3", blue, 1, plays[4]),
+            ]
+            .join("");
+            let f = root.join(name);
+            std::fs::write(&f, format!(r#"<DJ_PLAYLISTS><COLLECTION>{body}</COLLECTION></DJ_PLAYLISTS>"#)).unwrap();
+            f
+        };
+        // the first sync only notes the counts (e's from the export)
+        let s = sync(&root, &xml("1.xml", [2, 0, 0, 0, 0])).unwrap();
+        assert_eq!(s.played, 0);
+        let s = sync(&root, &xml("2.xml", [3, 1, 1, 1, 0])).unwrap();
+        assert_eq!(s.played, 3);
+        let played = store::played(&con).unwrap();
+        let want: HashSet<String> = ["a.mp3", "b.mp3", "c.mp3"].map(String::from).into();
+        assert_eq!(played, want);
+        let made = store::current_made(&con).unwrap();
+        assert_eq!((made["b.mp3"].source.as_str(), made["b.mp3"].card.as_deref()), ("user", Some("played")));
+        assert_eq!(made["c.mp3"].label, lab(2, 5));
+        assert_eq!(made["d.mp3"].label, lab(6, 2));
+        // d's play is kept, with no label of yours on it
+        let d: (Option<i64>, i64, i64) = con
+            .query_row("SELECT label_id, count_was, count_now FROM plays WHERE track_id = ?1", [ids["d.mp3"]], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap();
+        assert_eq!(d, (None, 0, 1));
+        // the same counts again: no new plays
+        assert_eq!(sync(&root, &xml("3.xml", [3, 1, 1, 1, 0])).unwrap().played, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[test]
     fn dropped_files_become_library_paths() {

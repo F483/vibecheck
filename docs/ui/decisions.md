@@ -234,9 +234,10 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
    - the colour keys left of the player's centre line and the tray and parts
      right of it, so on a wide window they stay centred as a pair over the
      controls tray (the user);
-   - beside the colour keys, level with the bottom row, **the parts of the track**: ←
-     then a button per part numbered as on the waveform, the part playing
-     lit, →;
+   - no buttons for **the parts of the track** (2026-11-24, the user): the
+     hot cue pads jump through the track. They were ← a button per part →
+     beside the colour keys. 1–6 still jump to a part and ← → step through
+     them from the keyboard; the parts stay named on the waveform;
    - two trays (dark, thin border, rounded), so the groups read at a glance
      (the user asked for both; before, what you say sat level with the light
      keys and the controls on the two sides):
@@ -268,6 +269,8 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
        Rekordbox's own colours were dropped from Stop (orange) and Play
        (green): next to the colour keys they read as labels. Play/Pause and
        Skip/Requeue keep a fixed width so the tray doesn't shift.
+     - At the end of the track playback loops back to the start and plays on
+       (2026-11-25, the user); before, it stopped.
      - With no track open the trays are hidden.
    - The artist line in the header takes the room left and trims with …, so a
      long one never pushes the player past the window.
@@ -370,6 +373,16 @@ waveform and charts darker still (`#1c1d20`); dialogs and popups unchanged.
   carries no position, so the app reads where the mouse let go.
 - Files outside the collection are listed in a short notice, not added.
 
+### Tags (placeholder, 2026-11-24)
+
+Board 06. A third view on the switch, **Cues | Label | Tags** (Tab cycles
+them, ⇧Tab back): the track's My Tags from rekordbox as chips, in place of
+the keys, with a note beside them. rekordbox's xml has no My Tag field; it
+can write them into the comment as "/* Atmo / Stall */", which the app
+already keeps when it writes key and energy there, so that is where they are
+read (`rekordbox::tags`; 4,942 of 14,580 tracks on the reference collection).
+Read only for now: the keys do nothing in Tags. Editing comes later.
+
 ### Cue points in the player (2026-11-24)
 
 Board 05. Cues are edited where colour, stars, energy and key are decided,
@@ -377,8 +390,10 @@ before export (plan: `docs/cues.md`). Built as proposed; the user: "do what
 you think is best and we can iterate from there".
 
 - **Tab** switches the eight colour keys between **Label** and **Cues**
-  (a two-way switch above them, Cues | Label, lime on the one in use).
-  "Label" (was "Colour"): that side holds colour, stars, energy and key, and
+  (a switch above them, Cues | Label | Tags, lime on the one in use; Tab
+  cycles, Tags below).
+  Clicking the TAB badge switches too, as every key badge does what its
+  control does. "Label" (was "Colour"): that side holds colour, stars, energy and key, and
   the app calls colour and stars a label (the user picked it over Vibe,
   Track, Tags, Rate). In cue mode the
   keys are the hot cues A–H, in two rows of four as a DDJ controller's
@@ -406,8 +421,7 @@ you think is best and we can iterate from there".
 - **Mouse**: drag a flag (top) or a memory triangle (bottom) along the
   waveform, snapping to beats; click one to select it; right-click deletes.
 - Beside the keys, Cues shows the cue keys (clickable) where Label shows the
-  tray with stars, energy and key: those belong to Colour (the user). The
-  parts row stays under both.
+  tray with stars, energy and key: those belong to Label (the user).
 - **Confirm** saves colour, stars, energy, key and cues together. Cues
   confirmed as suggested count as kept (0.5); moved, added, deleted or
   looped, as confirmed (0.7).
@@ -449,8 +463,10 @@ you think is best and we can iterate from there".
     then choose the file;
   - OK, with ENTER.
 - **Sync** is automatic. The app watches the xml, and when rekordbox exports,
-  the **Sync summary** popup dims the workspace and shows: played / corrected /
-  untouched, plus how many tracks went to the front of the queue. "Back to
+  the **Sync summary** popup dims the workspace and shows: played (anywhere in
+  the collection, whichever export the label went out in; 2026-11-26, before
+  only the last export's), then the last export's corrected / untouched,
+  plus how many tracks went to the front of the queue. "Back to
   vibe ENTER" confirms. "Sync ⌥S" in the widget is the manual fallback.
 - Importing applies every field in the xml, so the export has to be recent.
   That is why the widget warns when it is old.
@@ -484,7 +500,8 @@ you think is best and we can iterate from there".
 - An **Out** card: the playlist name and time; tracks, keys, energy
   comments, cues written; then what became of its tracks as later syncs saw
   them: played, corrected, untouched, with the sync summary's rings. A track
-  played stays played; a correction outranks untouched. "not synced since"
+  played stays played, counted on the newest export that held it; a
+  correction outranks untouched. "not synced since"
   until a sync has looked.
 - **Click a card** for its tracks in a popup over the page: colour swatch and
   stars (before → after for a correction), title — artist, and for an export

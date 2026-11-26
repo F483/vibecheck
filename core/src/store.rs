@@ -31,8 +31,9 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (7, "label_origin", include_str!("../migrations/0007_label_origin.sql")),
     (8, "label_card", include_str!("../migrations/0008_label_card.sql")),
     (9, "cue_decisions", include_str!("../migrations/0009_cue_decisions.sql")),
+    (10, "plays", include_str!("../migrations/0010_plays.sql")),
 ];
-pub const SCHEMA_VERSION: i64 = 9;
+pub const SCHEMA_VERSION: i64 = 10;
 const BASELINE: i64 = 3;
 
 pub fn vibecheck_dir(root: &Path) -> Res<PathBuf> {
@@ -402,15 +403,51 @@ pub fn current_made(con: &Connection) -> Res<HashMap<String, Current>> {
     Ok(out)
 }
 
-/// Tracks an export of ours was played after: a sync saw their play count rise.
-pub fn played_after_export(con: &Connection) -> Res<HashSet<String>> {
+/// Tracks played with a label of yours on them: a sync saw the play count rise while
+/// rekordbox had the label it had here (`plays`), or, before schema v10, an export of ours
+/// was played after (its fate).
+pub fn played(con: &Connection) -> Res<HashSet<String>> {
     let mut st = con.prepare(
-        "SELECT DISTINCT t.path FROM batch_tracks bt
+        "SELECT t.path FROM plays p JOIN tracks t ON t.id = p.track_id WHERE p.label_id IS NOT NULL
+         UNION
+         SELECT t.path FROM batch_tracks bt
          JOIN batches b ON b.id = bt.batch_id JOIN tracks t ON t.id = bt.track_id
          WHERE b.dir = 'out' AND bt.fate = 'played'",
     )?;
     let out = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
     Ok(out)
+}
+
+/// The play count each track had when last seen (a sync, or the export that wrote it).
+pub fn play_counts(con: &Connection) -> Res<HashMap<String, i64>> {
+    pairs(con, "SELECT t.path, p.plays FROM play_counts p JOIN tracks t ON t.id = p.track_id")
+}
+
+/// Remember play counts as seen now: (track id, plays).
+pub fn set_play_counts(con: &Connection, counts: &[(i64, i64)], ts: i64) -> Res<()> {
+    let mut st = con.prepare(
+        "INSERT INTO play_counts (track_id, plays, ts) VALUES (?1,?2,?3)
+         ON CONFLICT(track_id) DO UPDATE SET plays = excluded.plays, ts = excluded.ts",
+    )?;
+    for (t, n) in counts {
+        st.execute(params![t, n, ts])?;
+    }
+    Ok(())
+}
+
+/// A play seen: the count went from `was` to `now`, with `label_id` on the track (None: not
+/// a label of yours, or not the one rekordbox had).
+pub fn log_play(con: &Connection, track_id: i64, label_id: Option<i64>, was: i64, now: i64, ts: i64) -> Res<()> {
+    con.execute(
+        "INSERT INTO plays (track_id, label_id, count_was, count_now, ts) VALUES (?1,?2,?3,?4,?5)",
+        params![track_id, label_id, was, now, ts],
+    )?;
+    Ok(())
+}
+
+/// The id of a track's current label.
+pub fn label_id(con: &Connection, track_id: i64) -> Res<Option<i64>> {
+    Ok(con.query_row("SELECT label_id FROM current WHERE track_id = ?1", [track_id], |r| r.get(0)).optional()?.flatten())
 }
 
 pub fn open_round(con: &Connection, name: &str, size: usize, backend: &str, encoder: &str, n_labels: usize) -> Res<i64> {

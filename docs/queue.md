@@ -190,10 +190,9 @@ through sync, the sure set grows, you write again.
   guess, so Export writes them; after it, sync reads an untouched one as
   still a guess (only rounds are confirmed by being left alone) and a
   changed one as `corrected` (0.7).
-- **Not done**: play tracking for guesses. Sync follows play counts only for
-  the last export, so a played guess stays a guess. A `plays` column on
-  `batch_tracks` and a sync over all out batches would fix that for every
-  export; worth it once guesses are out in a real set.
+- **Played**: since schema v10 a sync sees a play of any track, not only the
+  last export's (`docs/label-weights.md`, Plays); a played guess becomes
+  yours at trust 4.
 
 ## Done (2026-11-12)
 
