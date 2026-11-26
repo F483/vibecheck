@@ -128,18 +128,7 @@ func refresh() -> void:
 	_toggle("Write cue points", "cues_write")
 	_toggle("Set cues in the player · Tab", "cues_edit")
 	_add(UI.wrap("Tab turns the colour keys into hot cues A–H. Cues you confirm in the player go out with the next Export, in place of the track's cues in rekordbox. Otherwise only tracks with no cues, or with generated ones (\"Cue 1\", \"Cue 2\", …), get cues; a track with cues of your own keeps them."))
-	var lead := UI.row(6, [UI.text("Hot cues", 12), UI.spacer()])
-	for i in 2:
-		lead.add_child(UI.chip(["At each change · A–D", "16 + 8 bars before · A–H"][i], st.cues_lead == i, func() -> void:
-			state.set_setting("cues_lead", i)))
-	_add(lead)
-	var loops := UI.row(6, [UI.text("Loops", 12), UI.spacer()])
-	var used := "ABCD" if st.cues_lead == 0 else "ABCDEFGH"
-	for slot in "ABCDEFGH":
-		loops.add_child(_slot(slot, slot in used))
-	_add(loops)
-	_add(UI.wrap("Click a slot to make it a loop and set its length in bars, e.g. A and G as 16-bar loops to wait at the mix-in and mix-out."))
-	_toggle("Memory cue on every hot cue and the first downbeat", "cues_memory")
+	_add(UI.wrap("Where cues go, which loop and how long, and the memory cues are learned from yours: set them in the player or in rekordbox."))
 
 	_end_card()
 	var next := "Calibration first: at least %d tracks, blind." % st.threshold if state.calibrating() \
@@ -236,28 +225,3 @@ func _pick(key: String, folder: bool) -> void:
 	add_child(d)
 	d.popup_centered()
 
-
-func _slot(slot: String, used: bool) -> Control:
-	var loops: Dictionary = state.settings.cues_loops.duplicate()
-	var bars: int = loops.get(slot, 0)
-	var p := UI.panel(_slot_bg(bars), 3, 0, 2)
-	p.custom_minimum_size = Vector2(44, 36)
-	p.modulate.a = 1.0 if used else 0.35
-	var t := UI.text(slot, 12, UI.TEXT, "bold")
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	var sub := UI.caps("cue" if bars == 0 else "%d bars" % bars, UI.LIME if bars else UI.MUTED, 9)
-	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	p.add_child(UI.col(0, [t, sub]))
-	UI.clickable(p, func() -> void:
-		var steps := [0, 16, 8, 4]
-		var nxt: int = steps[(steps.find(bars) + 1) % steps.size()]
-		if nxt == 0:
-			loops.erase(slot)
-		else:
-			loops[slot] = nxt
-		state.set_setting("cues_loops", loops))
-	return p
-
-
-func _slot_bg(bars: int) -> Color:
-	return UI.SEL if bars > 0 else UI.CARD

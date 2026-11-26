@@ -2,14 +2,14 @@
 //! cached ones, both scored against the user's own hand-set cues.
 //! usage: cue_quality [N]
 use std::collections::HashMap;
-use vibecheck::{config, cues, rekordbox, store};
+use vibecheck::{cues, rekordbox, store};
 
 fn main() -> vibecheck::Res<()> {
     let n: usize = std::env::args().nth(1).and_then(|s| s.parse().ok()).unwrap_or(100);
     let home = std::path::PathBuf::from(std::env::var("HOME")?);
     let root = home.join("Music/Collection");
-    let cfg = config::load(&root)?;
-    let lead = cfg.ints("cues", "lead", &[0]);
+    // the pairs your hand-set cues were measured in: 16 and 8 bars before a change
+    let lead = [16, 8];
     let xml = rekordbox::read(&home.join("Documents/rekordbox.xml"), &root)?;
     let written = store::cues_written(&store::labels_db(&root)?)?;
     let own = cues::yours(&xml, &written, &lead);

@@ -248,7 +248,7 @@ pub fn label(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
         } else {
             let tracks = rekordbox::read(x, root)?;
             cue_learning(root, cfg, &tracks)?;
-            let p = plan_cues(root, cfg, &batch, &tracks)?;
+            let p = plan_cues(root, &batch, &tracks)?;
             println!(
                 "      {} tracks get cues{}{}",
                 p.marks.len(),
@@ -513,7 +513,7 @@ pub fn cues(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
     };
     println!("cue points for {} tracks", rels.len());
     cue_learning(root, cfg, &xml)?;
-    let plan = plan_cues(root, cfg, &rels, &xml)?;
+    let plan = plan_cues(root, &rels, &xml)?;
     println!(
         "   {} placed, {} from the cache{}{}",
         plan.marks.len(),

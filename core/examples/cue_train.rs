@@ -81,9 +81,8 @@ fn main() -> vibecheck::Res<()> {
     let xml = rekordbox::read(&home.join("Documents/rekordbox.xml"), &root)?;
     let t0 = Instant::now();
     let data = cue_train::examples(&root, &xml, &cfg)?;
-    // the tracks v1 could learn from: your cues in its pairs
-    let old: HashSet<String> =
-        cues::yours(&xml, &store::cues_written(&store::labels_db(&root)?)?, &cfg.ints("cues", "lead", &[0])).into_keys().collect();
+    // the tracks v1 could learn from: your cues in its pairs, 16 and 8 bars before a change
+    let old: HashSet<String> = cues::yours(&xml, &store::cues_written(&store::labels_db(&root)?)?, &[16, 8]).into_keys().collect();
     let hand = data.iter().filter(|e| e.hand).count();
     let bars: usize = data.iter().map(|e| e.x.len()).sum();
     println!(

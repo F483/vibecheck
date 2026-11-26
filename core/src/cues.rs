@@ -6,8 +6,8 @@
 //!
 //! - **v2, generic**: per bar, where each hot cue slot goes, beats, loops, memory cues;
 //!   decoded into cues as they are (`decode_generic`). Trained in `cue_train`.
-//! - **v1, shipped**: four transition points (mix-in, two between, mix-out), with cues
-//!   placed around them by settings (`place`: `lead`, `loops`, `memory`).
+//! - **v1, shipped**: four transition points (mix-in, two between, mix-out), a hot cue
+//!   at each (`place`); what a new user starts with.
 
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
@@ -958,13 +958,13 @@ impl Model {
     }
 
     /// The cues it would set on a track, and the bars it hears it change at (the waveform's
-    /// parts). v2 learned the cues as they are; v1 places them around its transitions with
-    /// `place` (the `[cues]` settings).
-    pub fn suggest(&self, f: &[Vec<f32>], t: &Track, p: &Placement) -> (Vec<Mark>, Vec<usize>) {
+    /// parts). v2 learned the cues as they are; v1 places them around its transitions: one
+    /// hot cue at each, A–D, and a memory cue on each and the first downbeat.
+    pub fn suggest(&self, f: &[Vec<f32>], t: &Track) -> (Vec<Mark>, Vec<usize>) {
         let down = downbeats(&t.tempos, t.duration + 2.0);
         if !self.generic {
             let tr = self.transitions(f);
-            return (place(&tr, &down, &p.lead, &p.loops, p.memory), tr);
+            return (place(&tr, &down, &[0], &[], true), tr);
         }
         let (s, e) = self.scores(f);
         let parts = pick(&s.iter().map(|r| r[out::HOT]).collect::<Vec<_>>(), TRANSITIONS, &[]);
@@ -972,18 +972,6 @@ impl Model {
     }
 }
 
-/// How the v1 model's transitions become cues: `[cues]` in the config.
-pub struct Placement {
-    pub lead: Vec<i64>,
-    pub loops: Vec<(String, i64)>,
-    pub memory: bool,
-}
-
-impl Placement {
-    pub fn of(cfg: &crate::config::Config) -> Placement {
-        Placement { lead: cfg.ints("cues", "lead", &[0]), loops: cfg.int_map("cues", "loops"), memory: cfg.bool("cues", "memory", true) }
-    }
-}
 
 /// The k best bars, at least GAP apart, keeping any already fixed.
 pub fn pick(score: &[f32], k: usize, fixed: &[usize]) -> Vec<usize> {

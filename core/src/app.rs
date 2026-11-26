@@ -1232,7 +1232,7 @@ pub fn export(root: &Path, xml_path: &Path, cfg: &Config) -> Res<Exported> {
         .collect();
     let plan = if cue { {
         let rest: Vec<String> = paths.iter().filter(|p| !set.contains_key(*p)).cloned().collect();
-        Some(workflow::plan_cues(root, cfg, &rest, &x)?)
+        Some(workflow::plan_cues(root, &rest, &x)?)
     } } else { None };
     let name = format!("vibecheck-{}", local(now(), "%Y%m%d-%H%M"));
     let entries: Vec<Entry> = paths
@@ -2015,7 +2015,7 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
         if let Some(f) = f {
             let down = cues::downbeats(&t.tempos, t.duration + 2.0);
             let names = ["mix in", "change", "change", "mix out"];
-            let (placed, trans) = cues::Model::load(root)?.suggest(&f, t, &cues::Placement::of(cfg));
+            let (placed, trans) = cues::Model::load(root)?.suggest(&f, t);
             suggested = placed.iter().filter_map(cue_of).collect();
             if !own_cues && cfg.bool("cues", "write", true) {
                 marks = placed;
@@ -2092,9 +2092,6 @@ pub fn settings(cfg: &Config) -> serde_json::Value {
         "write_comment": cfg.bool("rekordbox", "write_comment", true),
         "cues_write": cfg.bool("cues", "write", true),
         "cues_edit": cfg.bool("cues", "edit", true),
-        "cues_lead": cfg.ints("cues", "lead", &[0]),
-        "cues_loops": cfg.int_map("cues", "loops").into_iter().collect::<HashMap<_, _>>(),
-        "cues_memory": cfg.bool("cues", "memory", true),
         "guesses_sure": cfg.float("guesses", "sure", 0.8),
         "guesses_right": cfg.float("guesses", "right", 0.7),
         "guesses_measured": cfg.int("guesses", "measured", 10),

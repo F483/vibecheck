@@ -19,8 +19,7 @@ const PALETTE := ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", 
 const CORE_KEYS := {
 	"write_colour": ["rekordbox", "write_colour"], "write_stars": ["rekordbox", "write_stars"],
 	"write_tonality": ["rekordbox", "write_tonality"], "write_comment": ["rekordbox", "write_comment"],
-	"cues_write": ["cues", "write"], "cues_edit": ["cues", "edit"], "cues_lead": ["cues", "lead"], "cues_loops": ["cues", "loops"],
-	"cues_memory": ["cues", "memory"],
+	"cues_write": ["cues", "write"], "cues_edit": ["cues", "edit"],
 	"guesses_sure": ["guesses", "sure"], "guesses_right": ["guesses", "right"],
 	"guesses_measured": ["guesses", "measured"],
 	"guesses_limit": ["guesses", "limit"],
@@ -50,8 +49,7 @@ var listening := ""
 var _hearing := false  # the background listening chain is running
 var settings := {
 	"music": "", "xml": "~/Documents/rekordbox.xml", "threshold": 100, "show_guess": true, "warn_days": 7,
-	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_edit": true, "cues_quantize": true, "cues_lead": 0,
-	"cues_loops": {}, "cues_memory": true,
+	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_edit": true, "cues_quantize": true,
 	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_limit": 100,
 	"weigh_stars": true, "recency_days": 365,
 }
@@ -196,9 +194,6 @@ func load_all() -> void:
 			return
 		for k: String in c:
 			settings[k] = c[k]
-		settings.cues_lead = 1 if Array(c.cues_lead).size() > 1 else 0
-		for s: String in settings.cues_loops:
-			settings.cues_loops[s] = int(settings.cues_loops[s])
 		changed.emit())
 
 
@@ -794,10 +789,7 @@ func set_setting(k: String, v: Variant) -> void:
 	settings[k] = v
 	if CORE_KEYS.has(k):
 		_wv.clear()  # the cues shown follow the settings
-		var value: Variant = v
-		if k == "cues_lead":
-			value = [0] if v == 0 else [16, 8]
-		_call(_main, "set", {"section": CORE_KEYS[k][0], "key": CORE_KEYS[k][1], "value": value},
+		_call(_main, "set", {"section": CORE_KEYS[k][0], "key": CORE_KEYS[k][1], "value": v},
 			func(_c: Variant) -> void: pass)
 	else:
 		_save("app", k, v)

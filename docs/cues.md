@@ -9,8 +9,10 @@ Two models read the same per-bar features with the same network:
   slots A–H, beats, loops and memory cues, from yours. The app trains it
   as soon as you have enough cues of your own.
 - **v1, shipped**: four **transition points** per track (mix-in, two
-  between, mix-out), with the cues **placed** around them by settings
-  (`[cues] lead`, `loops`, `memory`). What a new user starts with. The
+  between, mix-out), a hot cue at each (A–D) and a memory cue on each and
+  the first downbeat. What a new user starts with. Its placement settings
+  (`[cues] lead`, `loops`, `memory`) went on 2026-11-26: v2 learns all of
+  that, so they only ever shaped a new user's first suggestions. The
   prototype's write-up of it is `prototype/docs/cues.md` in `prototype.zip`.
 
 ## Learning, as colours do
@@ -166,8 +168,9 @@ model only if hot cues exact is not below today's **50.1%**.
 3. The editor in the player card (Tab). **Done.**
 4. The generic model, weighted, validated against 50.1%. **Done**
    (2026-11-26, above).
-5. Settings: placement settings go; `cues::writable` reworked (a cue decision
-   made in the card is yours to write, whatever rekordbox had).
+5. Settings: placement settings go (**done** 2026-11-26); `cues::writable`
+   reworked (a cue decision made in the card is yours to write, whatever
+   rekordbox had).
 
 Decided 2026-11-24: slots learned per slot, not fixed to time order (tastes
 differ, keep it generic); cues on beats too.

@@ -637,12 +637,14 @@ you think is best and we can iterate from there".
 - **Cue points**
   - Write cue points (`[cues] write`). They go only on tracks with no cues or
     with generated ones; a track with any cue you set yourself is never touched.
-  - Hot cues (`[cues] lead`), two presets:
-    - "At each change · A–D" = `[0]`;
-    - "16 + 8 bars before · A–H" = `[16, 8]`.
-  - Loops (`[cues] loops`): slots A–H, each a cue or a loop. Click a slot to
-    set its length in bars. Slots the chosen preset doesn't use are dimmed.
-  - Memory cue on every hot cue and the first downbeat (`[cues] memory`).
+  - Set cues in the player · Tab (`[cues] edit`).
+  - One line: where cues go, loops and memory cues are learned from yours,
+    set in the player or in rekordbox.
+  - Hot cues (two presets, `[cues] lead`), Loops (slots A–H) and Memory cue
+    on every hot cue went on 2026-11-26 (the user: "remove the unused cue
+    placement settings"): the cue model learns them (v2); the shipped model
+    a new user starts with places one cue at each change, A–D, with memory
+    cues.
 - Key and energy you correct in the player are saved with Confirm in `labels.db`
   (`key_energy`, schema v5, the first the Python prototype can't open) and
   win over the analysis in the library and in every export.

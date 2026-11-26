@@ -4,7 +4,6 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use crate::config::Config;
 use crate::rekordbox::{self, Track};
 use crate::store::{self, Label};
 use crate::{Res, cues};
@@ -157,8 +156,7 @@ pub struct CuePlan {
     pub model: String,
 }
 
-pub fn plan_cues(root: &Path, cfg: &Config, rels: &[String], xml: &HashMap<String, Track>) -> Res<CuePlan> {
-    let placement = cues::Placement::of(cfg);
+pub fn plan_cues(root: &Path, rels: &[String], xml: &HashMap<String, Track>) -> Res<CuePlan> {
     let ok: HashMap<String, Track> = rels
         .iter()
         .filter_map(|r| xml.get(r).filter(|t| !t.tempos.is_empty() && cues::writable(t)).map(|t| (r.clone(), t.clone())))
@@ -167,7 +165,7 @@ pub fn plan_cues(root: &Path, cfg: &Config, rels: &[String], xml: &HashMap<Strin
     let (f, st) = cues::features_all(root, &ok)?;
     let mut marks = HashMap::new();
     for (r, f) in &f {
-        marks.insert(r.clone(), model.suggest(f, &ok[r], &placement));
+        marks.insert(r.clone(), model.suggest(f, &ok[r]));
     }
     Ok(CuePlan {
         marks,

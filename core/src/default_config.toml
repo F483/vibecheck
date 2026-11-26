@@ -131,26 +131,6 @@ write = true
 # rekordbox, and the cue model learns from it (docs/cues.md).
 edit = true
 
-# lead, loops and memory place the cues of the shipped model (v1: four
-# transition points, cues placed around them). Once the model has learned from
-# your own cues (v2) it places them itself -- slots, beats, loops and memory
-# cues as you set them -- and these three are not used (docs/cues.md).
-#
-# How many bars ahead of each transition point to cue. Four transition points
-# per track: the mix-in, two between, the mix-out.
-#
-#   [0]      one cue AT each change, hot cues A-D
-#   [16, 8]  a pair 16 and 8 bars before each change, to start the next track
-#            a phrase or two ahead: A/B the mix-in, C-F between, G/H the mix-out
-lead = [0]
-
-# Hot-cue slots that are loops instead of plain cues, and their length in bars,
-# e.g. { A = 16, G = 16 }: room to wait at the mix-in and at the mix-out.
-loops = {}
-
-# A memory cue on every hot cue, and one on the first downbeat.
-memory = true
-
 # Learn again from your own cues once this many tracks are new since the model
 # in use was trained, or changed (set in the player, edited in rekordbox,
 # played). Weighted like colours ([trust] x [rating]); cues left where they
