@@ -115,6 +115,12 @@ fn joined(con: &rusqlite::Connection, s: &Saved, after: i64) -> Res<HashMap<Stri
          WHERE l.ts > ?1 AND l.round_id IS NULL AND l.origin IS NULL AND l.source IN ('user', 'model') GROUP BY t.path",
     )?;
     let mut out: HashMap<String, i64> = st.query_map([after], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? * 1000)))?.collect::<Result<_, _>>()?;
+    let mut cu = con.prepare("SELECT t.path, MIN(d.ts) FROM cue_decisions d JOIN tracks t ON t.id = d.track_id WHERE d.ts > ?1 GROUP BY t.path")?;
+    for r in cu.query_map([after], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? * 1000)))? {
+        let (p, at) = r?;
+        let e = out.entry(p).or_insert(at);
+        *e = (*e).min(at);
+    }
     for (p, at) in &s.dropped_at {
         let e = out.entry(p.clone()).or_insert(*at);
         *e = (*e).min(*at);
@@ -143,11 +149,16 @@ fn unsent(con: &rusqlite::Connection, s: &Saved) -> Res<HashSet<String>> {
     Ok(out)
 }
 
-/// The export list: labels made here since `after`; what was read from rekordbox is not sent back.
+/// The export list: labels and cues set here since `after`; what was read from rekordbox is
+/// not sent back.
 fn batch(con: &rusqlite::Connection, after: i64) -> Res<Vec<String>> {
     let mut st = con.prepare(
-        "SELECT path FROM current WHERE source IN ('user', 'model') AND origin IS NULL AND round_id IS NULL AND ts > ?1
-         AND missing_at IS NULL ORDER BY ts",
+        "SELECT path, MIN(ts) AS at FROM (
+           SELECT path, ts FROM current WHERE source IN ('user', 'model') AND origin IS NULL AND round_id IS NULL AND ts > ?1
+           AND missing_at IS NULL
+           UNION ALL
+           SELECT t.path, d.ts FROM cue_decisions d JOIN tracks t ON t.id = d.track_id WHERE d.ts > ?1 AND t.missing_at IS NULL
+         ) GROUP BY path ORDER BY at, path",
     )?;
     let out = st.query_map([after], |r| r.get(0))?.collect::<Result<_, _>>()?;
     Ok(out)
@@ -346,6 +357,7 @@ fn labelled(root: &Path, cfg: &Config) -> Res<Labelled> {
     let con = store::labels_db(root)?;
     let made = store::current_made(&con)?;
     let played = store::played(&con)?;
+    let played_at = store::played_at(&con)?;
     let mut keys: Vec<String> = made.iter().filter(|(_, c)| c.source == "user").map(|(p, _)| p.clone()).collect();
     keys.sort();
     let (paths, x) = embed::load(root, &keys)?;
@@ -357,7 +369,9 @@ fn labelled(root: &Path, cfg: &Config) -> Res<Labelled> {
         .map(|p| {
             let c = &made[p];
             let t = trust(&c.source, c.origin.as_deref(), c.card.as_deref(), c.shown, c.label.colour.map(|c| c.id), played.contains(p));
-            t.weight(cfg) * rating_factor(c.label.stars, cfg)
+            // its age: since you made or last played it; one from before vibecheck has none
+            let at = if t == Trust::Existing { 0 } else { c.ts.max(played_at.get(p).copied().unwrap_or(0)) };
+            t.weight(cfg) * rating_factor(c.label.stars, cfg) * recency(at, cfg)
         })
         .collect();
     let blind = paths.iter().map(|p| made[p].shown.is_none()).collect();
@@ -419,9 +433,28 @@ pub fn trust(source: &str, origin: Option<&str>, card: Option<&str>, shown: Opti
     }
 }
 
+/// How much something you did `at` (unix seconds; 0: before vibecheck, no age) counts now:
+/// `[recency]`, newer more.
+pub fn recency(at: i64, cfg: &Config) -> f64 {
+    if at <= 0 {
+        return 1.0;
+    }
+    let half = cfg.float("recency", "half_life_days", 365.0);
+    if half <= 0.0 {
+        return 1.0;
+    }
+    let floor = cfg.float("recency", "floor", 0.5).clamp(0.0, 1.0);
+    let age = (now() - at).max(0) as f64 / 86400.0;
+    floor + (1.0 - floor) * 0.5f64.powf(age / half)
+}
+
 /// How much a label counts for the track's rating: `[rating]` base + per_star × stars, none
 /// (rekordbox's unrated, a half-done label) at the bottom.
 pub fn rating_factor(stars: Option<u8>, cfg: &Config) -> f64 {
+    // off for whoever uses stars for something else: every track counts the same
+    if !cfg.bool("rating", "use", true) {
+        return 1.0;
+    }
     cfg.float("rating", "base", 0.5) + cfg.float("rating", "per_star", 0.1) * stars.unwrap_or(0) as f64
 }
 
@@ -429,7 +462,15 @@ pub fn rating_factor(stars: Option<u8>, cfg: &Config) -> f64 {
 fn weights_tag(cfg: &Config) -> String {
     let t = [Trust::Played, Trust::Confirmed, Trust::Kept, Trust::Existing, Trust::Guessed];
     let ws: Vec<String> = t.iter().map(|t| t.weight(cfg).to_string()).collect();
-    format!("{}|{}|{}", ws.join(","), cfg.float("rating", "base", 0.5), cfg.float("rating", "per_star", 0.1))
+    format!(
+        "{}|{}|{}|{}|{}|{}",
+        ws.join(","),
+        cfg.bool("rating", "use", true),
+        cfg.float("rating", "base", 0.5),
+        cfg.float("rating", "per_star", 0.1),
+        cfg.float("recency", "half_life_days", 365.0),
+        cfg.float("recency", "floor", 0.5)
+    )
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -665,9 +706,16 @@ pub fn train(root: &Path, cfg: &Config) -> Res<()> {
 /// `[cues] retrain_after` more tracks of your own cues than it learned from. Your own cues
 /// only (`cues::yours`): cues this app wrote and you left alone are its guesses, not yours.
 /// It retrains in steps, not on every track as colours do: training takes minutes.
+/// Behind your cues: `[cues] retrain_after` more tracks of yours than it learned from, or,
+/// once it is yours, that many changed since it was trained (set, edited, played).
 pub fn cues_stale(root: &Path, x: &HashMap<String, Track>, cfg: &Config) -> Res<bool> {
-    let own = crate::cue_train::yours(root, x, cfg)?.len();
-    Ok(own >= cues::Model::load(root)?.n_tracks + cfg.int("cues", "retrain_after", 50).max(1) as usize)
+    Ok(cues_behind(&crate::cue_train::yours(root, x)?, &cues::Model::load(root)?, cfg))
+}
+
+fn cues_behind(own: &HashMap<String, crate::cue_train::Source>, m: &cues::Model, cfg: &Config) -> bool {
+    let n = cfg.int("cues", "retrain_after", 50).max(1) as usize;
+    let changed = own.values().filter(|s| s.at > m.trained).count();
+    own.len() >= m.n_tracks + n || (m.source == "yours" && changed >= n)
 }
 
 /// Learn from your cues when the cue model is behind them; the number of tracks it learned
@@ -717,7 +765,7 @@ pub struct Queue {
 /// What the training queue asks at each place: every 5th a conflict (1), every 7th an old
 /// label (2), every 10th a track the model is sure about, asked blind (3): sure guesses teach
 /// it little, but answered blind they are the only honest measure of how right it is where it
-/// is sure, which the accuracy stat lives on. The rest unsure (0).
+/// is sure, which the accuracy stat lives on; every 9th a cue conflict (4). The rest unsure (0).
 pub fn train_slot(slot: usize) -> usize {
     if slot % 10 == 0 {
         3
@@ -725,6 +773,8 @@ pub fn train_slot(slot: usize) -> usize {
         1
     } else if slot % 7 == 5 {
         2
+    } else if slot % 9 == 4 {
+        4
     } else {
         0
     }
@@ -775,7 +825,7 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
         measured: s.colour_n,
         pool: pool.len(),
         stale,
-        cues_stale: cues_stale(root, &*xml(root, xml_path)?, cfg).unwrap_or(false),
+        cues_stale: false,
         sure_hist: vec![],
         blank_hist: vec![],
         right_hist: s.by_sure.clone(),
@@ -793,6 +843,22 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
     let preds = m.predict(&pr);
     let star = |p: &Prediction| p.top.get(STARS).and_then(|s| s.0.parse().ok()).unwrap_or(-1);
     let x = xml(root, xml_path)?;
+    // your cues the cue model, having learned them, still puts elsewhere: asked once a model
+    // of yours found them, not again within CONFLICT_REST, nor once you changed them since
+    let own = crate::cue_train::yours(root, &x)?;
+    let cm = cues::Model::load(root)?;
+    q.cues_stale = cues_behind(&own, &cm, cfg);
+    let cue_rested = store::recent_cue_cards(&con, "cue conflict", now() - CONFLICT_REST)?;
+    let cue_conflicts: Vec<String> = if cfg.bool("cues", "edit", true) && cm.source == "yours" {
+        crate::cue_train::load_conflicts(root)
+            .into_iter()
+            .map(|c| c.rel)
+            .filter(|p| own.get(p).is_some_and(|s| s.at <= cm.trained) && !skip.contains(p) && !cue_rested.contains(p))
+            .collect()
+    } else {
+        vec![]
+    };
+    let mut e = cue_conflicts.iter();
     // how much of the pool the model is sure about, and how much of that has no colour in
     // rekordbox nor a label here: the queue line's "sure on N" and Bulk label's size
     let any = store::current(&con, None)?;
@@ -865,6 +931,15 @@ pub fn queue(root: &Path, xml_path: &Path, cfg: &Config, threshold: usize, n: us
         let mut placed = false;
         for k in [want, 0, 1, 2] {
             match k {
+                4 => {
+                    if let Some(p) = e.next() {
+                        // on what it has now: your colour, or rekordbox's
+                        let l = any.get(p).copied().or_else(|| x.get(p).and_then(|t| t.label)).unwrap_or(Label::NONE);
+                        let stars = l.stars.filter(|s| *s > 0).map_or(-1, i64::from);
+                        q.items.push(Item { path: p.clone(), tag: "cue conflict", guess: l.colour.map_or(0, |c| c.id), stars });
+                        placed = true;
+                    }
+                }
                 3 => {
                     if let Some((_, i)) = d.find(|(_, i)| !used.contains(i)) {
                         used.insert(*i);
@@ -931,7 +1006,12 @@ pub fn decide(root: &Path, path: &str, colour: i64, stars: i64, key: Option<&str
     let energy = energy.filter(|e| (1..=10).contains(e)).map(|e| e as u8);
     let made_card = made.card.clone();
     con.execute_batch("BEGIN")?;
-    store::log_label_as(&con, id, Label { colour, stars }, "user", None, made)?;
+    // a cue conflict asks about the cues: its colour and stars left as they were stay the
+    // label they were, with its trust
+    let same = made.card == Some("cue conflict") && store::current(&con, None)?.get(path) == Some(&Label { colour, stars });
+    if !same {
+        store::log_label_as(&con, id, Label { colour, stars }, "user", None, made)?;
+    }
     if key.is_some() || energy.is_some() {
         // a correction of one keeps the other as it was corrected before
         let (k0, e0) = store::key_energy(&con)?.remove(path).unwrap_or_default();
@@ -1326,6 +1406,8 @@ pub struct Synced {
     /// left alone: labelled here after the xml was exported
     pub newer: usize,
     pub unknown: usize,
+    /// tracks whose cues you changed in rekordbox since the last sync
+    pub cues_changed: usize,
 }
 
 /// Read what changed in rekordbox: corrections become your labels, and every track played
@@ -1403,6 +1485,8 @@ pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
     // the counts as they are now, for the next sync
     let counts: Vec<(i64, i64)> = x.iter().filter_map(|(p, t)| Some((*ids.get(p)?, t.info.plays))).collect();
     store::set_play_counts(&con, &counts, ts)?;
+    // and the cues: one different from what the last sync saw is yours now (docs/cues.md)
+    s.cues_changed = see_cues(&con, &x, &ids, ts)?;
     con.execute_batch("COMMIT")?;
     let is = store::current(&con, None)?;
     for p in &n.paths {
@@ -1442,6 +1526,35 @@ pub fn sync(root: &Path, xml_path: &Path) -> Res<Synced> {
     let name = xml_path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or_default();
     log_batch(&con, "in", ts, &name, rekordbox::exported(xml_path), &serde_json::to_value(&s)?, &rows)?;
     Ok(s)
+}
+
+/// Note every track's cues in the xml as seen now; how many you changed since the last
+/// time. Hot cues where an export of ours last put them are ours, not an edit: rekordbox
+/// only has them once you import the export, whenever that is.
+fn see_cues(con: &rusqlite::Connection, x: &HashMap<String, Track>, ids: &HashMap<String, i64>, ts: i64) -> Res<usize> {
+    let written = store::cue_writes_last(con)?;
+    let (mut ours, mut theirs) = (vec![], vec![]);
+    for (p, t) in x {
+        let Some(id) = ids.get(p) else { continue };
+        let row = (*id, cues::cue_key(&cues::cue_list(&t.marks)));
+        if written.get(p).is_some_and(|w| w.0 == cues::hot_starts(&t.marks)) { ours.push(row) } else { theirs.push(row) }
+    }
+    store::see_cues(con, &ours, ts, true)?;
+    store::see_cues(con, &theirs, ts, false)
+}
+
+/// Before any sync has looked: what rekordbox has now is where edits are seen from.
+pub fn see_cues_first(root: &Path, xml_path: &Path) -> Res<usize> {
+    let con = store::labels_db(root)?;
+    let n: i64 = con.query_row("SELECT COUNT(*) FROM cues_seen", [], |r| r.get(0))?;
+    if n > 0 {
+        return Ok(0);
+    }
+    let x = xml(root, xml_path)?;
+    con.execute_batch("BEGIN")?;
+    let k = see_cues(&con, &x, &store::track_ids(&con)?, now())?;
+    con.execute_batch("COMMIT")?;
+    Ok(k)
 }
 
 /// Dropped tracks exported with rekordbox's colour: a colour or stars changed in
@@ -1902,9 +2015,7 @@ pub fn parts(root: &Path, xml_path: &Path, cfg: &Config, path: &str) -> Res<Part
         if let Some(f) = f {
             let down = cues::downbeats(&t.tempos, t.duration + 2.0);
             let names = ["mix in", "change", "change", "mix out"];
-            let trans = cues::Model::load(root)?.transitions(&f);
-            let lead = cfg.ints("cues", "lead", &[0]);
-            let placed = cues::place(&trans, &down, &lead, &cfg.int_map("cues", "loops"), cfg.bool("cues", "memory", true));
+            let (placed, trans) = cues::Model::load(root)?.suggest(&f, t, &cues::Placement::of(cfg));
             suggested = placed.iter().filter_map(cue_of).collect();
             if !own_cues && cfg.bool("cues", "write", true) {
                 marks = placed;
@@ -1988,6 +2099,8 @@ pub fn settings(cfg: &Config) -> serde_json::Value {
         "guesses_right": cfg.float("guesses", "right", 0.7),
         "guesses_measured": cfg.int("guesses", "measured", 10),
         "guesses_limit": cfg.int("guesses", "limit", 100),
+        "weigh_stars": cfg.bool("rating", "use", true),
+        "recency_days": cfg.float("recency", "half_life_days", 365.0) as i64,
     })
 }
 
@@ -2127,6 +2240,69 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A sync sees cues you changed in rekordbox; cues an export of ours put there are not yours.
+    #[test]
+    fn a_sync_sees_cues_you_changed() {
+        let root = std::env::temp_dir().join(format!("vibecheck-cues-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let con = store::labels_db(&root).unwrap();
+        for p in ["a.mp3", "b.mp3"] {
+            con.execute("INSERT INTO tracks (path, hash, size, mtime, first_seen, last_seen) VALUES (?1, ?1, 0, 0, 0, 0)", [p]).unwrap();
+        }
+        let ids = store::track_ids(&con).unwrap();
+        // we wrote b a hot cue at 8 s
+        store::log_cue_write(&con, ids["b.mp3"], None, "set", &[], &[8.0]).unwrap();
+        let xml = |name: &str, a: f64, b: f64| {
+            let tr = |p: &str, at: f64| {
+                format!(
+                    r#"<TRACK TrackID="{p}" Location="file://localhost{}/{p}" TotalTime="200"><TEMPO Inizio="0.000" Bpm="120.00" Metro="4/4" Battito="1"/><POSITION_MARK Name="" Type="0" Start="{at:.3}" Num="0"/></TRACK>"#,
+                    root.display()
+                )
+            };
+            let f = root.join(name);
+            std::fs::write(&f, format!("<DJ_PLAYLISTS><COLLECTION>{}{}</COLLECTION></DJ_PLAYLISTS>", tr("a.mp3", a), tr("b.mp3", b))).unwrap();
+            f
+        };
+        assert_eq!(see_cues_first(&root, &xml("1.xml", 2.0, 2.0)).unwrap(), 0);
+        // you move a's cue; b gets ours when you import the export
+        assert_eq!(sync(&root, &xml("2.xml", 4.0, 8.0)).unwrap().cues_changed, 1);
+        let seen = store::cues_seen(&con).unwrap();
+        assert!(seen["a.mp3"].1.is_some() && seen["b.mp3"].1.is_none());
+        let own = crate::cue_train::yours(&root, &rekordbox::read(&root.join("2.xml"), &root).unwrap()).unwrap();
+        assert_eq!(own["a.mp3"].trust, Trust::Confirmed);
+        assert!(!own.contains_key("b.mp3"));
+        // read again, nothing changed
+        assert_eq!(sync(&root, &xml("3.xml", 4.0, 8.0)).unwrap().cues_changed, 0);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A cue conflict confirmed with the colour as it was keeps the label (and its trust),
+    /// saves the cues, and puts the track on the export list for them.
+    #[test]
+    fn a_cue_conflict_keeps_the_label_and_exports_the_cues() {
+        let root = std::env::temp_dir().join(format!("vibecheck-cueconf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let con = store::labels_db(&root).unwrap();
+        con.execute("INSERT INTO tracks (path, hash, size, mtime, first_seen, last_seen) VALUES ('a.mp3', 'a', 0, 0, 0, 0)", []).unwrap();
+        let id = store::track_ids(&con).unwrap()["a.mp3"];
+        let lab = Label { colour: palette::by_id(3), stars: Some(4) };
+        store::log_label_as(&con, id, lab, "user", None, store::Made { origin: Some("xml"), card: Some("corrected"), ..Default::default() }).unwrap();
+        let labels = |c: &rusqlite::Connection| c.query_row("SELECT COUNT(*) FROM labels", [], |r| r.get::<_, i64>(0)).unwrap();
+        let cues = || Some(CuesSet { cues: vec![Cue { start: 1.0, end: None, num: 0, colour: String::new() }], shown: Some(vec![]) });
+        let made = || store::Made { card: Some("cue conflict"), shown: Some(3), shown_stars: Some(4), ..Default::default() };
+        decide(&root, "a.mp3", 3, 4, None, None, made(), cues()).unwrap();
+        assert_eq!(labels(&con), 1);
+        assert_eq!(store::current_made(&con).unwrap()["a.mp3"].card.as_deref(), Some("corrected"));
+        assert_eq!(store::cue_decisions(&con).unwrap().len(), 1);
+        assert_eq!(batch(&con, 0).unwrap(), vec!["a.mp3".to_string()]);
+        // a new colour on it is a label like any other
+        decide(&root, "a.mp3", 5, 4, None, None, made(), cues()).unwrap();
+        assert_eq!(labels(&con), 2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn dropped_files_become_library_paths() {
         let root = Path::new("/nowhere/Music/Collection");
@@ -2235,6 +2411,19 @@ mod tests {
         assert!((w(Trust::Kept, None) - 0.25).abs() < 1e-9);
         assert!((w(Trust::Confirmed, Some(5)) - 0.7).abs() < 1e-9);
         assert!((w(Trust::Existing, Some(5)) - 0.3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn newer_counts_more() {
+        let cfg = Config(crate::config::DEFAULT.parse().unwrap());
+        let day = 86400;
+        assert_eq!(recency(0, &cfg), 1.0);
+        assert!((recency(now(), &cfg) - 1.0).abs() < 1e-6);
+        assert!((recency(now() - 365 * day, &cfg) - 0.75).abs() < 1e-3);
+        assert!((recency(now() - 3650 * day, &cfg) - 0.5).abs() < 1e-3);
+        let off = Config("[recency]\nhalf_life_days = 0\n[rating]\nuse = false\n".parse().unwrap());
+        assert_eq!(recency(now() - 3650 * day, &off), 1.0);
+        assert_eq!(rating_factor(Some(1), &off), 1.0);
     }
 
     #[test]

@@ -195,6 +195,11 @@ func _head() -> void:
 		# dragged in to be edited: show what it has
 		player.show_track(t, "queue", int(t.colour), int(t.rating))
 		return
+	if t.tag == "cue conflict":
+		# about its cues: its colour as it is, the cues to compare open
+		player.show_track(t, "queue", t.guess, t.guess_stars)
+		player.set_view("cues")
+		return
 	var blind: bool = state.calibrating() or not state.settings.show_guess
 	player.show_track(t, "queue", -1 if blind else t.guess, -1 if blind else t.guess_stars)
 

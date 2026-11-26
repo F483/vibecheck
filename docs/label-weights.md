@@ -63,7 +63,21 @@ last export's tracks, so a play of anything exported earlier was lost (34
 tracks of one set, 10 counted); backfilled from the xml's `.bak` before that
 set.
 
+## Recency (2026-11-26)
+
+Newer counts more, so a change of taste shows once you have acted on it:
+`weight × (floor + (1 − floor) × ½^(age / half-life))`, `[recency]` in the
+config (Settings › Weighting: off, 6 months … 5 years), half-life 365 days,
+floor 0.5: a year old counts 0.75, ten years
+0.5. Age runs from when you made the label or last played it (cues: last
+set, edited or played). Labels from before vibecheck have no age to go by:
+`[trust]`'s 0.3 already says they are old, so recency leaves them at 1.
+The same for cues (`docs/cues.md`).
+
 ## Rating
+
+Settings › Weighting › Weigh by stars (`[rating] use`) turns this off: every
+track ×1, for whoever uses stars for something else.
 
 The user is sloppier with tracks they care less about, so the whole label act
 on a low-rated track (colour and stars both) counts less: `0.5 + 0.1 ×

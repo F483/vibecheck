@@ -32,8 +32,9 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
     (8, "label_card", include_str!("../migrations/0008_label_card.sql")),
     (9, "cue_decisions", include_str!("../migrations/0009_cue_decisions.sql")),
     (10, "plays", include_str!("../migrations/0010_plays.sql")),
+    (11, "cues_seen", include_str!("../migrations/0011_cues_seen.sql")),
 ];
-pub const SCHEMA_VERSION: i64 = 10;
+pub const SCHEMA_VERSION: i64 = 11;
 const BASELINE: i64 = 3;
 
 pub fn vibecheck_dir(root: &Path) -> Res<PathBuf> {
@@ -373,12 +374,14 @@ pub struct Current {
     pub origin: Option<String>,
     pub card: Option<String>,
     pub shown: Option<i64>,
+    /// when it was made, unix seconds
+    pub ts: i64,
 }
 
 /// As `current`, with how each label was made, for tracks with a label that says something.
 pub fn current_made(con: &Connection) -> Res<HashMap<String, Current>> {
     let mut st = con.prepare(
-        "SELECT path, colour_id, stars, source, origin, card, shown FROM current WHERE label_id IS NOT NULL",
+        "SELECT path, colour_id, stars, source, origin, card, shown, ts FROM current WHERE label_id IS NOT NULL",
     )?;
     let rows = st.query_map([], |r| {
         Ok((
@@ -389,16 +392,17 @@ pub fn current_made(con: &Connection) -> Res<HashMap<String, Current>> {
             r.get::<_, Option<String>>(4)?,
             r.get::<_, Option<String>>(5)?,
             r.get::<_, Option<i64>>(6)?,
+            r.get::<_, Option<i64>>(7)?,
         ))
     })?;
     let mut out = HashMap::new();
     for r in rows {
-        let (p, c, s, source, origin, card, shown) = r?;
+        let (p, c, s, source, origin, card, shown, ts) = r?;
         if c.is_none() && s.is_none() {
             continue;
         }
         let label = Label { colour: c.and_then(palette::by_id), stars: s.map(|s| s as u8) };
-        out.insert(p, Current { label, source, origin, card, shown });
+        out.insert(p, Current { label, source, origin, card, shown, ts: ts.unwrap_or(0) });
     }
     Ok(out)
 }
@@ -487,6 +491,13 @@ pub fn recent_cards(con: &Connection, card: &str, ts: i64) -> Res<HashSet<String
     Ok(out)
 }
 
+/// Tracks whose cues a card of this kind asked about since `ts`.
+pub fn recent_cue_cards(con: &Connection, card: &str, ts: i64) -> Res<HashSet<String>> {
+    let mut st = con.prepare("SELECT DISTINCT t.path FROM cue_decisions d JOIN tracks t ON t.id = d.track_id WHERE d.card = ?1 AND d.ts > ?2")?;
+    let out = st.query_map(params![card, ts], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    Ok(out)
+}
+
 pub fn cues_written(con: &Connection) -> Res<HashMap<String, Vec<f64>>> {
     let m: HashMap<String, String> = pairs(
         con,
@@ -512,6 +523,83 @@ pub fn cue_decisions(con: &Connection) -> Res<HashMap<String, String>> {
         "SELECT t.path, d.cues FROM cue_decisions d JOIN tracks t ON t.id = d.track_id
          WHERE d.id = (SELECT MAX(id) FROM cue_decisions WHERE track_id = d.track_id)",
     )
+}
+
+/// A cue decision: cues, the suggestion shown then, when.
+pub type Decided = (String, Option<String>, i64);
+
+/// Your cues per track as set in the app, the newest decision of each: (cues, the
+/// suggestion shown then, when), JSON as `log_cue_decision` keeps them.
+pub fn cue_decisions_made(con: &Connection) -> Res<HashMap<String, Decided>> {
+    let mut st = con.prepare(
+        "SELECT t.path, d.cues, d.shown, d.ts FROM cue_decisions d JOIN tracks t ON t.id = d.track_id
+         WHERE d.id = (SELECT MAX(id) FROM cue_decisions WHERE track_id = d.track_id)",
+    )?;
+    let out = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?))))?.collect::<Result<_, _>>()?;
+    Ok(out)
+}
+
+/// The hot cues this app last wrote per track, and when.
+pub fn cue_writes_last(con: &Connection) -> Res<HashMap<String, (Vec<f64>, i64)>> {
+    let mut st = con.prepare(
+        "SELECT t.path, w.hot, w.ts FROM cue_writes w JOIN tracks t ON t.id = w.track_id
+         WHERE w.id = (SELECT MAX(id) FROM cue_writes WHERE track_id = w.track_id)",
+    )?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))?;
+    let mut out = HashMap::new();
+    for r in rows {
+        let (p, h, ts) = r?;
+        out.insert(p, (serde_json::from_str(&h).unwrap_or_default(), ts));
+    }
+    Ok(out)
+}
+
+/// rekordbox's cues as last seen, per track: their key (`cues::cue_key`) and when a sync
+/// last saw you change them.
+pub fn cues_seen(con: &Connection) -> Res<HashMap<String, (String, Option<i64>)>> {
+    let mut st = con.prepare("SELECT t.path, s.cues, s.changed FROM cues_seen s JOIN tracks t ON t.id = s.track_id")?;
+    let out = st.query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))?.collect::<Result<_, _>>()?;
+    Ok(out)
+}
+
+/// Note tracks' cues as seen now: (track id, key). Seen before and different, and not
+/// `ours` (written by an export), they changed now. Returns how many changed.
+pub fn see_cues(con: &Connection, seen: &[(i64, String)], ts: i64, ours: bool) -> Res<usize> {
+    let mut get = con.prepare("SELECT cues FROM cues_seen WHERE track_id = ?1")?;
+    let mut put = con.prepare(
+        "INSERT INTO cues_seen (track_id, cues, ts, changed) VALUES (?1, ?2, ?3, NULL)
+         ON CONFLICT(track_id) DO UPDATE SET cues = excluded.cues, ts = excluded.ts,
+         changed = CASE WHEN ?4 THEN ?3 ELSE changed END",
+    )?;
+    let mut n = 0;
+    for (t, key) in seen {
+        let was: Option<String> = get.query_row([t], |r| r.get(0)).optional()?;
+        let changed = !ours && was.as_ref().is_some_and(|w| w != key);
+        n += changed as usize;
+        if was.as_ref() != Some(key) || changed {
+            put.execute(params![t, key, ts, changed])?;
+        }
+    }
+    Ok(n)
+}
+
+/// When each track was last seen played: the sync that saw its play count rise, or, before
+/// schema v10, the export of ours it was played after.
+pub fn played_at(con: &Connection) -> Res<HashMap<String, i64>> {
+    let mut st = con.prepare(
+        "SELECT t.path, p.ts FROM plays p JOIN tracks t ON t.id = p.track_id
+         UNION ALL
+         SELECT t.path, b.ts FROM batch_tracks bt
+         JOIN batches b ON b.id = bt.batch_id JOIN tracks t ON t.id = bt.track_id
+         WHERE b.dir = 'out' AND bt.fate = 'played'",
+    )?;
+    let mut out: HashMap<String, i64> = HashMap::new();
+    for r in st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+        let (p, ts) = r?;
+        let e = out.entry(p).or_insert(ts);
+        *e = (*e).max(ts);
+    }
+    Ok(out)
 }
 
 /// Your key and energy for a track, as corrected; None leaves that one alone.

@@ -24,6 +24,7 @@ const CORE_KEYS := {
 	"guesses_sure": ["guesses", "sure"], "guesses_right": ["guesses", "right"],
 	"guesses_measured": ["guesses", "measured"],
 	"guesses_limit": ["guesses", "limit"],
+	"weigh_stars": ["rating", "use"], "recency_days": ["recency", "half_life_days"],
 }
 
 var library: Array[Dictionary] = []
@@ -52,6 +53,7 @@ var settings := {
 	"listen": true, "write_colour": true, "write_stars": true, "write_tonality": true, "write_comment": true, "cues_write": true, "cues_edit": true, "cues_quantize": true, "cues_lead": 0,
 	"cues_loops": {}, "cues_memory": true,
 	"guesses_sure": 0.8, "guesses_right": 0.7, "guesses_measured": 10, "guesses_limit": 100,
+	"weigh_stars": true, "recency_days": 365,
 }
 
 var _main := Lane.new()
@@ -330,11 +332,14 @@ func decide(t: Dictionary, colour: int, rating: int, from: String, energy := 0, 
 	if key != "":
 		t.key = key
 	var mine: bool = t.source == "user"
-	t.colour = colour
-	if rating > 0:
-		t.rating = rating
-	t.source = "user"
-	t.trust = 4 if t.plays > 0 else 3
+	# a cue conflict with the colour and stars as they were keeps the label and its trust
+	var kept: bool = card == "cue conflict" and mine and colour == int(t.colour) and (rating == int(t.rating) or rating <= 0)
+	if not kept:
+		t.colour = colour
+		if rating > 0:
+			t.rating = rating
+		t.source = "user"
+		t.trust = 4 if t.plays > 0 else 3
 	t.batch = true
 	t.labelled_ts = int(Time.get_unix_time_from_system())
 	t.labelled = Time.get_date_string_from_system()
@@ -801,7 +806,8 @@ func set_setting(k: String, v: Variant) -> void:
 		_answered.clear()
 		_skipped.clear()
 		load_all()
-	elif k == "threshold" or k == "guesses_measured":
+	elif k in ["threshold", "guesses_measured", "weigh_stars", "recency_days"]:
+		# the weights change what the colour model learns: it retrains for the next queue
 		refresh_queue()
 	elif k == "listen" and v:
 		_listen()

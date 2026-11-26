@@ -497,8 +497,9 @@ pub fn cues(root: &Path, cfg: &Config, args: &Args) -> Res<()> {
     println!("reading {}", src.display());
     let xml = rekordbox::read(&src, root)?;
     if args.flag("--train") {
-        let t = vibecheck::cue_train::train(root, &xml, cfg)?;
-        println!("learned from your cue points on {} tracks: .vibecheck/{}", t.tracks, cues::MODEL_FILE);
+        // as the app reads it: paths as the library spells them
+        let t = vibecheck::cue_train::train(root, &*vibecheck::app::xml(root, &src)?, cfg)?;
+        println!("learned from your cue points on {} tracks: .vibecheck/{}; {} cue conflicts", t.tracks, cues::MODEL_FILE, t.conflicts);
         return Ok(());
     }
     let con = store::labels_db(root)?;

@@ -37,6 +37,8 @@ const WHY := [
 		"Pick its colour again. It replaces your label."],
 	["blind", "a check card: asked blind, so your answer stays your own and the model's accuracy stays honest",
 		"Pick its colour and stars as if there were no guess."],
+	["cue conflict", "your cues, but the cue model, having learned them, would put them elsewhere; its cues show faint",
+		"Keep yours with Confirm, move them, or take the model's. Either way they count as confirmed."],
 	["from rekordbox", "you dropped it on the app",
 		"Confirm makes it your label."],
 	["relistening", "opened from the export list or the library",
@@ -314,7 +316,10 @@ func show_track(t: Dictionary, m: String, guess := -1, guess_stars := -1) -> voi
 		_beats = PackedFloat64Array(p.beats)
 		_bars = PackedFloat64Array(p.bars)
 		cues_shown = _plain(p.suggested)
-		cues_now = _plain(p.cues) if p.set else cues_shown.duplicate(true)
+		# a cue conflict asks about yours: they start on the pads, the model's show faint
+		var conflict: bool = mode == "queue" and str(track.get("tag", "")) == "cue conflict"
+		cues_now = _plain(p.cues) if p.set or conflict else cues_shown.duplicate(true)
+		_wave.ghosts = cues_shown if conflict else []
 		_cues_ready = not _beats.is_empty()
 		_tags = p.tags
 		_tags_ready = true
@@ -1209,6 +1214,8 @@ class Wave extends Control:
 	var starts: Array[float] = []
 	var names: Array[String] = []
 	var cues: Array = []
+	## the model's cues, faint, to compare yours with (a cue conflict)
+	var ghosts: Array = []
 	var own_cues := false
 	var sel := -1
 	var edit := false
@@ -1227,6 +1234,7 @@ class Wave extends Control:
 		starts = []
 		names = []
 		cues = []
+		ghosts = []
 		own_cues = false
 		frac = 0.0
 		queue_redraw()
@@ -1322,6 +1330,16 @@ class Wave extends Control:
 		return clampf(seconds / length, 0, 1) * size.x
 
 	func _draw_cues(h: float) -> void:
+		# the model's, faint and outlined, under yours
+		var faint := Color(1, 1, 1, 0.35)
+		for g: Dictionary in ghosts:
+			var gx := _x(g.start)
+			if int(g.num) < 0:
+				draw_polyline(PackedVector2Array([Vector2(gx - 6, h), Vector2(gx + 6, h), Vector2(gx, h - 9), Vector2(gx - 6, h)]), faint, 1.0)
+				continue
+			draw_dashed_line(Vector2(gx, FLAG), Vector2(gx, h), faint, 1.0, 3.0)
+			draw_rect(Rect2(gx, 0, FLAG, FLAG), faint, false, 1.0)
+			draw_string(font, Vector2(gx + 3.5, FLAG - 3), "ABCDEFGH"[clampi(int(g.num), 0, 7)], HORIZONTAL_ALIGNMENT_LEFT, -1, 11, faint)
 		# loops first, under everything: shaded from start to end
 		for c: Dictionary in cues:
 			if c.end != null and int(c.num) >= 0:

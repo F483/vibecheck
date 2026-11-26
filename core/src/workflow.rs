@@ -158,9 +158,7 @@ pub struct CuePlan {
 }
 
 pub fn plan_cues(root: &Path, cfg: &Config, rels: &[String], xml: &HashMap<String, Track>) -> Res<CuePlan> {
-    let lead = cfg.ints("cues", "lead", &[0]);
-    let loops = cfg.int_map("cues", "loops");
-    let memory = cfg.bool("cues", "memory", true);
+    let placement = cues::Placement::of(cfg);
     let ok: HashMap<String, Track> = rels
         .iter()
         .filter_map(|r| xml.get(r).filter(|t| !t.tempos.is_empty() && cues::writable(t)).map(|t| (r.clone(), t.clone())))
@@ -169,9 +167,7 @@ pub fn plan_cues(root: &Path, cfg: &Config, rels: &[String], xml: &HashMap<Strin
     let (f, st) = cues::features_all(root, &ok)?;
     let mut marks = HashMap::new();
     for (r, f) in &f {
-        let t = model.transitions(f);
-        let down = cues::downbeats(&ok[r].tempos, ok[r].duration + 2.0);
-        marks.insert(r.clone(), (cues::place(&t, &down, &lead, &loops, memory), t));
+        marks.insert(r.clone(), model.suggest(f, &ok[r], &placement));
     }
     Ok(CuePlan {
         marks,

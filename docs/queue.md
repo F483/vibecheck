@@ -26,16 +26,18 @@ labels it retrains in the background and asks again. So the model is at most
 ~10 labels stale, and only the first ~10 of the 200 are ever consumed before
 the order is recomputed.
 
-Past calibration, four lists, dealt by position (`train_slot`):
+Past calibration, five lists, dealt by position (`train_slot`):
 
 | every | card | what it is | shown guess | new track? |
 |---|---|---|---|---|
 | 10th | **blind** | a track the model is ≥ 0.8 sure of, asked blind: the accuracy check | no | yes |
 | 5th | **conflict** | your label, the model ≥ 0.5 sure of another colour, surest first | no | **no** |
 | 7th | **old label** | a rekordbox colour from before vibecheck, the model ≥ 0.5 sure of another; surest first | no | yes (to the app) |
+| 9th | **cue conflict** | your cues, which the cue model, having learned them, would mostly put elsewhere (2026-11-26; `docs/cues.md`) | its cues, faint | no |
 | rest | **unsure** | least sure first | yes | yes |
 
-Over 70 cards: 7 blind, 14 conflicts, 7 old labels, 42 unsure. So 20% of
+Over 70 cards: 7 blind, 14 conflicts, 7 old labels, 42 unsure (with cue
+conflicts, up to 7 of the unsure become cue conflicts). So 20% of
 cards re-ask a track you already labelled, 40% are blind, 60% show a guess.
 
 Nothing rests a conflict: once you re-confirm your colour, the track conflicts

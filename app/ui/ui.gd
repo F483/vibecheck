@@ -41,6 +41,7 @@ const TAGS := {
 	"old label": [Color("#463a1c"), Color("#e0b04a")],
 	"from rekordbox": [Color("#24304a"), Color("#9fb8ff")],
 	"blind": [Color("#3a3b40"), Color("#d6d7db")],
+	"cue conflict": [Color("#3a2440"), Color("#e7a6ff")],
 }
 
 static var _fonts := {}

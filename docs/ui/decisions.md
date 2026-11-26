@@ -385,6 +385,21 @@ already keeps when it writes key and energy there, so that is where they are
 read (`rekordbox::tags`; 4,942 of 14,580 tracks on the reference collection).
 Read only for now: the keys do nothing in Tags. Editing comes later.
 
+### Cue conflict cards (2026-11-26)
+
+- A queue card, every 9th, tagged **cue conflict** (purple, its own colour
+  among the tags): your cues, which the cue model, having learned them,
+  would mostly put elsewhere (`docs/cues.md`).
+- It opens in **Cues**, not blind: your cues on the pads, the model's
+  **faint and outlined** on the waveform (dashed line, outlined flag and
+  letter; memory cues as outlined triangles), under yours, so the two read
+  side by side. Its colour and stars show as they are.
+- Confirm saves the cues as on the pads; the colour stays the label it was
+  (with its trust) unless you change it. Asked again after 60 days at the
+  earliest, as colour conflicts.
+- Board 05 lists it. The user (2026-11-26): the system should resurface
+  what may be wrong or drifted, for cues as for colours.
+
 ### Cue points in the player (2026-11-24)
 
 Board 05. Cues are edited where colour, stars, energy and key are decided,
@@ -468,7 +483,9 @@ you think is best and we can iterate from there".
   the **Sync summary** popup dims the workspace and shows: played (anywhere in
   the collection, whichever export the label went out in; 2026-11-26, before
   only the last export's), then the last export's corrected / untouched,
-  plus how many tracks went to the front of the queue. "Back to
+  plus how many tracks went to the front of the queue. A line under them
+  names what else it took, including "cues you changed on N tracks"
+  (2026-11-26). "Back to
   vibe ENTER" confirms. "Sync ⌥S" in the widget is the manual fallback.
 - Importing applies every field in the xml, so the export has to be recent.
   That is why the widget warns when it is old.
@@ -546,12 +563,12 @@ you think is best and we can iterate from there".
 ## Settings contents
 
 - **Two columns**, so lines don't stretch across a wide window: the
-  collection and the model on the left (Library, Calibration), what goes into
+  collection and the model on the left (Library, Calibration, Weighting), what goes into
   rekordbox on the right (Rekordbox Export, Bulk label, Cue points). Start
   spans both.
 - **Each group on its own card**, titled, with one line on what it is for where
   that isn't plain (none on Library or Rekordbox Export), so
-  a new user sees five groups rather than a wall of settings. Fields inside a
+  a new user sees six groups rather than a wall of settings. Fields inside a
   card sit darker. No "Settings" title row and no intro line: the
   rail says where you are, and its dimmed screens that they wait on setup. The core version sits in small type under Start.
 - Library: the Music path and the `rekordbox.xml` path, with the note that the
@@ -562,6 +579,19 @@ you think is best and we can iterate from there".
   queue switches from calibration tracks to unsure, conflicts and old labels.
 - Show the model's guess in the player after calibration (On).
 - Re-ask old tracks blind (rises as the library fills in).
+- **Weighting** (2026-11-26, the user: "some people use stars for other data
+  and would want to disable it"): how much each label and each track's cues
+  count when the models learn, colours and cues alike.
+  - Weigh by stars ("5★ ×1 · 1★ ×0.6"), On: `[rating] use`. Off: every
+    track counts the same.
+  - Newer counts more · half after: Off / 6 months / 1 year / 2 years / 5
+    years, 1 year by default: `[recency] half_life_days` (0 off). The floor
+    (0.5) stays in the config.
+  - One line under them: trust × stars × age, stars off if you use them for
+    something else, older never below half, labels from before vibecheck
+    have no age.
+  - A change retrains the colour model for the next queue; the cue model
+    takes it at its next training.
 - **Rekordbox Export**
   - Write the colour ("Orange"): `[rekordbox] write_colour`; Write the star
     rating ("★★★★"): `write_stars`. Both on; added 2026-11-22 when the Bulk

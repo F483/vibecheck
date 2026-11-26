@@ -341,6 +341,8 @@ func sync_now() -> void:
 			more.append("%d more labels taken from rekordbox" % (r.added + r.changed - r.corrected))
 		if r.confirmed > 0:
 			more.append("%d from the command line's rounds confirmed" % r.confirmed)
+		if int(r.get("cues_changed", 0)) > 0:
+			more.append("cues you changed on %d tracks, learned from as yours" % int(r.cues_changed))
 		if r.newer > 0:
 			more.append("%d left alone: labelled here, not exported yet" % r.newer)
 		if r.unknown > 0:

@@ -1,17 +1,13 @@
-//! Cue points: where a track changes, learned from your own cues, and where
-//! to put cues around that.
+//! Cue points, learned from your own cues (docs/cues.md).
 //!
-//! 1. **Transition points**: four bars per track (mix-in, two between,
-//!    mix-out), scored by a small bidirectional GRU over per-bar features:
-//!    sound (mel, chroma, loudness, brightness, onsets) and structure
-//!    (Laplacian segmentation, McFee & Ellis 2014). Bars come from rekordbox's
-//!    own grid.
-//! 2. **Placement**: plain settings: how far ahead to cue (`lead`), which slots
-//!    loop, memory cues.
+//! Per-bar features: sound (mel, chroma, loudness, brightness, onsets) and structure
+//! (Laplacian segmentation, McFee & Ellis 2014), on rekordbox's own grid, as the prototype's
+//! cues.py made them. A small bidirectional GRU reads them, in one of two models:
 //!
-//! A port of the prototype's cues.py: same features (to rounding, and up to
-//! k-means' random starts), same networks, same placement. Retraining is not
-//! ported yet: the network trained by the prototype is used as it is.
+//! - **v2, generic**: per bar, where each hot cue slot goes, beats, loops, memory cues;
+//!   decoded into cues as they are (`decode_generic`). Trained in `cue_train`.
+//! - **v1, shipped**: four transition points (mix-in, two between, mix-out), with cues
+//!   placed around them by settings (`place`: `lead`, `loops`, `memory`).
 
 use std::collections::{HashMap, HashSet};
 use std::f64::consts::PI;
@@ -760,6 +756,9 @@ struct Net {
     layers: Vec<Gru>,
     out_w: Vec<f32>,
     out_b: Vec<f32>,
+    /// v2: per hot cue slot, that it stays empty, from the mean over the bars
+    empty_w: Vec<f32>,
+    empty_b: Vec<f32>,
 }
 
 const H: usize = 64;
@@ -818,7 +817,8 @@ impl Gru {
 }
 
 impl Net {
-    fn forward(&self, x: &[Vec<f32>]) -> Vec<[f32; 3]> {
+    /// Per bar its scores, and (v2) per slot that it stays empty.
+    fn forward(&self, x: &[Vec<f32>]) -> (Vec<Vec<f32>>, Vec<f32>) {
         let mut h: Vec<Vec<f32>> = x
             .iter()
             .map(|r| matvec(&self.inp_w, r, H).iter().zip(&self.inp_b).map(|(a, b)| gelu(a + b)).collect())
@@ -826,12 +826,20 @@ impl Net {
         for l in &self.layers {
             h = l.run(&h);
         }
-        h.iter()
-            .map(|r| {
-                let o = matvec(&self.out_w, r, 3);
-                [o[0] + self.out_b[0], o[1] + self.out_b[1], o[2] + self.out_b[2]]
-            })
-            .collect()
+        let k = self.out_b.len();
+        let per_bar = h.iter().map(|r| matvec(&self.out_w, r, k).iter().zip(&self.out_b).map(|(a, b)| a + b).collect()).collect();
+        let mut pool = vec![0f32; 2 * H];
+        for r in &h {
+            axpy(1.0 / h.len().max(1) as f32, r, &mut pool);
+        }
+        let empty = matvec(&self.empty_w, &pool, self.empty_b.len()).iter().zip(&self.empty_b).map(|(a, b)| a + b).collect();
+        (per_bar, empty)
+    }
+}
+
+fn axpy(a: f32, x: &[f32], y: &mut [f32]) {
+    for (y, x) in y.iter_mut().zip(x) {
+        *y += a * x;
     }
 }
 
@@ -842,6 +850,10 @@ pub struct Model {
     sd: Vec<f32>,
     pub n_tracks: usize,
     pub source: String,
+    /// v2: learns the cues themselves (`out`); v1: transition points, placed by settings
+    pub generic: bool,
+    /// when it was trained, unix seconds; 0 for the shipped one
+    pub trained: i64,
 }
 
 impl Model {
@@ -879,11 +891,18 @@ impl Model {
                 layers,
                 out_w: take(&format!("{p}out.weight"))?,
                 out_b: take(&format!("{p}out.bias"))?,
+                empty_w: take(&format!("{p}empty.weight")).unwrap_or_default(),
+                empty_b: take(&format!("{p}empty.bias")).unwrap_or_default(),
             });
         }
         let (mu, sd) = (take("mu")?, take("sd")?);
         if mu.len() != d {
             return Err("cue model: feature count mismatch".into());
+        }
+        let generic = head["format"].as_str() == Some(FORMAT_V2);
+        let k = if generic { out::K } else { 3 };
+        if nets.iter().any(|n| n.out_b.len() != k || (generic && n.empty_b.len() != N_HOT)) {
+            return Err("cue model: output count mismatch".into());
         }
         Ok(Model {
             nets,
@@ -891,6 +910,8 @@ impl Model {
             sd,
             n_tracks: head["n_tracks"].as_u64().unwrap_or(0) as usize,
             source: head["source"].as_str().unwrap_or("").to_string(),
+            generic,
+            trained: head["trained"].as_i64().unwrap_or(0),
         })
     }
 
@@ -899,30 +920,68 @@ impl Model {
     pub fn load(root: &Path) -> Res<Model> {
         let own = store::vibecheck_dir(root)?.join(MODEL_FILE);
         if own.exists() {
-            return Model::from_bytes(&std::fs::read(own)?);
+            let mut m = Model::from_bytes(&std::fs::read(&own)?)?;
+            if m.trained == 0 {
+                // files from before it was recorded: when the file was written
+                let t = std::fs::metadata(&own)?.modified()?.duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                m.trained = t as i64;
+            }
+            return Ok(m);
         }
         Model::from_bytes(SHIPPED)
     }
 
-    pub fn scores(&self, f: &[Vec<f32>]) -> Vec<[f32; 3]> {
+    /// Per bar the networks' scores, averaged, and (v2) per slot that it stays empty.
+    pub fn scores(&self, f: &[Vec<f32>]) -> (Vec<Vec<f32>>, Vec<f32>) {
         let x: Vec<Vec<f32>> =
             f.iter().map(|r| r.iter().enumerate().map(|(j, v)| (v - self.mu[j]) / self.sd[j]).collect()).collect();
-        let outs: Vec<Vec<[f32; 3]>> = self.nets.iter().map(|n| n.forward(&x)).collect();
-        (0..f.len())
-            .map(|t| {
-                let mut s = [0f32; 3];
-                for o in &outs {
-                    for k in 0..3 {
-                        s[k] += o[t][k];
-                    }
-                }
-                s.map(|v| v / outs.len() as f32)
-            })
-            .collect()
+        let outs: Vec<(Vec<Vec<f32>>, Vec<f32>)> = self.nets.iter().map(|n| n.forward(&x)).collect();
+        let w = 1.0 / outs.len() as f32;
+        let mut s = vec![vec![0f32; outs[0].0.first().map_or(0, |r| r.len())]; f.len()];
+        let mut e = vec![0f32; outs[0].1.len()];
+        for (o, oe) in &outs {
+            for (row, r) in s.iter_mut().zip(o) {
+                axpy(w, r, row);
+            }
+            axpy(w, oe, &mut e);
+        }
+        (s, e)
     }
 
+    /// v1: the four transition points. v2: the four bars it most hears a cue at.
     pub fn transitions(&self, f: &[Vec<f32>]) -> Vec<usize> {
-        decode(&self.scores(f))
+        let (s, _) = self.scores(f);
+        if self.generic {
+            return pick(&s.iter().map(|r| r[out::HOT]).collect::<Vec<_>>(), TRANSITIONS, &[]);
+        }
+        decode(&s.iter().map(|r| [r[0], r[1], r[2]]).collect::<Vec<_>>())
+    }
+
+    /// The cues it would set on a track, and the bars it hears it change at (the waveform's
+    /// parts). v2 learned the cues as they are; v1 places them around its transitions with
+    /// `place` (the `[cues]` settings).
+    pub fn suggest(&self, f: &[Vec<f32>], t: &Track, p: &Placement) -> (Vec<Mark>, Vec<usize>) {
+        let down = downbeats(&t.tempos, t.duration + 2.0);
+        if !self.generic {
+            let tr = self.transitions(f);
+            return (place(&tr, &down, &p.lead, &p.loops, p.memory), tr);
+        }
+        let (s, e) = self.scores(f);
+        let parts = pick(&s.iter().map(|r| r[out::HOT]).collect::<Vec<_>>(), TRANSITIONS, &[]);
+        (marks_of(&decode_generic(&s, &e), &Grid::of(t)), parts)
+    }
+}
+
+/// How the v1 model's transitions become cues: `[cues]` in the config.
+pub struct Placement {
+    pub lead: Vec<i64>,
+    pub loops: Vec<(String, i64)>,
+    pub memory: bool,
+}
+
+impl Placement {
+    pub fn of(cfg: &crate::config::Config) -> Placement {
+        Placement { lead: cfg.ints("cues", "lead", &[0]), loops: cfg.int_map("cues", "loops"), memory: cfg.bool("cues", "memory", true) }
     }
 }
 
@@ -961,6 +1020,253 @@ pub fn decode(s: &[[f32; 3]]) -> Vec<usize> {
     pick(&mid, TRANSITIONS, &[f, last])
 }
 
+// --- generic cues (model v2) ----------------------------------------------------
+
+pub const FORMAT_V2: &str = "vibecheck-cue-model/2";
+/// Hot cue slots, A..H.
+pub const N_HOT: usize = 8;
+/// rekordbox keeps up to 10 memory cues.
+pub const MAX_MEMORY: usize = 10;
+/// The loop lengths a cue can have, in beats; 0: not a loop.
+pub const LOOP_BEATS: [i64; 8] = [0, 4, 8, 16, 32, 64, 128, 256];
+const LOOPS: usize = LOOP_BEATS.len();
+
+/// The v2 model's scores per bar, by offset: where each hot cue slot goes (with `empty`, a
+/// choice over the bars), a hot cue here at all, the beat in the bar, each slot's loop
+/// length, a memory cue here, its loop length, which slot a hot cue here is in.
+pub mod out {
+    use super::{LOOPS, N_HOT};
+    pub const SLOT: usize = 0;
+    pub const HOT: usize = SLOT + N_HOT;
+    pub const BEAT: usize = HOT + 1;
+    pub const HOT_LOOP: usize = BEAT + 4;
+    pub const MEM: usize = HOT_LOOP + N_HOT * LOOPS;
+    pub const MEM_LOOP: usize = MEM + 1;
+    pub const WHICH: usize = MEM_LOOP + LOOPS;
+    pub const K: usize = WHICH + N_HOT;
+}
+
+/// A cue as rekordbox has it: slot 0..7 (A..H) or -1 for a memory cue; start, seconds; end
+/// for a loop.
+pub type Raw = (i64, f64, Option<f64>);
+
+/// One cue on the grid: its bar, the beat in the bar (0 the downbeat), its loop length
+/// (an index into `LOOP_BEATS`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct At {
+    pub bar: usize,
+    pub beat: usize,
+    pub lp: usize,
+}
+
+/// A track's cues as the v2 model learns and makes them: a cue or nothing per hot cue
+/// slot, and the memory cues.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Target {
+    pub hot: [Option<At>; N_HOT],
+    pub mem: Vec<At>,
+}
+
+impl Target {
+    /// Every cue, hot and memory, with the hot cue's slot (None: memory).
+    pub fn all(&self) -> impl Iterator<Item = (Option<usize>, At)> + '_ {
+        self.hot.iter().enumerate().filter_map(|(k, a)| a.map(|a| (Some(k), a))).chain(self.mem.iter().map(|a| (None, *a)))
+    }
+}
+
+/// rekordbox's grid for one track: every beat from the first downbeat, with its bar and
+/// place in the bar.
+pub struct Grid {
+    beats: Vec<(f64, usize, usize)>,
+}
+
+impl Grid {
+    pub fn of(t: &Track) -> Grid {
+        let mut bar: Option<usize> = None;
+        let mut out = vec![];
+        for (time, pos) in beats(&t.tempos, t.duration + 2.0) {
+            if pos == 0 {
+                bar = Some(bar.map_or(0, |b| b + 1));
+            }
+            if let Some(b) = bar {
+                out.push((time, b, pos as usize));
+            }
+        }
+        Grid { beats: out }
+    }
+
+    /// The beat nearest `seconds`: its index; None before the first downbeat or off the grid.
+    fn index(&self, seconds: f64) -> Option<usize> {
+        let i = self.beats.partition_point(|b| b.0 < seconds);
+        let near = [i.checked_sub(1), (i < self.beats.len()).then_some(i)].into_iter().flatten();
+        let best = near.min_by(|a, b| (self.beats[*a].0 - seconds).abs().total_cmp(&(self.beats[*b].0 - seconds).abs()))?;
+        (seconds > self.beats[0].0 - self.beat_len(0) / 2.0).then_some(best)
+    }
+
+    fn beat_len(&self, i: usize) -> f64 {
+        let i = i.min(self.beats.len().saturating_sub(2));
+        self.beats.get(i + 1).zip(self.beats.get(i)).map_or(0.5, |(b, a)| b.0 - a.0)
+    }
+
+    /// Where a cue starting at `start` (and ending at `end`, a loop) sits on the grid.
+    pub fn at(&self, start: f64, end: Option<f64>) -> Option<At> {
+        let i = self.index(start)?;
+        let (_, bar, beat) = self.beats[i];
+        let lp = end.map_or(0, |e| loop_class((e - start) / self.beat_len(i)));
+        Some(At { bar, beat, lp })
+    }
+
+    /// The time of a beat in a bar, and of the beat `n` beats after it; past the grid's
+    /// end, at its last spacing.
+    fn time(&self, bar: usize, beat: usize, n: i64) -> Option<(f64, f64)> {
+        let i = self.beats.iter().position(|b| b.1 == bar && b.2 == beat).or_else(|| self.beats.iter().position(|b| b.1 == bar))?;
+        let j = i + n as usize;
+        let last = self.beats.len() - 1;
+        let at = |j: usize| if j <= last { self.beats[j].0 } else { self.beats[last].0 + (j - last) as f64 * self.beat_len(last) };
+        Some((at(i), at(j)))
+    }
+}
+
+/// The loop length nearest `beats`, as an index into `LOOP_BEATS`; 0 for none.
+pub fn loop_class(beats: f64) -> usize {
+    if beats < 2.0 {
+        return 0;
+    }
+    (1..LOOPS).min_by(|a, b| (beats.log2() - (LOOP_BEATS[*a] as f64).log2()).abs().total_cmp(&(beats.log2() - (LOOP_BEATS[*b] as f64).log2()).abs())).unwrap()
+}
+
+/// A track's cues as (slot 0..7, or -1 for memory; start; end for a loop), on its grid, as
+/// the model learns them: cues past `bars` (the features' end) left out.
+pub fn target_of(cues: &[Raw], g: &Grid, bars: usize) -> Target {
+    let mut t = Target::default();
+    let mut cues = cues.to_vec();
+    cues.sort_by(|a, b| a.1.total_cmp(&b.1));
+    for (num, start, end) in cues {
+        let Some(a) = g.at(start, end).filter(|a| a.bar < bars) else { continue };
+        match num {
+            0..=7 => t.hot[num as usize] = Some(a),
+            -1 if t.mem.len() < MAX_MEMORY && !t.mem.iter().any(|m| (m.bar, m.beat) == (a.bar, a.beat)) => t.mem.push(a),
+            _ => {}
+        }
+    }
+    t
+}
+
+fn softmax_ln(v: &[f32]) -> Vec<f32> {
+    let mx = v.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let ln = mx + v.iter().map(|x| (x - mx).exp()).sum::<f32>().ln();
+    v.iter().map(|x| x - ln).collect()
+}
+
+fn argmax(v: &[f32]) -> usize {
+    (0..v.len()).fold(0, |b, i| if v[i] > v[b] { i } else { b })
+}
+
+/// The v2 model's cues from its scores (docs/cues.md, "decoding"): as many hot cues as it
+/// expects slots filled, on the bars it ranks likeliest to hold one, `gap` bars apart; each
+/// bar then the slot that fits it best, all slots at once (an exact matching); memory cues
+/// where one is more likely than not, surest first, up to 10.
+pub fn decode_generic(s: &[Vec<f32>], e: &[f32]) -> Target {
+    let lp = slot_ln(s, e);
+    let n = s.len();
+    let k = lp.iter().map(|l| 1.0 - l[n].exp()).sum::<f32>().round() as usize;
+    decode_with(s, e, k, HOT_GAP, SlotBy::Which)
+}
+
+/// Hot cues at least this many bars apart.
+pub const HOT_GAP: usize = 4;
+
+/// Per slot: log-probabilities over the bars, then empty.
+fn slot_ln(s: &[Vec<f32>], e: &[f32]) -> Vec<Vec<f32>> {
+    (0..N_HOT).map(|k| softmax_ln(&s.iter().map(|r| r[out::SLOT + k]).chain([e[k]]).collect::<Vec<_>>())).collect()
+}
+
+/// What picks a hot cue's slot: the slot's own choice over the bars, which slot a cue on
+/// that bar is in, or both.
+#[derive(Clone, Copy)]
+pub enum SlotBy {
+    Position,
+    Which,
+    Both,
+}
+
+/// `decode_generic` with the number of hot cues, their spacing and how slots are picked given.
+pub fn decode_with(s: &[Vec<f32>], e: &[f32], k: usize, gap: usize, by: SlotBy) -> Target {
+    let n = s.len();
+    let mut t = Target::default();
+    if n == 0 {
+        return t;
+    }
+    let lp = slot_ln(s, e);
+    let mut bars: Vec<usize> = vec![];
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|a, b| s[*b][out::HOT].total_cmp(&s[*a][out::HOT]));
+    for b in order {
+        if bars.len() >= k.min(N_HOT) {
+            break;
+        }
+        if bars.iter().all(|o| b.abs_diff(*o) >= gap) {
+            bars.push(b);
+        }
+    }
+    let fit = |slot: usize, b: usize| {
+        let which = || softmax_ln(&s[b][out::WHICH..out::WHICH + N_HOT])[slot];
+        match by {
+            SlotBy::Position => lp[slot][b] - lp[slot][n],
+            SlotBy::Which => which(),
+            SlotBy::Both => lp[slot][b] - lp[slot][n] + which(),
+        }
+    };
+    // the best slot for every bar together: over the bars, which slots are taken so far
+    let full = 1usize << N_HOT;
+    let mut best = vec![f32::NEG_INFINITY; full];
+    let mut from: Vec<Vec<(usize, usize)>> = vec![vec![(0, 0); full]; bars.len() + 1];
+    best[0] = 0.0;
+    for (i, &b) in bars.iter().enumerate() {
+        let mut next = vec![f32::NEG_INFINITY; full];
+        for m in 0..full {
+            if best[m] == f32::NEG_INFINITY {
+                continue;
+            }
+            for slot in (0..N_HOT).filter(|j| m & (1 << j) == 0) {
+                let v = best[m] + fit(slot, b);
+                if v > next[m | 1 << slot] {
+                    next[m | 1 << slot] = v;
+                    from[i + 1][m | 1 << slot] = (m, slot);
+                }
+            }
+        }
+        best = next;
+    }
+    let mut m = (0..full).max_by(|a, b| best[*a].total_cmp(&best[*b])).unwrap_or(0);
+    for i in (1..=bars.len()).rev() {
+        let (prev, slot) = from[i][m];
+        let b = bars[i - 1];
+        let lps = &s[b][out::HOT_LOOP + slot * LOOPS..out::HOT_LOOP + (slot + 1) * LOOPS];
+        t.hot[slot] = Some(At { bar: b, beat: argmax(&s[b][out::BEAT..out::BEAT + 4]), lp: argmax(lps) });
+        m = prev;
+    }
+    let mut mem: Vec<(f32, usize)> = (0..n).map(|b| (s[b][out::MEM], b)).filter(|x| x.0 > 0.0).collect();
+    mem.sort_by(|a, b| b.0.total_cmp(&a.0));
+    t.mem = mem
+        .into_iter()
+        .take(MAX_MEMORY)
+        .map(|(_, b)| At { bar: b, beat: argmax(&s[b][out::BEAT..out::BEAT + 4]), lp: argmax(&s[b][out::MEM_LOOP..out::MEM_LOOP + LOOPS]) })
+        .collect();
+    t.mem.sort_by_key(|a| (a.bar, a.beat));
+    t
+}
+
+/// Cues on the grid as the xml's marks.
+pub fn marks_of(t: &Target, g: &Grid) -> Vec<Mark> {
+    t.all()
+        .filter_map(|(k, a)| {
+            let (start, end) = g.time(a.bar, a.beat, LOOP_BEATS[a.lp])?;
+            Some(mark(k.map_or(-1, |k| k as i64), start, (a.lp > 0).then_some(end)))
+        })
+        .collect()
+}
+
 // --- your cues, both ways ------------------------------------------------------
 
 /// Every cue on the track was named by a tool ("Cue 1", "Cue 2", ...).
@@ -984,6 +1290,19 @@ pub fn writable(t: &Track) -> bool {
         return first.first().is_some_and(|f| (start(&m[0]) - f).abs() < 0.01);
     }
     false
+}
+
+/// Cues compared as rekordbox writes them back: every cue, to 10 ms, in order.
+pub fn cue_key(cues: &[Raw]) -> String {
+    let r = |v: f64| (v * 100.0).round() as i64;
+    let mut v: Vec<(i64, i64, Option<i64>)> = cues.iter().map(|c| (c.0, r(c.1), c.2.map(r))).collect();
+    v.sort();
+    serde_json::to_string(&v).unwrap_or_default()
+}
+
+/// A track's cues from its marks.
+pub fn cue_list(marks: &[Mark]) -> Vec<Raw> {
+    marks.iter().map(|m| (num(m), start(m), get(m, "End").and_then(|v| v.parse().ok()))).collect()
 }
 
 pub fn hot_starts(marks: &[Mark]) -> Vec<f64> {
@@ -1284,6 +1603,49 @@ mod tests {
         assert!(!writable(&tr(vec![m("Cue 1", "0", "10.0"), m("", "0", "10.0")])));
         assert!(writable(&tr(vec![m("", "-1", "0.500")])));
         assert!(!writable(&tr(vec![m("", "-1", "10.500")])));
+    }
+
+    /// v2 decoding: the expected number of hot cues on the best-ranked bars, each in the slot
+    /// that wants it, memory cues where likely.
+    #[test]
+    fn generic_cues_take_the_ranked_bars_in_their_slots() {
+        let n = 40;
+        let mut s = vec![vec![0f32; out::K]; n];
+        let mut e = vec![8f32; N_HOT];
+        // A wants bar 8, B bar 16; C would take 9 but it is too close to 8
+        for (k, b) in [(0, 8), (1, 16), (2, 9)] {
+            s[b][out::SLOT + k] = 20.0;
+            s[b][out::HOT] = 10.0;
+            e[k] = -5.0;
+        }
+        s[9][out::HOT] = 9.0;
+        s[30][out::HOT] = 1.0;
+        s[16][out::HOT_LOOP + LOOPS + 5] = 3.0;
+        s[8][out::WHICH] = 5.0;
+        s[16][out::WHICH + 1] = 5.0;
+        s[8][out::BEAT + 2] = 3.0;
+        s[30][out::MEM] = 2.0;
+        let t = decode_generic(&s, &e);
+        let hot: Vec<(usize, usize)> = t.hot.iter().enumerate().filter_map(|(k, a)| a.map(|a| (k, a.bar))).collect();
+        assert_eq!(hot.len(), 3);
+        assert!(hot.contains(&(0, 8)) && hot.contains(&(1, 16)));
+        assert!(!hot.iter().any(|h| h.1 == 9));
+        assert_eq!((t.hot[0].unwrap().beat, t.hot[1].unwrap().lp), (2, 5));
+        assert_eq!(t.mem.iter().map(|a| a.bar).collect::<Vec<_>>(), vec![30]);
+    }
+
+    /// Cues read onto the grid and written back land where they were.
+    #[test]
+    fn cues_round_trip_through_the_grid() {
+        let tr = Track { tempos: vec![(0.5, 120.0, 1)], duration: 120.0, ..Default::default() };
+        let g = Grid::of(&tr);
+        let cues: Vec<Raw> = vec![(0, 0.5, None), (3, 17.0, Some(49.0)), (-1, 0.5, None), (-1, 9.0, None)];
+        let t = target_of(&cues, &g, 100);
+        assert_eq!(t.hot[0], Some(At { bar: 0, beat: 0, lp: 0 }));
+        assert_eq!(t.hot[3], Some(At { bar: 8, beat: 1, lp: 5 }));
+        assert_eq!(t.mem.len(), 2);
+        let back: Vec<Raw> = cue_list(&marks_of(&t, &g));
+        assert!(back.contains(&(0, 0.5, None)) && back.contains(&(3, 17.0, Some(49.0))) && back.contains(&(-1, 9.0, None)));
     }
 
     #[test]

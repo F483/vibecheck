@@ -83,6 +83,14 @@ func refresh() -> void:
 	_toggle("Show the model's guess in the player after calibration", "show_guess")
 	_add(_line("Re-ask old tracks blind", UI.text("rises as the library fills in", 12, UI.MUTED, "mono")))
 
+	_card("Weighting")
+	_toggle("Weigh by stars", "weigh_stars", "5★ ×1 · 1★ ×0.6")
+	var rec := UI.row(6)
+	for d: Array in [[0, "Off"], [182, "6 months"], [365, "1 year"], [730, "2 years"], [1825, "5 years"]]:
+		rec.add_child(UI.chip(d[1], int(st.recency_days) == d[0], func() -> void: state.set_setting("recency_days", d[0])))
+	_add(_line("Newer counts more · half after", rec))
+	_add(UI.wrap("How much each label and each track's cues count when the models learn: how you made it (kept, confirmed, played) × its stars × its age. Turn stars off if you use them for something else. Older counts less, never below half; labels from before vibecheck have no age."))
+
 	_side = rc
 	_card("Rekordbox Export")
 	_toggle("Write the colour", "write_colour", "Orange")

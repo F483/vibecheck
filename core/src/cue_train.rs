@@ -1,25 +1,32 @@
-//! Training the cue network on your own cues, as the prototype did in PyTorch
-//! (`fit` in its cues.py): the same network, losses and optimiser, with the
-//! gradients written out by hand. It writes the model file `cues::Model` reads.
+//! Training the cue network on your cues, with the gradients written out by hand. It
+//! writes the model file `cues::Model` reads (v2, `cues::FORMAT_V2`).
 //!
-//! The network, per track (every bar at once): Linear(d, 64) -> GELU -> dropout
-//! -> 2-layer bidirectional GRU(64), dropout between the layers -> Linear(128, 3).
-//! Per bar it scores: a transition, the mix-in, the mix-out. Losses: binary
-//! cross-entropy on transitions (positives weighted 20, mean over bars), and
-//! cross-entropy over the bars for the mix-in (your first transition) and the
-//! mix-out (your last). AdamW, 2e-3, weight decay 1e-2, 60 epochs, batches of 16
+//! The network, per track (every bar at once), as the prototype's (`fit` in its cues.py):
+//! Linear(d, 64) -> GELU -> dropout -> 2-layer bidirectional GRU(64), dropout between the
+//! layers -> Linear(128, K) per bar, and Linear(128, 8) on the mean over the bars.
+//!
+//! What it learns is the cues themselves (docs/cues.md, "the model, generic"), not
+//! transition points with placement settings around them (v1):
+//!
+//! - per hot cue slot A..H, where it goes: cross-entropy over the bars plus "empty" (the
+//!   pooled output), as the prototype chose the mix-in;
+//! - a hot cue on this bar at all: binary cross-entropy, positives weighted 20 (ranks bars);
+//! - a memory cue on this bar: binary cross-entropy, unweighted (read as a probability);
+//! - per cue, the beat in its bar and its loop length (per slot; memory cues share one);
+//!   per hot cue, which slot it is in (decoding picks slots by it).
+//!
+//! Each track's losses are weighted by trust x rating as colours are (`app::Trust`,
+//! `app::rating_factor`). AdamW, 2e-3, weight decay 1e-2, 60 epochs, batches of 16
 //! tracks, three networks from three seeds, averaged at use.
-//!
-//! One difference: PyTorch padded a batch's tracks to the longest, so the
-//! backward direction of a short track first read padding; here each track is
-//! read as it is, as it is at use.
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::app::{Trust, rating_factor, recency};
 use crate::config::Config;
+use crate::cues::{At, Grid, LOOP_BEATS, N_HOT, Raw, Target, out};
 use crate::rekordbox::Track;
 use crate::{Res, cues, store};
 
@@ -33,11 +40,19 @@ const BATCH: usize = 16;
 pub const EPOCHS: usize = 60;
 pub const SEEDS: usize = 3;
 
-/// One track to learn from: its per-bar features and your transition bars.
+const K: usize = out::K;
+const LOOPS: usize = LOOP_BEATS.len();
+
+/// One track to learn from: its per-bar features, your cues on its bars, and what they are
+/// worth (trust x rating).
 pub struct Example {
     pub rel: String,
     pub x: Vec<Vec<f32>>,
-    pub t: Vec<usize>,
+    pub target: Target,
+    pub w: f32,
+    /// set by hand (rekordbox, or changed in the app), not a suggestion kept: what accuracy
+    /// is measured on
+    pub hand: bool,
 }
 
 // --- the parameters, laid out as the model file names them -----------------------
@@ -58,6 +73,8 @@ struct Layout {
     rnn: [[Dir; 2]; 2],
     out_w: usize,
     out_b: usize,
+    emp_w: usize,
+    emp_b: usize,
     size: usize,
     names: Vec<(String, Vec<usize>, usize)>,
 }
@@ -87,9 +104,11 @@ impl Layout {
                 };
             }
         }
-        let out_w = add("out.weight".into(), vec![3, 2 * H]);
-        let out_b = add("out.bias".into(), vec![3]);
-        Layout { d, inp_w, inp_b, rnn, out_w, out_b, size: off, names }
+        let out_w = add("out.weight".into(), vec![K, 2 * H]);
+        let out_b = add("out.bias".into(), vec![K]);
+        let emp_w = add("empty.weight".into(), vec![N_HOT, 2 * H]);
+        let emp_b = add("empty.bias".into(), vec![N_HOT]);
+        Layout { d, inp_w, inp_b, rnn, out_w, out_b, emp_w, emp_b, size: off, names }
     }
 
     /// PyTorch's default initialisation: uniform within 1/sqrt(fan-in).
@@ -289,11 +308,23 @@ fn mask(len: usize, rng: Option<&mut Rng>) -> Vec<f32> {
     }
 }
 
-/// One track's loss and its gradient added into `g`. `wt` weighs the transition
-/// loss (one over the batch's bars), `wc` the mix-in and mix-out (one over its
-/// tracks), as PyTorch's means over the batch did.
+/// Cross-entropy over `len` scores at `off`, target `target`, weighted `w`; its gradient
+/// set into `dout`.
+fn ce(o: &[f32], dout: &mut [f32], off: usize, len: usize, target: usize, w: f32) -> f32 {
+    let v = &o[off..off + len];
+    let mx = v.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    let ln = mx + v.iter().map(|x| (x - mx).exp()).sum::<f32>().ln();
+    for (j, x) in v.iter().enumerate() {
+        dout[off + j] += w * ((x - ln).exp() - (j == target) as u8 as f32);
+    }
+    w * (ln - v[target])
+}
+
+/// One track's loss and its gradient added into `g`. `wt` weighs the per-bar losses (one
+/// over the batch's bars), `wc` the per-cue ones (one over its tracks), both times the
+/// track's weight.
 #[allow(clippy::too_many_arguments)]
-fn track_grad(lay: &Layout, p: &[f32], g: &mut [f32], x: &[f32], n: usize, t: &[usize], wt: f32, wc: f32, rng: Option<&mut Rng>) -> f32 {
+fn track_grad(lay: &Layout, p: &[f32], g: &mut [f32], x: &[f32], n: usize, t: &Target, wt: f32, wc: f32, rng: Option<&mut Rng>) -> f32 {
     let d = lay.d;
     let (mut rng_a, rng) = match rng {
         Some(r) => {
@@ -321,43 +352,78 @@ fn track_grad(lay: &Layout, p: &[f32], g: &mut [f32], x: &[f32], n: usize, t: &[
     let mut y1 = vec![0f32; n * 2 * H];
     let c10 = dir_forward(p, lay.rnn[1][0], &y0d, n, false, &mut y1, 0);
     let c11 = dir_forward(p, lay.rnn[1][1], &y0d, n, true, &mut y1, H);
-    // scores
-    let mut o = vec![[0f32; 3]; n];
+    // scores per bar, and per slot that it stays empty (from the mean over the bars)
+    let mut o = vec![0f32; n * K];
     for s in 0..n {
-        for k in 0..3 {
-            o[s][k] = dot(&p[lay.out_w + k * 2 * H..lay.out_w + (k + 1) * 2 * H], &y1[s * 2 * H..(s + 1) * 2 * H]) + p[lay.out_b + k];
-        }
+        matvec(&p[lay.out_w..lay.out_w + K * 2 * H], &y1[s * 2 * H..(s + 1) * 2 * H], &mut o[s * K..(s + 1) * K]);
+        axpy(1.0, &p[lay.out_b..lay.out_b + K], &mut o[s * K..(s + 1) * K]);
     }
+    let mut pool = vec![0f32; 2 * H];
+    for s in 0..n {
+        axpy(1.0 / n as f32, &y1[s * 2 * H..(s + 1) * 2 * H], &mut pool);
+    }
+    let mut e = [0f32; N_HOT];
+    matvec(&p[lay.emp_w..lay.emp_w + N_HOT * 2 * H], &pool, &mut e);
+    axpy(1.0, &p[lay.emp_b..lay.emp_b + N_HOT], &mut e);
     // losses and their gradient on the scores
-    let mut is_t = vec![false; n];
-    for &b in t {
-        is_t[b] = true;
-    }
-    let mut dout = vec![[0f32; 3]; n];
+    let (mut dout, mut de) = (vec![0f32; n * K], [0f32; N_HOT]);
     let mut loss = 0f32;
-    for s in 0..n {
-        let (v, y) = (o[s][0], is_t[s] as u8 as f32);
-        loss += wt * (POS_WEIGHT * y * softplus(-v) + (1.0 - y) * softplus(v));
-        let sg = sigmoid(v);
-        dout[s][0] = wt * ((1.0 - y) * sg - POS_WEIGHT * y * (1.0 - sg));
-    }
-    for (k, target) in [(1, t[0]), (2, *t.last().unwrap())] {
-        let mx = o.iter().map(|r| r[k]).fold(f32::NEG_INFINITY, f32::max);
-        let sum: f32 = o.iter().map(|r| (r[k] - mx).exp()).sum();
-        loss += wc * (mx + sum.ln() - o[target][k]);
-        for s in 0..n {
-            dout[s][k] = wc * ((o[s][k] - mx).exp() / sum - (s == target) as u8 as f32);
+    // each slot: a choice over the bars and empty
+    for k in 0..N_HOT {
+        let target = t.hot[k].map_or(n, |a| a.bar);
+        let logit = |s: usize| if s < n { o[s * K + out::SLOT + k] } else { e[k] };
+        let mx = (0..=n).map(logit).fold(f32::NEG_INFINITY, f32::max);
+        let ln = mx + (0..=n).map(|s| (logit(s) - mx).exp()).sum::<f32>().ln();
+        loss += wc * (ln - logit(target));
+        for s in 0..=n {
+            let d = wc * ((logit(s) - ln).exp() - (s == target) as u8 as f32);
+            if s < n { dout[s * K + out::SLOT + k] = d } else { de[k] = d }
         }
     }
-    // back: output layer
+    // a hot cue here (ranked, positives weighted), a memory cue here (a probability)
+    let (mut hot, mut mem) = (vec![0f32; n], vec![0f32; n]);
+    t.hot.iter().flatten().for_each(|a| hot[a.bar] = 1.0);
+    t.mem.iter().for_each(|a| mem[a.bar] = 1.0);
+    for (off, y, pw) in [(out::HOT, &hot, POS_WEIGHT), (out::MEM, &mem, 1.0)] {
+        for s in 0..n {
+            let (v, y) = (o[s * K + off], y[s]);
+            loss += wt * (pw * y * softplus(-v) + (1.0 - y) * softplus(v));
+            let sg = sigmoid(v);
+            dout[s * K + off] = wt * ((1.0 - y) * sg - pw * y * (1.0 - sg));
+        }
+    }
+    // each cue: the beat in its bar, its loop length
+    let all: Vec<(Option<usize>, At)> = t.all().collect();
+    let wq = wc / all.len().max(1) as f32;
+    for (k, a) in &all {
+        let lp = k.map_or(out::MEM_LOOP, |k| out::HOT_LOOP + k * LOOPS);
+        loss += ce(&o, &mut dout, a.bar * K + out::BEAT, 4, a.beat, wq);
+        loss += ce(&o, &mut dout, a.bar * K + lp, LOOPS, a.lp, wq);
+        if let Some(k) = k {
+            loss += ce(&o, &mut dout, a.bar * K + out::WHICH, N_HOT, *k, wq);
+        }
+    }
+    // back: output layers
     let mut dy1 = vec![0f32; n * 2 * H];
     for s in 0..n {
-        for k in 0..3 {
-            let dk = dout[s][k];
+        for k in 0..K {
+            let dk = dout[s * K + k];
+            if dk == 0.0 {
+                continue;
+            }
             g[lay.out_b + k] += dk;
             axpy(dk, &y1[s * 2 * H..(s + 1) * 2 * H], &mut g[lay.out_w + k * 2 * H..lay.out_w + (k + 1) * 2 * H]);
             axpy(dk, &p[lay.out_w + k * 2 * H..lay.out_w + (k + 1) * 2 * H], &mut dy1[s * 2 * H..(s + 1) * 2 * H]);
         }
+    }
+    let mut dpool = vec![0f32; 2 * H];
+    for k in 0..N_HOT {
+        g[lay.emp_b + k] += de[k];
+        axpy(de[k], &pool, &mut g[lay.emp_w + k * 2 * H..lay.emp_w + (k + 1) * 2 * H]);
+        axpy(de[k], &p[lay.emp_w + k * 2 * H..lay.emp_w + (k + 1) * 2 * H], &mut dpool);
+    }
+    for s in 0..n {
+        axpy(1.0 / n as f32, &dpool, &mut dy1[s * 2 * H..(s + 1) * 2 * H]);
     }
     // GRU layers
     let mut dy0d = vec![0f32; n * 2 * H];
@@ -427,6 +493,7 @@ pub fn fit(data: &[Example], source: &str, seeds: usize, epochs: usize) -> Res<V
                 if crate::stopping() {
                     return None;
                 }
+                // per track times its own weight, in batch_grad
                 let wt = 1.0 / b.iter().map(|&i| xs[i].len() / d).sum::<usize>() as f32;
                 let wc = 1.0 / b.len() as f32;
                 let g = batch_grad(&lay, &p, &xs, data, b, wt, wc, ((seed * epochs + ep) * batches + bi) as u64, workers);
@@ -462,7 +529,8 @@ fn batch_grad(lay: &Layout, p: &[f32], xs: &[Vec<f32>], data: &[Example], b: &[u
                     let i = b[k];
                     let mut g = vec![0f32; lay.size];
                     let mut rng = Rng::new(seed.wrapping_mul(1_000_003).wrapping_add(i as u64));
-                    track_grad(lay, p, &mut g, &xs[i], xs[i].len() / lay.d, &data[i].t, wt, wc, Some(&mut rng));
+                    let w = data[i].w;
+                    track_grad(lay, p, &mut g, &xs[i], xs[i].len() / lay.d, &data[i].target, wt * w, wc * w, Some(&mut rng));
                     *each[k].lock().unwrap() = g;
                 }
             });
@@ -504,8 +572,8 @@ fn to_bytes(lay: &Layout, mu: &[f32], sd: &[f32], nets: &[Vec<f32>], n_tracks: u
         }
     }
     let head = serde_json::json!({
-        "format": "vibecheck-cue-model/1", "d": lay.d, "n_tracks": n_tracks, "source": source,
-        "version": cues::VERSION, "nets": nets.len(), "tensors": tensors,
+        "format": cues::FORMAT_V2, "d": lay.d, "n_tracks": n_tracks, "source": source,
+        "version": cues::VERSION, "nets": nets.len(), "tensors": tensors, "trained": crate::now(),
     });
     let mut out = head.to_string().into_bytes();
     out.push(b'\n');
@@ -515,26 +583,116 @@ fn to_bytes(lay: &Layout, mu: &[f32], sd: &[f32], nets: &[Vec<f32>], n_tracks: u
 
 // --- your cues in, a model out --------------------------------------------------------
 
-/// Your own cues (`cues::yours`: not generated, and not this app's left where they were
-/// written) on tracks in your library, so ones it can read: the transition bars behind them.
-pub fn yours(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<HashMap<String, Vec<usize>>> {
-    let con = store::labels_db(root)?;
-    let hb = store::hash_by_path(&con)?;
-    let mut own = cues::yours(xml, &store::cues_written(&con)?, &cfg.ints("cues", "lead", &[0]));
-    own.retain(|r, _| hb.contains_key(r));
-    Ok(own)
+/// A track's cues to learn from, where they came from, and how far they are trusted.
+pub struct Source {
+    pub cues: Vec<Raw>,
+    pub trust: Trust,
+    pub hand: bool,
+    /// when that last changed (set, edited, written, played), unix seconds; 0: before vibecheck
+    pub at: i64,
 }
 
-/// The tracks to learn from: `yours`, with their features, from the cache or the audio.
+/// What a track's cues are worth, as for colours (docs/cues.md): set in the app (the
+/// suggestion kept: kept; changed: confirmed), changed in rekordbox, after we wrote them or
+/// as a sync saw (confirmed), there before vibecheck (existing), played since (played).
+/// Ours, written and left alone, are not learned from. `decided`: (cues, suggestion kept,
+/// when); `theirs`: rekordbox's cues when they are not ours as written; `written`: when we
+/// last wrote some; `edited`: when a sync last saw them change.
+pub fn source(
+    decided: Option<(Vec<Raw>, bool, i64)>,
+    theirs: Option<Vec<Raw>>,
+    written: Option<i64>,
+    edited: Option<i64>,
+    played: Option<i64>,
+) -> Option<Source> {
+    let changed = written.max(edited);
+    let (cues, trust, since, hand) = match (decided, theirs) {
+        // set in the app after rekordbox's last change, or written and left as set
+        (Some((c, kept, ts)), th) if changed.is_none_or(|w| ts >= w) || th.is_none() => {
+            (c, if kept { Trust::Kept } else { Trust::Confirmed }, ts, !kept)
+        }
+        (_, Some(c)) => (c, if changed.is_some() { Trust::Confirmed } else { Trust::Existing }, changed.unwrap_or(0), true),
+        _ => return None,
+    };
+    let (trust, at) = match played.filter(|p| *p > since) {
+        Some(p) => (Trust::Played, p),
+        None => (trust, since),
+    };
+    Some(Source { cues, trust, hand, at })
+}
+
+/// Your cues on tracks in your library with a beat grid in rekordbox (none: nothing to
+/// learn on), from the app and from rekordbox, with their trust.
+pub fn yours(root: &Path, xml: &HashMap<String, Track>) -> Res<HashMap<String, Source>> {
+    let con = store::labels_db(root)?;
+    let hb = store::hash_by_path(&con)?;
+    let written = store::cue_writes_last(&con)?;
+    let played = store::played_at(&con)?;
+    let seen = store::cues_seen(&con)?;
+    let parse = |j: &str| -> Vec<Raw> {
+        serde_json::from_str::<Vec<serde_json::Value>>(j)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|c| Some((c["num"].as_i64()?, c["start"].as_f64()?, c["end"].as_f64())))
+            .collect()
+    };
+    let same = |a: &[Raw], b: &[Raw]| {
+        let r = |v: &[Raw]| {
+            let mut v: Vec<(i64, i64, Option<i64>)> =
+                v.iter().map(|c| (c.0, (c.1 * 100.0).round() as i64, c.2.map(|e| (e * 100.0).round() as i64))).collect();
+            v.sort();
+            v
+        };
+        r(a) == r(b)
+    };
+    let decided: HashMap<String, (Vec<Raw>, bool, i64)> = store::cue_decisions_made(&con)?
+        .into_iter()
+        .map(|(p, (c, shown, ts))| {
+            let c = parse(&c);
+            let kept = shown.is_some_and(|s| same(&c, &parse(&s)));
+            (p, (c, kept, ts))
+        })
+        .collect();
+    let mut out = HashMap::new();
+    let paths: std::collections::HashSet<&String> = decided.keys().chain(xml.keys()).collect();
+    for p in paths {
+        if !hb.contains_key(p) || xml.get(p).is_none_or(|t| t.tempos.is_empty()) {
+            continue;
+        }
+        let w = written.get(p);
+        let theirs = xml
+            .get(p)
+            .filter(|t| cues::cue_list(&t.marks).iter().any(|c| c.0 >= 0))
+            .filter(|t| !cues::generated(&t.marks) && w.is_none_or(|w| w.0 != cues::hot_starts(&t.marks)))
+            .map(|t| cues::cue_list(&t.marks));
+        let edited = seen.get(p).and_then(|s| s.1);
+        if let Some(s) = source(decided.get(p).cloned(), theirs, w.map(|w| w.1), edited, played.get(p).copied()) {
+            out.insert(p.clone(), s);
+        }
+    }
+    Ok(out)
+}
+
+/// The tracks to learn from: `yours` on rekordbox's grid, with their features (from the
+/// cache or the audio) and weights (trust x rating).
 pub fn examples(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<Vec<Example>> {
-    let own = yours(root, xml, cfg)?;
-    let tracks: HashMap<String, Track> = own.keys().filter_map(|r| Some((r.clone(), xml.get(r)?.clone()))).collect();
+    let own = yours(root, xml)?;
+    let stars: HashMap<String, Option<u8>> =
+        store::current_made(&store::labels_db(root)?)?.into_iter().map(|(p, c)| (p, c.label.stars)).collect();
+    let tracks: HashMap<String, Track> =
+        own.keys().filter_map(|r| Some((r.clone(), xml.get(r).filter(|t| !t.tempos.is_empty())?.clone()))).collect();
     let (f, _) = cues::features_all(root, &tracks)?;
     let mut out: Vec<Example> = f
         .into_iter()
         .filter_map(|(rel, x)| {
-            let t: Vec<usize> = own[&rel].iter().copied().filter(|b| *b < x.len()).collect();
-            (t.len() >= 3).then_some(Example { rel, x, t })
+            let s = &own[&rel];
+            let target = cues::target_of(&s.cues, &Grid::of(&tracks[&rel]), x.len());
+            // none of its cues on the grid: nothing to learn from (an empty set made in the app is)
+            if target.all().next().is_none() && !s.cues.is_empty() {
+                return None;
+            }
+            let w = (s.trust.weight(cfg) * rating_factor(stars.get(&rel).copied().flatten(), cfg) * recency(s.at, cfg)) as f32;
+            Some(Example { rel, x, target, w, hand: s.hand })
         })
         .collect();
     out.sort_by(|a, b| a.rel.cmp(&b.rel));
@@ -543,9 +701,78 @@ pub fn examples(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<
 
 pub struct Trained {
     pub tracks: usize,
+    pub conflicts: usize,
 }
 
-/// Learn from your cues and save the model as yours; it takes over from the shipped one.
+// --- cue conflicts -------------------------------------------------------------------
+
+/// A track whose cues the model, having learned them, still puts elsewhere: asked again,
+/// as a colour conflict is (docs/cues.md). `mine`: the share of your hot cues it would set
+/// itself; `sure`: how sure it is of its own, on average.
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct Conflict {
+    pub rel: String,
+    pub mine: f32,
+    pub sure: f32,
+}
+
+/// At most this share of your hot cues where the model would set them is a conflict,
+pub const CONFLICT_SHARE: f32 = 0.25;
+/// when it is at least this sure of its own, on average: more likely right than not (as a
+/// colour conflict needs the model sure of its colour).
+pub const CONFLICT_SURE: f32 = 0.5;
+const CONFLICTS_FILE: &str = "cue_conflicts.json";
+
+/// The cue conflicts in `data` by the model `m` (trained on them), surest first.
+pub fn conflicts(m: &cues::Model, data: &[Example]) -> Vec<Conflict> {
+    let next = AtomicUsize::new(0);
+    let found = Mutex::new(vec![]);
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    std::thread::scope(|s| {
+        for _ in 0..cores {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(e) = data.get(i) else { break };
+                    let mine: Vec<usize> = e.target.hot.iter().flatten().map(|a| a.bar).collect();
+                    if mine.len() < 2 {
+                        continue;
+                    }
+                    let (sc, emp) = m.scores(&e.x);
+                    let got: Vec<usize> = cues::decode_generic(&sc, &emp).hot.iter().flatten().map(|a| a.bar).collect();
+                    let share = mine.iter().filter(|b| got.contains(b)).count() as f32 / mine.len() as f32;
+                    if share > CONFLICT_SHARE || got.is_empty() {
+                        continue;
+                    }
+                    // the hot-cue-here score learned with positives weighted: back to a probability
+                    let p = |b: usize| sigmoid(sc[b][out::HOT] - POS_WEIGHT.ln());
+                    let sure = got.iter().map(|b| p(*b)).sum::<f32>() / got.len() as f32;
+                    if sure >= CONFLICT_SURE {
+                        found.lock().unwrap().push(Conflict { rel: e.rel.clone(), mine: share, sure });
+                    }
+                }
+            });
+        }
+    });
+    let mut out = found.into_inner().unwrap();
+    out.sort_by(|a, b| b.sure.total_cmp(&a.sure).then_with(|| a.rel.cmp(&b.rel)));
+    out
+}
+
+/// The cue conflicts the last training found; none before one.
+pub fn load_conflicts(root: &Path) -> Vec<Conflict> {
+    store::vibecheck_dir(root)
+        .ok()
+        .and_then(|d| std::fs::read_to_string(d.join(CONFLICTS_FILE)).ok())
+        .and_then(|s| serde_json::from_str::<Vec<Conflict>>(&s).ok())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|c| c.sure >= CONFLICT_SURE)
+        .collect()
+}
+
+/// Learn from your cues and save the model as yours; it takes over from the shipped one,
+/// and the one it replaces is kept next to it (`cue_model.prev.bin`).
 pub fn train(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<Trained> {
     let data = examples(root, xml, cfg)?;
     if data.len() < 20 {
@@ -554,15 +781,30 @@ pub fn train(root: &Path, xml: &HashMap<String, Track>, cfg: &Config) -> Res<Tra
     let bytes = fit(&data, "yours", SEEDS, EPOCHS)?;
     cues::Model::from_bytes(&bytes)?;
     let path = store::vibecheck_dir(root)?.join(cues::MODEL_FILE);
+    if path.exists() {
+        std::fs::copy(&path, path.with_extension("prev.bin"))?;
+    }
     let tmp = path.with_extension("bin.tmp");
     std::fs::write(&tmp, &bytes)?;
     std::fs::rename(&tmp, &path)?;
-    Ok(Trained { tracks: data.len() })
+    let found = conflicts(&cues::Model::from_bytes(&bytes)?, &data);
+    std::fs::write(store::vibecheck_dir(root)?.join(CONFLICTS_FILE), serde_json::to_string(&found)?)?;
+    Ok(Trained { tracks: data.len(), conflicts: found.len() })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn target() -> Target {
+        let at = |bar, beat, lp| At { bar, beat, lp };
+        let mut t = Target::default();
+        t.hot[0] = Some(at(1, 0, 3));
+        t.hot[2] = Some(at(3, 2, 0));
+        t.hot[7] = Some(at(5, 0, 5));
+        t.mem = vec![at(1, 0, 0), at(6, 1, 2)];
+        t
+    }
 
     /// The hand-written gradient against finite differences of the loss, on a
     /// short random track, in a few places of every kind of parameter.
@@ -573,8 +815,8 @@ mod tests {
         let mut rng = Rng::new(3);
         let p = lay.init(&mut rng);
         let x: Vec<f32> = (0..n * d).map(|_| rng.unit() * 2.0 - 1.0).collect();
-        let t = [1, 3, 5];
-        let (wt, wc) = (1.0 / n as f32, 1.0);
+        let t = target();
+        let (wt, wc) = (0.7 / n as f32, 0.7);
         let mut g = vec![0f32; lay.size];
         track_grad(&lay, &p, &mut g, &x, n, &t, wt, wc, None);
         let loss = |q: &[f32]| {
@@ -586,7 +828,8 @@ mod tests {
             let len: usize = shape.iter().product();
             for k in [0, len / 2, len - 1] {
                 let i = o + k;
-                let e = 1e-2f32;
+                // the loss sums many terms in f32: a wider step keeps its rounding below the slope
+                let e = 3e-2f32;
                 let (mut a, mut b) = (p.clone(), p.clone());
                 a[i] += e;
                 b[i] -= e;
@@ -601,6 +844,37 @@ mod tests {
         assert!(checked > 40);
     }
 
+    /// Where cues come from and what they are worth.
+    #[test]
+    fn cue_trust_follows_colours() {
+        let c = vec![(0, 10.0, None)];
+        let t = |d: Option<bool>, dts: i64, theirs: bool, w: Option<i64>, pl: Option<i64>| {
+            source(d.map(|k| (c.clone(), k, dts)), theirs.then(|| c.clone()), w, None, pl).map(|s| (s.trust, s.hand))
+        };
+        // before vibecheck; changed in rekordbox after our write; ours left alone
+        assert_eq!(t(None, 0, true, None, None), Some((Trust::Existing, true)));
+        assert_eq!(t(None, 0, true, Some(5), None), Some((Trust::Confirmed, true)));
+        assert_eq!(t(None, 0, false, Some(5), None), None);
+        // set in the app: kept or changed, exported and left, or changed in rekordbox since
+        assert_eq!(t(Some(true), 9, false, None, None), Some((Trust::Kept, false)));
+        assert_eq!(t(Some(false), 9, false, Some(10), None), Some((Trust::Confirmed, true)));
+        assert_eq!(t(Some(true), 9, true, Some(10), None), Some((Trust::Confirmed, true)));
+        // played after it was set
+        assert_eq!(t(Some(true), 9, false, Some(10), Some(20)), Some((Trust::Played, false)));
+        assert_eq!(t(None, 0, true, Some(30), Some(20)), Some((Trust::Confirmed, true)));
+        // your own old cues, edited in rekordbox as a sync saw: confirmed from then on
+        let e = |d: Option<i64>, edited: Option<i64>, pl: Option<i64>| {
+            source(d.map(|ts| (c.clone(), true, ts)), Some(c.clone()), None, edited, pl).map(|s| (s.trust, s.at))
+        };
+        assert_eq!(e(None, Some(40), None), Some((Trust::Confirmed, 40)));
+        assert_eq!(e(None, Some(40), Some(50)), Some((Trust::Played, 50)));
+        assert_eq!(e(None, Some(40), Some(30)), Some((Trust::Confirmed, 40)));
+        assert_eq!(e(None, None, None), Some((Trust::Existing, 0)));
+        // edited in rekordbox after it was set in the app, and the other way round
+        assert_eq!(e(Some(30), Some(40), None), Some((Trust::Confirmed, 40)));
+        assert_eq!(e(Some(50), Some(40), None), Some((Trust::Kept, 50)));
+    }
+
     /// A trained model file reads back as the model the app uses.
     #[test]
     fn model_file_round_trips() {
@@ -609,12 +883,15 @@ mod tests {
             .map(|i| Example {
                 rel: i.to_string(),
                 x: (0..20).map(|_| (0..6).map(|_| rng.unit()).collect()).collect(),
-                t: vec![2, 9, 15],
+                target: target(),
+                w: 0.5,
+                hand: true,
             })
             .collect();
         let b = fit(&data, "test", 1, 1).unwrap();
         let m = cues::Model::from_bytes(&b).unwrap();
-        assert_eq!(m.n_tracks, 4);
-        assert_eq!(m.scores(&data[0].x).len(), 20);
+        assert_eq!((m.n_tracks, m.generic), (4, true));
+        let (s, e) = m.scores(&data[0].x);
+        assert_eq!((s.len(), s[0].len(), e.len()), (20, out::K, N_HOT));
     }
 }

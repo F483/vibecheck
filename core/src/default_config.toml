@@ -84,8 +84,20 @@ limit = 100
 # You are sloppier with tracks you care less about, so a label on a low-rated
 # track counts less: factor = base + per_star * stars. No stars is rekordbox's
 # "unrated", a half-done label, and sits at the bottom (0.5); 5 stars is 1.0.
+# use = false: every track counts the same, for whoever uses stars for
+# something else (Settings › Weighting).
+use = true
 base = 0.5
 per_star = 0.1
+
+[recency]
+# Newer labels and cues count more, so a change of taste shows once you have
+# acted on it: weight x (floor + (1 - floor) x 0.5 ^ (age / half_life_days)).
+# Age runs from when you last set, corrected or played it; labels and cues
+# from before vibecheck have no age to go by and are left to [trust].
+# 0: off, every age counts the same (Settings › Weighting).
+half_life_days = 365
+floor = 0.5
 
 [rekordbox]
 # Key and energy are worked out from the audio for every track a round labels
@@ -119,6 +131,11 @@ write = true
 # rekordbox, and the cue model learns from it (docs/cues.md).
 edit = true
 
+# lead, loops and memory place the cues of the shipped model (v1: four
+# transition points, cues placed around them). Once the model has learned from
+# your own cues (v2) it places them itself -- slots, beats, loops and memory
+# cues as you set them -- and these three are not used (docs/cues.md).
+#
 # How many bars ahead of each transition point to cue. Four transition points
 # per track: the mix-in, two between, the mix-out.
 #
@@ -134,9 +151,10 @@ loops = {}
 # A memory cue on every hot cue, and one on the first downbeat.
 memory = true
 
-# Learn again from your own cues once you have this many more than the model in
-# use was trained on. Cues you moved count; cues left where they were written
-# do not -- that would be learning from its own guesses.
+# Learn again from your own cues once this many tracks are new since the model
+# in use was trained, or changed (set in the player, edited in rekordbox,
+# played). Weighted like colours ([trust] x [rating]); cues left where they
+# were written do not count -- that would be learning from its own guesses.
 retrain_after = 50
 
 [audio]

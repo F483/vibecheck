@@ -8,7 +8,8 @@ fn main() -> vibecheck::Res<()> {
     let home = std::path::PathBuf::from(std::env::var("HOME")?);
     let root = home.join("Music/Collection");
     let xml = rekordbox::read(&home.join("Documents/rekordbox.xml"), &root)?;
-    let model = cues::Model::load(&root)?;
+    // the prototype's network: the shipped v1 model
+    let model = cues::Model::from_bytes(include_bytes!("../src/cue_model.bin"))?;
     let tracks: HashMap<String, rekordbox::Track> =
         j.iter().map(|e| e["rel"].as_str().unwrap().to_string()).map(|r| (r.clone(), xml[&r].clone())).collect();
     let (cached, st) = cues::features_all(&root, &tracks)?;
@@ -20,7 +21,7 @@ fn main() -> vibecheck::Res<()> {
         let rel = e["rel"].as_str().unwrap();
         let py_t: Vec<usize> = e["T"].as_array().unwrap().iter().map(|v| v.as_u64().unwrap() as usize).collect();
         let f = &cached[rel];
-        let s = model.scores(f);
+        let s: Vec<[f32; 3]> = model.scores(f).0.iter().map(|r| [r[0], r[1], r[2]]).collect();
         for (i, row) in e["scores"].as_array().unwrap().iter().enumerate() {
             for k in 0..3 {
                 worst = worst.max((s[i][k] - row[k].as_f64().unwrap() as f32).abs());
